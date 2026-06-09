@@ -1,24 +1,6 @@
-# preferences.toml — standing preferences
-#
-# User-curated. The agent edits this ONLY when explicitly directed.
-# See docs/SCHEMAS.md for the full schema.
-
 [stores]
 primary = "Kroger"
-preferred_location = "Kroger - 76104"   # resolved to a Kroger locationId, then
-                                        # used for pricing + curbside/delivery
+preferred_location = "Kroger - 76104"
 
-# Other defaults (uncomment and set):
-#
-# default_cooking_nights = 3
-# lunch_strategy = "leftovers"              # leftovers | buy | mixed
-# ready_to_eat_default_action = "opt-in"    # opt-in | auto-add
-#
-# [brands]
-# olive_oil = ["California Olive Ranch", "Cobram Estate"]
-# butter = ["Kerrygold", "Plugra"]
-# yogurt = ["Fage", "Siggi's"]
-#
-# [dietary]
-# avoid = []                                # ingredients to always exclude
-# limit = ["cilantro"]                      # ingredients to deprioritize, not reject
+[brands]
+paper_towels = ["Viva"]
