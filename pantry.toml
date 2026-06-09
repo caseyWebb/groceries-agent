@@ -38,16 +38,6 @@
 [[items]]
 added_at = "2026-06-09"
 last_verified_at = "2026-06-09"
-name = "garlic"
-
-[[items]]
-added_at = "2026-06-09"
-last_verified_at = "2026-06-09"
-name = "garlic"
-
-[[items]]
-added_at = "2026-06-09"
-last_verified_at = "2026-06-09"
 name = "yellow onion"
 
 [[items]]
@@ -249,4 +239,9 @@ name = "white rice"
 added_at = "2026-06-09"
 last_verified_at = "2026-06-09"
 name = "parmesan"
+
+[[items]]
+added_at = "2026-06-09"
+last_verified_at = "2026-06-09"
+name = "garlic"
 
