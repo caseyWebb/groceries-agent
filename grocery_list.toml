@@ -38,12 +38,5 @@
 # for_recipes = []
 # added_at = "2026-06-09"
 
-[[items]]
-name = "butter"
-quantity = "1"
-kind = "grocery"
-status = "in_cart"
-source = "pantry_low"
-for_recipes = []
-added_at = "2026-06-09"
+items = []
 
