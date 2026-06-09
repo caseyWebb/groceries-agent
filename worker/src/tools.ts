@@ -11,13 +11,16 @@ import { parseMarkdown, parseToml } from "./parse.js";
 import { ToolError, runTool } from "./errors.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
+import { registerOrderTools } from "./order-tools.js";
 import { filterRecipes, type RecipeFilters, type RecipeIndex } from "./recipes.js";
 import { createKrogerClient, type KrogerCandidate } from "./kroger.js";
 import {
   matchIngredient,
   isFulfillable,
   type CachedMapping,
+  type MatchContext,
   type MatchDeps,
+  type MatchResult,
 } from "./matching.js";
 import { compareUnitPrice, type UnitPriceItem } from "./unit-price.js";
 
@@ -99,6 +102,63 @@ export function buildServer(env: Env): McpServer {
       })();
     }
     return locationPromise;
+  }
+
+  // Shared matcher wiring: aliases, [brands], and the SKU cache are read once and
+  // reused by both match_ingredient_to_kroger_sku and place_order's resolution.
+  let aliasesPromise: Promise<Record<string, string>> | null = null;
+  function getAliases(): Promise<Record<string, string>> {
+    if (!aliasesPromise) {
+      aliasesPromise = (async () => {
+        const aliasText = await readOptional(gh, "aliases.toml");
+        return aliasText !== null
+          ? ((parseToml(aliasText, "aliases.toml").aliases as Record<string, string>) ?? {})
+          : {};
+      })();
+    }
+    return aliasesPromise;
+  }
+
+  async function getCacheMappings(): Promise<CachedMapping[]> {
+    const cacheText = await readOptional(gh, "skus/kroger.toml");
+    const cache: CachedMapping[] = [];
+    if (cacheText) {
+      const mappings = (parseToml(cacheText, "skus/kroger.toml").mappings as Record<string, unknown>[]) ?? [];
+      for (const m of mappings) {
+        if (typeof m.ingredient === "string" && typeof m.sku === "string") {
+          cache.push({
+            ingredient: m.ingredient,
+            sku: m.sku,
+            brand: typeof m.brand === "string" ? m.brand : undefined,
+            size: typeof m.size === "string" ? m.size : undefined,
+          });
+        }
+      }
+    }
+    return cache;
+  }
+
+  /** Run the resolve-only matcher for one ingredient with the shared deps. */
+  async function resolveIngredient(
+    ingredient: string,
+    context: MatchContext = {},
+    bypassCache = false,
+  ): Promise<MatchResult> {
+    const locationId = await getLocationId();
+    const prefs = await getPreferences();
+    const brands = (prefs.brands as Record<string, string[]> | undefined) ?? {};
+    const aliases = await getAliases();
+    const cache = await getCacheMappings();
+    const deps: MatchDeps = {
+      search: (term: string): Promise<KrogerCandidate[]> =>
+        kroger.search(term, { locationId, limit: 15 }),
+      productById: (productId: string): Promise<KrogerCandidate | null> =>
+        kroger.productById(productId, locationId),
+      aliases,
+      brands,
+      cache,
+    };
+    return matchIngredient(deps, ingredient, context, bypassCache);
   }
 
   server.registerTool(
@@ -396,50 +456,17 @@ export function buildServer(env: Env): McpServer {
       },
     },
     ({ ingredient, context, bypass_cache }) =>
-      runTool(async () => {
-        const locationId = await getLocationId();
-        const prefs = await getPreferences();
-        const brands = (prefs.brands as Record<string, string[]> | undefined) ?? {};
-
-        const aliasText = await readOptional(gh, "aliases.toml");
-        const aliases =
-          aliasText !== null
-            ? ((parseToml(aliasText, "aliases.toml").aliases as Record<string, string>) ?? {})
-            : {};
-
-        const cacheText = await readOptional(gh, "skus/kroger.toml");
-        const cache: CachedMapping[] = [];
-        if (cacheText) {
-          const mappings = (parseToml(cacheText, "skus/kroger.toml").mappings as Record<string, unknown>[]) ?? [];
-          for (const m of mappings) {
-            if (typeof m.ingredient === "string" && typeof m.sku === "string") {
-              cache.push({
-                ingredient: m.ingredient,
-                sku: m.sku,
-                brand: typeof m.brand === "string" ? m.brand : undefined,
-                size: typeof m.size === "string" ? m.size : undefined,
-              });
-            }
-          }
-        }
-
-        const deps: MatchDeps = {
-          search: (term: string): Promise<KrogerCandidate[]> =>
-            kroger.search(term, { locationId, limit: 15 }),
-          productById: (productId: string): Promise<KrogerCandidate | null> =>
-            kroger.productById(productId, locationId),
-          aliases,
-          brands,
-          cache,
-        };
-        return matchIngredient(deps, ingredient, context ?? {}, bypass_cache ?? false);
-      }),
+      runTool(() => resolveIngredient(ingredient, context ?? {}, bypass_cache ?? false)),
   );
 
   // Repo-data write tools + the grocery-list buy list. These persist via the
-  // atomic commit engine; no cart or external-service writes (Change 06b).
+  // atomic commit engine; no cart or external-service writes.
   registerWriteTools(server, gh);
   registerGroceryListTools(server, gh);
+
+  // place_order — the order-time flush: resolve the list, write the Kroger cart,
+  // persist learned SKUs. The one tool that reaches the cart (Change 06b).
+  registerOrderTools(server, gh, env, resolveIngredient);
 
   return server;
 }

@@ -9,6 +9,7 @@ import { createMcpHandler } from "agents/mcp";
 import type { Env } from "./env.js";
 import { buildServer } from "./tools.js";
 import { createAccessVerifier, type AccessVerifier } from "./access.js";
+import { handleOAuth } from "./oauth.js";
 
 // Module-level singleton so the JWKS fetched by the verifier is cached across
 // requests served by the same isolate. Rebuilt only if the config changes.
@@ -39,6 +40,13 @@ export default {
       return new Response("grocery-mcp ok — MCP endpoint at POST /mcp\n", {
         headers: { "content-type": "text/plain" },
       });
+    }
+
+    // The Kroger OAuth callback carries no Access JWT, so /oauth/* is handled
+    // BEFORE the in-Worker gate (and bypassed at the edge by an Access policy).
+    // It is secured by OAuth state + PKCE instead. Everything else stays gated.
+    if (url.pathname.startsWith("/oauth/")) {
+      return handleOAuth(env, url);
     }
 
     const v = getVerifier(env);

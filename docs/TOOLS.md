@@ -173,7 +173,7 @@ Remove an item by name.
 **Returns:**
 - `{ removed: bool, commit_sha? }`
 
-**Notes:** Promoting a low/out pantry item onto the list is a **prompted** decision (record `source: "pantry_low"`), never automatic. Lifecycle transitions past `active` (`in_cart`/`ordered`/`received`) arrive with `place_order` in Change 06b.
+**Notes:** Promoting a low/out pantry item onto the list is a **prompted** decision (record `source: "pantry_low"`), never automatic. The lifecycle past `active` (`in_cart` → `ordered` → `received`) is driven by `place_order` and the user-asserted transitions — see [`place_order`](#place_orderpayload) below.
 
 ---
 
@@ -423,9 +423,46 @@ All sections are optional except `commit_message`.
 
 **Notes:** Because the Worker is stateless, batching is **LLM-orchestrated** — accumulate a session's intended changes and flush them through one `commit_changes` call. The granular write tools (`update_recipe`, `update_pantry`, …) each commit on their own and are for standalone one-offs; don't call them N times mid-session.
 
-### `place_order(payload)` — Change 06b (not yet implemented)
+### `place_order(payload)`
 
-The order-time flush: resolve the whole `grocery_list.toml` against current Kroger availability, write the cart (`PUT /v1/cart/add`), and persist learned SKU mappings to `skus/kroger.toml`. The **only** tool that writes to Kroger. Lands in Change 06b with the Kroger `authorization_code` OAuth + KV bundle.
+The order-time flush — the **only** tool that writes a Kroger cart. Resolves the whole to-buy set against *current* Kroger availability, writes the cart (`PUT /v1/cart/add`), and appends learned ingredient→SKU mappings to `skus/kroger.toml`. Backed by the Kroger `authorization_code` + PKCE user-context client and the KV-backed rotating refresh token.
+
+**To-buy set (order-time dedup):** `grocery_list ∪ menu_needs − pantry_has`. Only `active` list items participate. A name present in the pantry is **not** silently dropped — it returns in `partials` for you to prompt on, and is bought only if the user confirms it via `include_partials` (the no-auto-decide rule). Default buy quantity is **1 package** per item unless overridden.
+
+**Resolution + checkpoint:** each item runs through the [matcher](#match_ingredient_to_kroger_skuingredient-context) with cache revalidation (a cache hit no longer fulfillable is re-resolved). Items the matcher returns as `ambiguous` or `unavailable` are collected into a single `checkpoint` and are **not** added to the cart. Disposition them and re-call with `overrides` (force a SKU) — already-carted items have advanced to `in_cart`, so they won't be re-added.
+
+**Params:**
+```
+{
+  menu_needs:       [{ name, quantity?, for_recipes? }],  // needs not yet on the list
+  quantities:       { "<name>": <packages> },             // per-item package count (default 1)
+  include_partials: ["<name>", ...],                       // pantry items the user confirmed buying anyway
+  overrides:        [{ name, sku, brand?, size? }],        // disposition previously-ambiguous items
+  preview:          bool                                    // resolve + report only; no cart write, no commits
+}
+```
+All sections optional. With no args it flushes the current `grocery_list.toml`.
+
+**Returns:**
+```
+{
+  resolved:  [{ name, sku, brand, size, quantity }],
+  checkpoint:[{ name, kind: "ambiguous"|"unavailable", candidates?, message }],
+  partials:  [{ name, for_recipes }],
+  sku_cache: { committed, commit_sha?, error? },
+  cart:      { written, count?, error?, code? },   // code carries reauth_required etc.
+  list:      { advanced, commit_sha?, error? },
+  preview:   bool
+}
+```
+
+**Partial-failure honesty:** the SKU-cache commit and the cart write are **independent best-effort** operations (the SKU cache is a pure hint). Order: commit the cache → write the cart → advance the list to `in_cart` *only after a successful cart write*. So a cart failure leaves the list `active` (retryable, no silent drop) and **never** reports a populated cart; a cache-commit failure after a successful cart just re-resolves next time. If the cart write fails because the Kroger refresh token was rejected, `cart.code` is `reauth_required` — re-run the one-time `/oauth/init` (see `worker/README.md`).
+
+**Lifecycle (`active → in_cart → ordered → received`):** `place_order` sets `in_cart`. Because the cart API is write-only and unreadable, the transitions past `in_cart` are **user-asserted**, never agent-verified:
+- *"I placed the order"* → advance `in_cart` items to `ordered` via `update_grocery_list`.
+- *"I picked up the groceries"* → `received` (terminal): `remove_from_grocery_list` for each, and for `grocery`-kind items only, restock `pantry.toml` via `update_pantry`. `household`/`other` items don't touch the pantry.
+
+A **stale-cart reminder** fires when a new order begins while the prior list still has `in_cart` items never confirmed `ordered`: remind the user to clear the Kroger cart manually (the API can't), rather than silently double-adding.
 
 ---
 

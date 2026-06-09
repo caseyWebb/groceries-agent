@@ -2,11 +2,13 @@
 
 Cloudflare Worker hosting the grocery agent's custom MCP server. Change 04
 implemented the **read-only, repo-data-backed** tools; Change 05 added the
-**Kroger-facing reads** and the ingredient→SKU matching pipeline; Change 06 adds
+**Kroger-facing reads** and the ingredient→SKU matching pipeline; Change 06 added
 the **repo-data write tools**, the `grocery_list.toml` buy list, the atomic
-batched-commit engine, and the **Cloudflare Access** identity gate. The Worker is
-no longer authless. It remains stateless with no KV — the Kroger cart write,
-`authorization_code` OAuth, and the KV refresh-token slot land in Change 06b.
+batched-commit engine, and the **Cloudflare Access** identity gate; Change 06b
+adds **`place_order`** — the order-time cart flush — plus the Kroger
+`authorization_code` + PKCE user-context auth it needs and a **KV namespace**
+holding the rotating refresh token (the Worker's only persistent state). The
+Worker is no longer authless or stateless.
 
 ## Tools
 
@@ -53,9 +55,31 @@ commit, structurally validated first. No tool here writes a Kroger cart.
 | `read/add/update/remove_grocery_list` | `grocery_list.toml` | SKU-free buy list; `add` merges by normalized name |
 | `commit_changes(payload)` | many | batches a whole session into one commit |
 
+### Order placement (Change 06b)
+
+| Tool | Writes | Notes |
+|------|--------|-------|
+| `place_order(payload)` | Kroger cart + `skus/kroger.toml` + `grocery_list.toml` | the **only** cart write; resolves `grocery_list ∪ menu_needs − pantry_has`, `PUT /v1/cart/add`, appends learned SKUs, advances list to `in_cart` |
+
+`place_order` resolves the whole to-buy set against *current* Kroger availability
+via the Change 05 matcher, batches `ambiguous`/`unavailable` items into a single
+`checkpoint` (never added unilaterally) and pantry overlaps into `partials` (to
+prompt on). The SKU-cache commit and the cart write are **independent
+best-effort**: it commits the cache, writes the cart, then advances the list to
+`in_cart` *only after a successful cart write* — so a cart failure is never
+reported as a populated cart, and `cart.code = "reauth_required"` signals the
+Kroger refresh token was rejected (re-run `/oauth/init`). Lifecycle past
+`in_cart` (`ordered`, `received`) is **user-asserted** — see `docs/TOOLS.md`.
+
+The cart write rides the **user-context** Kroger client (`src/kroger-user.ts`,
+`authorization_code` + PKCE), distinct from the read-side `client_credentials`
+client. Its rotating refresh token lives in the `KROGER_KV` namespace.
+
 Failures return a structured `{ error, message, ... }` (codes: `not_found`,
 `index_unavailable`, `upstream_unavailable`, `malformed_data`, `unsupported`,
-`validation_failed`, `conflict`) — never a raw throw. `validation_failed` means a
+`validation_failed`, `conflict`, `reauth_required`) — never a raw throw.
+`reauth_required` (surfaced in `place_order`'s `cart.code`) means the Kroger
+refresh token was rejected — re-run the one-time `/oauth/init`. `validation_failed` means a
 staged write didn't pass structural validation (nothing committed);
 `conflict` means the branch kept advancing past the commit-engine retry bound.
 The matcher's `unavailable` is a tool **result**, not an error.
@@ -63,8 +87,12 @@ The matcher's `unavailable` is a tool **result**, not an error.
 ## Architecture
 
 - **Transport:** `createMcpHandler` (from `agents/mcp`) over Streamable HTTP —
-  stateless, no Durable Objects, no KV. MCP endpoint is `POST /mcp`; `GET /`
-  returns a health line.
+  no Durable Objects. MCP endpoint is `POST /mcp`; `GET /` returns a health
+  line; `GET /oauth/*` drives the one-time Kroger consent (ungated — see below).
+- **State:** one **KV namespace** (`KROGER_KV`) holding the rotating Kroger
+  refresh token (`kroger:refresh_token`) and short-lived PKCE verifiers
+  (`kroger:pkce:<state>`). The Worker's only persistent state; access tokens are
+  held in isolate memory and re-minted on expiry.
 - **Data access:** one authenticated GitHub client (`src/github.ts`) reads files
   at `GITHUB_REF` via the Contents API (raw media type), with retry/backoff.
 - **Parsing:** `js-yaml` + a manual frontmatter split, `smol-toml` for TOML
@@ -81,6 +109,13 @@ Non-secret repo coordinates are `vars` in `wrangler.jsonc`
 - **`KROGER_CLIENT_ID`** / **`KROGER_CLIENT_SECRET`** — a Kroger Developer
   (**public tier**) app's `client_credentials` credentials. Used by the Kroger
   client to mint access tokens for the public Products/Locations APIs.
+- **`KROGER_OAUTH_CLIENT_ID`** / **`KROGER_OAUTH_CLIENT_SECRET`** — the Kroger
+  `authorization_code` app credentials (user context: cart writes). May be the
+  **same** app as the `client_credentials` one if it carries a registered
+  redirect URI and the `cart.basic:write` scope, or a separate app.
+
+There is also one **binding** (not a secret), `KROGER_KV` — the KV namespace for
+the rotating refresh token (see [Kroger OAuth + KV setup](#kroger-oauth--kv-setup-change-06b)).
 
 Secrets are **never** committed. Set once via `wrangler secret put`; they persist
 across deploys.
@@ -102,6 +137,45 @@ e.g. `"Kroger - 76104"`); the Worker resolves its ZIP to a Kroger `locationId`
 via the Locations API and caches it. Pricing requires a `locationId`, so this
 must be set for any priced tool to work.
 
+### Kroger OAuth + KV setup (Change 06b)
+
+A Kroger **cart write** needs user context (the read tools only need
+`client_credentials`), so `place_order` rides an `authorization_code` + PKCE
+flow. Kroger refresh tokens are **single-use/rotating**, so the refresh token is
+the Worker's one piece of persistent state, held in a **KV namespace**.
+
+1. **Kroger app.** Reuse the public-tier app or create a second one. It must have
+   the **redirect URI** `https://<your-worker-host>/oauth/callback` registered and
+   the **`cart.basic:write`** scope granted. Set its credentials as secrets:
+
+   ```sh
+   npx wrangler secret put KROGER_OAUTH_CLIENT_ID
+   npx wrangler secret put KROGER_OAUTH_CLIENT_SECRET
+   ```
+
+2. **KV namespace.** Create it and paste the returned id into `wrangler.jsonc`
+   (`kv_namespaces[0].id`, replacing `REPLACE_WITH_KV_NAMESPACE_ID`):
+
+   ```sh
+   npx wrangler kv namespace create KROGER_KV
+   ```
+
+3. **Access carve-out.** Kroger's redirect to `/oauth/callback` carries **no**
+   Cloudflare Access JWT, so it would be blocked by the gate. Add an Access
+   **Bypass** policy scoped to the path `/oauth/*` on the gated hostname (Zero
+   Trust dashboard → the grocery-mcp application → add a policy: **Bypass**,
+   include **Everyone**, with a path match on `/oauth`). The carve-out is secured
+   instead by OAuth `state` + PKCE: the per-flow verifier is held in KV keyed by
+   `state`, so a callback whose `state` has no stored verifier is rejected with no
+   token exchange. `/mcp` and everything else stay gated. In-Worker, `index.ts`
+   also routes `/oauth/*` **before** the JWT check for the same reason.
+
+4. **One-time authorization.** After deploy, visit `https://<your-worker-host>/oauth/init`
+   in a browser, approve at Kroger, and the `/oauth/callback` exchange stores the
+   refresh token in KV. This is a one-time act; tokens refresh automatically
+   thereafter. If a refresh is ever rejected, `place_order` returns
+   `cart.code: "reauth_required"` — just re-run `/oauth/init`.
+
 ## Local development
 
 ```sh
@@ -112,6 +186,8 @@ cat > .dev.vars <<'EOF'
 GITHUB_TOKEN = "github_pat_..."
 KROGER_CLIENT_ID = "..."
 KROGER_CLIENT_SECRET = "..."
+KROGER_OAUTH_CLIENT_ID = "..."
+KROGER_OAUTH_CLIENT_SECRET = "..."
 EOF
 
 npm run dev          # wrangler dev (local Worker)
@@ -134,7 +210,13 @@ npx wrangler deploy                       # creates the Worker
 npx wrangler secret put GITHUB_TOKEN        # paste the PAT
 npx wrangler secret put KROGER_CLIENT_ID    # paste the Kroger client ID
 npx wrangler secret put KROGER_CLIENT_SECRET # paste the Kroger client secret
+npx wrangler secret put KROGER_OAUTH_CLIENT_ID     # cart-write (authorization_code) app
+npx wrangler secret put KROGER_OAUTH_CLIENT_SECRET
 ```
+
+The KV namespace + Access `/oauth/*` bypass + the one-time `/oauth/init` are a
+separate one-time step — see
+[Kroger OAuth + KV setup](#kroger-oauth--kv-setup-change-06b).
 
 After this, **CD owns every deploy**: a push to `worker/**` on `main` runs
 [`.github/workflows/deploy-worker.yml`](../.github/workflows/deploy-worker.yml),
@@ -165,8 +247,11 @@ One-time setup (Cloudflare **Zero Trust** dashboard, **manual** — not in CD):
    → `/.well-known/oauth-authorization-server` and runs registration + PKCE +
    token issuance). Copy the **AUD tag** from Additional settings.
 
-Access protects the whole hostname — no path carve-out is needed for this change
-(`/mcp` is validated like everything else).
+Access protects the whole hostname **except `/oauth/*`**, which is carved out by a
+Bypass policy so the Kroger OAuth callback (which carries no Access JWT) can reach
+the Worker — secured instead by OAuth `state` + PKCE. See
+[Kroger OAuth + KV setup](#kroger-oauth--kv-setup-change-06b). `/mcp` and
+everything else are validated like normal.
 
 **In-Worker JWT validation (defense-in-depth, implemented).** `src/access.ts`
 revalidates the `Cf-Access-Jwt-Assertion` header that Access injects, using `jose`
@@ -184,10 +269,10 @@ applies).
 > implements the OAuth endpoints in the Worker itself (more code, not
 > beta-dependent, still standard-OAuth so Claude.ai web works).
 >
-> Change 06b adds a Kroger OAuth callback at `/oauth/*` that **must bypass**
-> Access (Kroger's redirect carries no Access JWT) — protected by OAuth
-> `state`/PKCE instead. Confirm it doesn't collide with Access's own
-> Managed-OAuth endpoints when that lands.
+> The Kroger OAuth callback at `/oauth/*` (Change 06b) **bypasses** Access
+> (Kroger's redirect carries no Access JWT) — protected by OAuth `state`/PKCE
+> instead. It lives under `/oauth/*`, distinct from Access's own Managed-OAuth
+> endpoints under `/.well-known/` and `/cdn-cgi/access/`, so they don't collide.
 
 ## Observability
 

@@ -23,7 +23,7 @@ See `docs/TOOLS.md` in the repo for the full tool inventory. The grocery-mcp too
 
 **Batched commits.** Tool operations within a conversation accumulate into a single git commit at the end via `commit_changes`. Don't make a separate commit for every small update. The commit log should read like a session summary, not a play-by-play. Because the Worker is stateless (no server-side staging), batching is **your** job: hold the session's intended changes and flush them through one `commit_changes` call. The granular write tools (`update_recipe`, `update_pantry`, …) each commit on their own — use them for standalone one-offs ("rate the salmon 4 stars"), not N times inside a session.
 
-**Capture vs. flush (two stores, opposite mutability).** The repo is a freely-mutable store; the Kroger cart is append-only (no remove, no checkout, no read via API). So capture buy-intent continuously into the repo's `grocery_list.toml` all week, and flush it to the cart exactly once, at order time, via `place_order` (Change 06b). Three distinct kinds of state, never conflated:
+**Capture vs. flush (two stores, opposite mutability).** The repo is a freely-mutable store; the Kroger cart is append-only (no remove, no checkout, no read via API). So capture buy-intent continuously into the repo's `grocery_list.toml` all week, and flush it to the cart exactly once, at order time, via `place_order`. Three distinct kinds of state, never conflated:
 - `pantry.toml` — **observation**: what's physically in the kitchen.
 - `stockup.toml` — **conditional intent**: buy IF it drops below the threshold.
 - `grocery_list.toml` — **committed intent**: buy on the next order (ingredient-level, SKU-free).
@@ -82,7 +82,7 @@ Two starting points: **open-ended** (you pick recipes) or **recipe-seeded** (I n
 
 6. Send the proposal in chat. Iterate based on my revisions — rerun affected tool calls as needed.
 
-7. On agreement, persist the repo side of the session in one `commit_changes` call: `last_cooked` updates, draft imports, pantry verifications, and the to-buy items added to `grocery_list.toml`. This does **not** touch the cart — capturing intent into the list is separate from placing the order. (The cart flush is `place_order`, Change 06b: resolve the list against current availability, write the cart, persist SKU mappings — invoked when I'm ready to order, which may be this sitting or later.)
+7. On agreement, persist the repo side of the session in one `commit_changes` call: `last_cooked` updates, draft imports, pantry verifications, and the to-buy items added to `grocery_list.toml`. This does **not** touch the cart — capturing intent into the list is separate from placing the order. (The cart flush is `place_order`: resolve the list against current availability, write the cart, persist SKU mappings — invoked when I'm ready to order, which may be this sitting or later. See the Order placement flow below.)
 
 8. Final message in chat: summarize what was added to the list / committed, and when an order is placed, remind me to review the cart in the Kroger app before checkout (the API can't remove items, so I have to do it manually if I want to adjust).
 
@@ -130,9 +130,27 @@ Triggered on: "how have I been eating this month?", "what protein mix have I had
 
 Call `retrospective(period)` and summarize.
 
+### Order placement
+
+Triggered on: "place the order", "send it to my cart", "I'm ready to order", "go ahead and order the groceries", etc. This is the **flush** — distinct from the menu request's capture. It may happen in the same sitting as a menu request or days later.
+
+1. **Stale-cart check first.** Read `grocery_list.toml`. If any items are still `in_cart` from a prior order that was never confirmed `ordered`, remind me to clear the Kroger cart manually before proceeding (the API can't remove items — silently flushing again double-adds). Wait for my acknowledgment.
+
+2. **Resolve and preview.** Call `place_order(preview=true)` (optionally with `menu_needs` for needs not yet on the list). Surface, as one batch, anything that needs my decision before writing:
+   - `checkpoint` items (`ambiguous` → pick from candidates; `unavailable` → offer `propose_substitutions`). Don't add these unilaterally.
+   - `partials` — items the list/menu wants that the pantry already has. Tell me the plan's required amount (aggregated from `for_recipes`) and ask whether to buy more. Default buy is 1 package; never silently net partials against the order.
+
+3. **Flush.** Once I've dispositioned the batch, call `place_order` for real — pass `overrides` for the items I picked SKUs for, `include_partials` for the partials I confirmed, `quantities` for anything beyond 1 package. Resolved items advance to `in_cart`.
+
+4. **Report honestly.** `place_order` returns the cart write and SKU-cache commit independently. Never tell me the cart is populated when `cart.written` is false. If `cart.code` is `reauth_required`, the Kroger refresh token was rejected — tell me to re-run the one-time `/oauth/init` authorization (see `worker/README.md`); the resolution work is preserved. Remind me to review the cart in the Kroger app before checkout (the API can't remove items, so I prune manually).
+
+**Lifecycle past `in_cart` is user-asserted — never claim it on your own:**
+- *"I placed the order"* → advance `in_cart` items to `ordered` (`update_grocery_list`).
+- *"I picked up the groceries"* → `received` (terminal): `remove_from_grocery_list` for each, and for `grocery`-kind items only, restock `pantry.toml` (`update_pantry`). `household`/`other` items don't touch the pantry.
+
 ## Behavior rules
 
-**Cart writes outside menu generation are rare.** If I say "I'm out of bread," default to noting it for the next menu request rather than firing a cart write immediately. Only write the cart now if I explicitly say to.
+**Never flush to the cart unprompted.** `place_order` is the only cart write, and it runs only when I explicitly say to order (see the Order placement flow). If I say "I'm out of bread," capture it onto `grocery_list.toml` for the next order — don't fire `place_order`. Capture is continuous; flush is a deliberate, separate act.
 
 **Kroger Cart API is write-only.** It can add but not remove or check out. When you've already written a cart and reconciliation comes up (farmers market additions, last-minute substitutions), report what would have been removed and tell me to manually remove those items in the Kroger app. Never silently pretend items are gone.
 

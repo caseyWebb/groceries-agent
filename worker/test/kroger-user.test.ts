@@ -1,0 +1,190 @@
+import { describe, it, expect } from "vitest";
+import {
+  createKrogerUserClient,
+  ReauthRequiredError,
+  toToolError,
+  type KvStore,
+  type UserTokenCache,
+} from "../src/kroger-user.js";
+import { KrogerError } from "../src/kroger.js";
+import type { Env } from "../src/env.js";
+
+const TOKEN_URL = "https://api.kroger.com/v1/connect/oauth2/token";
+const CART_URL = "https://api.kroger.com/v1/cart/add";
+const REFRESH_KEY = "kroger:refresh_token";
+
+const env = {
+  KROGER_OAUTH_CLIENT_ID: "cid",
+  KROGER_OAUTH_CLIENT_SECRET: "csecret",
+} as unknown as Env;
+
+/** In-memory KV that records the order of mutations for write-before-use assertions. */
+function memKv(initial: Record<string, string> = {}): KvStore & { log: string[] } {
+  const store = new Map(Object.entries(initial));
+  const log: string[] = [];
+  return {
+    log,
+    async get(key) {
+      return store.get(key) ?? null;
+    },
+    async put(key, value) {
+      log.push(`put:${key}=${value}`);
+      store.set(key, value);
+    },
+    async delete(key) {
+      log.push(`delete:${key}`);
+      store.delete(key);
+    },
+  };
+}
+
+function freshCache(): UserTokenCache {
+  return { token: null };
+}
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("Kroger user-context client — token rotation", () => {
+  it("writes the new refresh token to KV BEFORE using the new access token", async () => {
+    const events: string[] = [];
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      if (url.startsWith(TOKEN_URL)) {
+        events.push("refresh");
+        return json({ access_token: "A1", refresh_token: "R1", expires_in: 1800 });
+      }
+      // cart write — record the bearer used so we can assert ordering
+      events.push(`cart:${(init?.headers as Record<string, string>).Authorization}`);
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, {
+      fetch: fetchMock,
+      cache: freshCache(),
+      now: () => 1000,
+    });
+    await client.addToCart([{ upc: "0001", quantity: 1 }]);
+
+    // The rotated refresh token landed in KV before the cart request fired.
+    const putIdx = kv.log.indexOf(`put:${REFRESH_KEY}=R1`);
+    const cartIdx = events.findIndex((e) => e.startsWith("cart:"));
+    expect(putIdx).toBeGreaterThanOrEqual(0);
+    expect(cartIdx).toBeGreaterThanOrEqual(0);
+    // KV put happens during refresh, which precedes the cart write entirely.
+    expect(events[0]).toBe("refresh");
+    expect(events[1]).toBe("cart:Bearer A1");
+  });
+
+  it("maps a Kroger-rejected refresh to reauth_required", async () => {
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    const fetchMock = (async (url: string) => {
+      if (url.startsWith(TOKEN_URL)) return new Response("invalid_grant", { status: 400 });
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, {
+      fetch: fetchMock,
+      cache: freshCache(),
+      now: () => 1000,
+    });
+    await expect(client.addToCart([{ upc: "x", quantity: 1 }])).rejects.toBeInstanceOf(
+      ReauthRequiredError,
+    );
+  });
+
+  it("returns reauth_required when no refresh token is stored", async () => {
+    const kv = memKv();
+    const fetchMock = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await expect(client.getAccessToken()).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+
+  it("toToolError maps ReauthRequiredError to the reauth_required code", () => {
+    expect(toToolError(new ReauthRequiredError()).code).toBe("reauth_required");
+    expect(toToolError(new KrogerError(503, "boom")).code).toBe("upstream_unavailable");
+  });
+
+  it("reuses a cached access token without re-refreshing", async () => {
+    let refreshes = 0;
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    const fetchMock = (async (url: string) => {
+      if (url.startsWith(TOKEN_URL)) {
+        refreshes++;
+        return json({ access_token: "A1", refresh_token: `R${refreshes}`, expires_in: 1800 });
+      }
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await client.addToCart([{ upc: "a", quantity: 1 }]);
+    await client.addToCart([{ upc: "b", quantity: 1 }]);
+    expect(refreshes).toBe(1);
+  });
+});
+
+describe("Kroger user-context client — cart write", () => {
+  it("succeeds on a 204 from PUT /v1/cart/add", async () => {
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    let cartCalls = 0;
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      if (url.startsWith(TOKEN_URL)) return json({ access_token: "A1", refresh_token: "R1", expires_in: 1800 });
+      cartCalls++;
+      expect(url).toBe(CART_URL);
+      expect(init?.method).toBe("PUT");
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({ items: [{ upc: "0001111", quantity: 2 }] });
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await client.addToCart([{ upc: "0001111", quantity: 2 }]);
+    expect(cartCalls).toBe(1);
+  });
+
+  it("refreshes once on a 401 then retries the cart write", async () => {
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    let cartCalls = 0;
+    const fetchMock = (async (url: string) => {
+      if (url.startsWith(TOKEN_URL)) return json({ access_token: `A${cartCalls + 1}`, refresh_token: "R1", expires_in: 1800 });
+      cartCalls++;
+      if (cartCalls === 1) return new Response("unauthorized", { status: 401 });
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await client.addToCart([{ upc: "x", quantity: 1 }]);
+    expect(cartCalls).toBe(2);
+  });
+
+  it("throws KrogerError on a non-401 cart failure (e.g. missing scope)", async () => {
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    const fetchMock = (async (url: string) => {
+      if (url.startsWith(TOKEN_URL)) return json({ access_token: "A1", refresh_token: "R1", expires_in: 1800 });
+      return new Response("forbidden", { status: 403 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await expect(client.addToCart([{ upc: "x", quantity: 1 }])).rejects.toBeInstanceOf(KrogerError);
+  });
+
+  it("exchangeCode persists the refresh token and caches the access token", async () => {
+    const kv = memKv();
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      expect(url).toBe(TOKEN_URL);
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("grant_type")).toBe("authorization_code");
+      expect(body.get("code")).toBe("CODE");
+      expect(body.get("code_verifier")).toBe("VERIFIER");
+      return json({ access_token: "A1", refresh_token: "R1", expires_in: 1800 });
+    }) as unknown as typeof fetch;
+
+    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    await client.exchangeCode("CODE", "VERIFIER", "https://x/oauth/callback");
+    expect(await kv.get(REFRESH_KEY)).toBe("R1");
+  });
+});

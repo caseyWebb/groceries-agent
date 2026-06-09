@@ -19,10 +19,15 @@ import {
   type GroceryItem,
 } from "./grocery.js";
 
-const PATH = "grocery_list.toml";
+export const GROCERY_LIST_PATH = "grocery_list.toml";
+const PATH = GROCERY_LIST_PATH;
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+export function coerceGroceryItem(raw: Record<string, unknown>): GroceryItem {
+  return coerceItem(raw);
 }
 
 function coerceItem(raw: Record<string, unknown>): GroceryItem {
@@ -40,7 +45,7 @@ function coerceItem(raw: Record<string, unknown>): GroceryItem {
 }
 
 /** Load the current list: its raw text (for header preservation), top-level data, and items. */
-async function loadList(
+export async function loadGroceryList(
   gh: GitHubClient,
 ): Promise<{ text: string; data: Record<string, unknown>; items: GroceryItem[] }> {
   const text = (await readOptional(gh, PATH)) ?? "";
@@ -48,14 +53,16 @@ async function loadList(
   const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : [];
   return { text, data, items: rawItems.map(coerceItem) };
 }
+const loadList = loadGroceryList;
 
-function writeFile(
+export function serializeGroceryList(
   text: string,
   data: Record<string, unknown>,
   items: GroceryItem[],
 ): TreeFile {
   return { path: PATH, content: stringifyTomlWithHeader(text, { ...data, items }) };
 }
+const writeFile = serializeGroceryList;
 
 export function registerGroceryListTools(server: McpServer, gh: GitHubClient): void {
   server.registerTool(

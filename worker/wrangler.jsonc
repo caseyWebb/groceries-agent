@@ -1,8 +1,12 @@
 {
   // grocery-mcp — custom MCP server for the grocery agent.
-  // Stateless (createMcpHandler over Streamable HTTP): no Durable Objects, no KV.
+  // Transport: createMcpHandler over Streamable HTTP (no Durable Objects). The
+  // single piece of persistent state is the KV namespace below, holding the
+  // rotating Kroger refresh token (Change 06b).
   // Secrets are NOT in this file. Set them out-of-band and they persist across deploys:
   //   wrangler secret put GITHUB_TOKEN
+  //   wrangler secret put KROGER_OAUTH_CLIENT_ID
+  //   wrangler secret put KROGER_OAUTH_CLIENT_SECRET
   // Non-secret config (public repo coordinates) lives in vars below.
   "name": "grocery-mcp",
   "main": "src/index.ts",
@@ -23,6 +27,16 @@
     "ACCESS_AUD": "bd70d44841bf62d25e53280251f1f5b2f8dc7131057bca9d3f54128b56f9985c",
     "ACCESS_TEAM_DOMAIN": "dirtbags.cloudflareaccess.com"
   },
+  // KV: the rotating Kroger refresh token (key `kroger:refresh_token`) + short-
+  // lived PKCE verifiers (`kroger:pkce:<state>`). Create the namespace and paste
+  // its id here (infra — Change 06b §8.1):
+  //   npx wrangler kv namespace create KROGER_KV
+  "kv_namespaces": [
+    {
+      "binding": "KROGER_KV",
+      "id": "aee060bb679141d995c8bc0d5643b9d3"
+    }
+  ],
   "observability": {
     "enabled": true
   }

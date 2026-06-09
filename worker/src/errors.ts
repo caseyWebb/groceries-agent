@@ -10,7 +10,9 @@ export type ErrorCode =
   | "unsupported"
   // Write-path codes (introduced with the git write tools):
   | "validation_failed" // a staged change failed structural validation; nothing committed
-  | "conflict"; // the ref kept moving under us; commit abandoned after bounded retries
+  | "conflict" // the ref kept moving under us; commit abandoned after bounded retries
+  // Order-placement codes (Change 06b):
+  | "reauth_required"; // the Kroger refresh token was rejected; re-run the one-time /oauth/init
 
 export interface ToolErrorShape {
   error: ErrorCode;
