@@ -7,7 +7,10 @@ export type ErrorCode =
   | "index_unavailable"
   | "upstream_unavailable"
   | "malformed_data"
-  | "unsupported";
+  | "unsupported"
+  // Write-path codes (introduced with the git write tools):
+  | "validation_failed" // a staged change failed structural validation; nothing committed
+  | "conflict"; // the ref kept moving under us; commit abandoned after bounded retries
 
 export interface ToolErrorShape {
   error: ErrorCode;

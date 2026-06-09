@@ -1,0 +1,39 @@
+# grocery_list.toml — the buy list (committed intent for the next order)
+#
+# An ingredient/product-level, SKU-free list that accumulates buy-intent across
+# the week: mid-week "I'm low on X", menu-derived restocks, staples promoted from
+# low/out pantry, stockup items that hit their sale price, and non-food household
+# items. Resolution to a Kroger SKU happens once, at order time (Change 06b),
+# against current availability — so the list never pins a brand/SKU that could go
+# stale. Agent-writable side-effect file (NOT user-curated config).
+#
+# Entries are keyed by normalized `name`: re-adding an existing name MERGES
+# (union for_recipes, reconcile quantity) rather than duplicating.
+#
+# Lifecycle: active -> in_cart -> ordered -> (received: entry removed, pantry
+# restocked). This change only ever writes `active`; order-driven transitions
+# arrive with place_order in Change 06b.
+#
+# See docs/SCHEMAS.md for the field reference.
+#
+# Example entries (uncomment and edit as items are added):
+#
+# [[items]]
+# name = "extra virgin olive oil"   # order-time search term (required)
+# quantity = "1 bottle"             # loose BUY amount: count | "1 bottle" | "enough for the week"
+# kind = "grocery"                  # grocery | household | other
+# status = "active"                 # active | in_cart | ordered
+# source = "pantry_low"             # ad_hoc | menu | pantry_low | stockup
+# for_recipes = []                  # recipe slugs needing it (menu-derived)
+# note = "the fancy one this time"  # freeform: one-off brand request, occasion, or null
+# added_at = "2026-06-09"           # ISO date (required)
+# ordered_at = ""                   # ISO date set when status -> ordered; else empty/absent
+#
+# [[items]]
+# name = "paper towels"
+# quantity = "1 pack"
+# kind = "household"
+# status = "active"
+# source = "ad_hoc"
+# for_recipes = []
+# added_at = "2026-06-09"

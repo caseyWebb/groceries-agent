@@ -93,6 +93,41 @@ prepared_from = null
 - `prepared_from` set for cooked/prepared items — faster perishability profile, identifies which recipe produced it.
 - `last_verified_at` resets when the user confirms the item is still there during a pantry confirmation pass.
 
+## grocery_list.toml
+
+The buy list — committed intent for the next order. Ingredient/product-level and **SKU-free**: resolution to a Kroger SKU happens once, at order time (Change 06b), against current availability, so the list never pins a brand/SKU that could go stale between capture and order. Agent-writable side-effect file (NOT user-curated config). Distinct from `pantry.toml` (observation: what's in the kitchen) and `stockup.toml` (conditional intent: buy IF on sale). Items are keyed by normalized `name` — re-adding an existing name merges rather than duplicating.
+
+```toml
+# grocery_list.toml
+
+[[items]]
+name = "extra virgin olive oil"   # order-time search term (required)
+quantity = "1 bottle"             # loose BUY amount: count | "1 bottle" | "enough for the week"
+kind = "grocery"                  # grocery | household | other
+status = "active"                 # active | in_cart | ordered  (required)
+source = "pantry_low"             # ad_hoc | menu | pantry_low | stockup
+for_recipes = []                  # recipe slugs needing it (menu-derived)
+note = "the fancy one this time"  # freeform: one-off brand request, occasion, or null
+added_at = "2026-06-09"           # ISO date (required)
+ordered_at = null                 # ISO date set when status -> ordered; else null
+
+[[items]]
+name = "paper towels"
+quantity = "1 pack"
+kind = "household"                # non-food: skips pantry reconcile on receive
+status = "active"
+source = "ad_hoc"
+for_recipes = []
+added_at = "2026-06-09"
+```
+
+**Notes:**
+- `quantity` is the loose BUY amount (1 package unless told otherwise). Recipe-level needs are NOT stored — they're re-aggregated from `for_recipes` when needed (e.g. the partial-check prompt), keeping the no-portion-math stance.
+- `kind` distinguishes non-food items. Only `grocery` items reconcile back into `pantry.toml` when an order is received.
+- `source` carries provenance for order-time dedup/behavior: `pantry_low`/`stockup` were promoted (don't re-prompt); `menu` aggregates with recipe needs; `ad_hoc` is a one-off.
+- `note` holds a **one-off** brand request ("the fancy olive oil this time") — explicitly NOT `preferences.toml`, which is for standing dispositions.
+- Lifecycle: `active → in_cart → ordered → received`. `received` is terminal (entry removed + pantry restocked). The transitions past `active` arrive with order placement in Change 06b.
+
 ## preferences.toml
 
 User-curated. Agent edits only when explicitly directed.

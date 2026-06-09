@@ -5,9 +5,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
-import { createGitHubClient, GitHubError, type GitHubClient } from "./github.js";
+import { createGitHubClient } from "./github.js";
+import { readFile, readOptional } from "./gh-read.js";
 import { parseMarkdown, parseToml } from "./parse.js";
 import { ToolError, runTool } from "./errors.js";
+import { registerWriteTools } from "./write-tools.js";
+import { registerGroceryListTools } from "./grocery-tools.js";
 import { filterRecipes, type RecipeFilters, type RecipeIndex } from "./recipes.js";
 import { createKrogerClient, type KrogerCandidate } from "./kroger.js";
 import {
@@ -59,37 +62,6 @@ const unitPriceItemShape = {
 };
 
 const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"] as const;
-
-/** Read a file, mapping a 404 to `notFoundCode` and other failures to upstream. */
-async function readFile(
-  gh: GitHubClient,
-  path: string,
-  notFoundCode: "not_found" | "index_unavailable",
-  notFoundMessage: string,
-): Promise<string> {
-  try {
-    return await gh.getFile(path);
-  } catch (e) {
-    if (e instanceof GitHubError) {
-      if (e.status === 404) throw new ToolError(notFoundCode, notFoundMessage);
-      throw new ToolError("upstream_unavailable", e.message);
-    }
-    throw e;
-  }
-}
-
-/** Read a file that may be absent; map 404 to null, other failures to upstream. */
-async function readOptional(gh: GitHubClient, path: string): Promise<string | null> {
-  try {
-    return await gh.getFile(path);
-  } catch (e) {
-    if (e instanceof GitHubError) {
-      if (e.status === 404) return null;
-      throw new ToolError("upstream_unavailable", e.message);
-    }
-    throw e;
-  }
-}
 
 export function buildServer(env: Env): McpServer {
   const server = new McpServer({ name: "grocery-mcp", version: "0.1.0" });
@@ -463,6 +435,11 @@ export function buildServer(env: Env): McpServer {
         return matchIngredient(deps, ingredient, context ?? {}, bypass_cache ?? false);
       }),
   );
+
+  // Repo-data write tools + the grocery-list buy list. These persist via the
+  // atomic commit engine; no cart or external-service writes (Change 06b).
+  registerWriteTools(server, gh);
+  registerGroceryListTools(server, gh);
 
   return server;
 }

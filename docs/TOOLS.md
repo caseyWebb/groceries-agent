@@ -129,7 +129,51 @@ Reset `last_verified_at` on confirmed items.
 - `items` (array of names or slugs)
 
 **Returns:**
-- `{ updated: [...] }`
+- `{ verified: [...], conflicts: [...] }` — conflicts name items not found in the pantry
+
+---
+
+## Grocery list tools
+
+The grocery list (`grocery_list.toml`) is the SKU-free buy list for the next order. It accumulates intent across the week; resolution to a Kroger SKU and the cart write are deferred to order placement (`place_order`, Change 06b). See `docs/SCHEMAS.md` for the item schema.
+
+### `read_grocery_list()`
+
+Return the current buy list.
+
+**Returns:**
+- `{ items: [...] }`
+
+### `add_to_grocery_list(item)`
+
+Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — re-adding an existing name **merges** (union `for_recipes`, reconcile `quantity`) rather than duplicating. New items start `status: "active"`.
+
+**Params:**
+- `name` (string, required)
+- `quantity` (string, optional) — loose buy amount; defaults to `"1"`
+- `kind` (optional): `grocery | household | other`
+- `source` (optional): `ad_hoc | menu | pantry_low | stockup`
+- `for_recipes` (array of slugs, optional)
+- `note` (string or null, optional) — one-off brand request / occasion
+
+**Returns:**
+- `{ item, merged, commit_sha }`
+
+### `update_grocery_list(name, ...patch)`
+
+Patch an existing item by name (`quantity`, `kind`, `status`, `source`, `for_recipes`, `note`).
+
+**Returns:**
+- `{ item, commit_sha }` — `not_found` if no such item
+
+### `remove_from_grocery_list(name)`
+
+Remove an item by name.
+
+**Returns:**
+- `{ removed: bool, commit_sha? }`
+
+**Notes:** Promoting a low/out pantry item onto the list is a **prompted** decision (record `source: "pantry_low"`), never automatic. Lifecycle transitions past `active` (`in_cart`/`ordered`/`received`) arrive with `place_order` in Change 06b.
 
 ---
 
@@ -164,7 +208,7 @@ Get current prices for a specific list of ingredients (used for menu pre-pass). 
 
 ### `match_ingredient_to_kroger_sku(ingredient, context)`
 
-Run the full 7-step matching pipeline. Returns a confident match, narrowed candidates for the LLM to choose from, or an `unavailable` signal. **Resolve-only** — it does not write the cache (that rides `write_cart_and_commit`) and it does not substitute (that's `propose_substitutions`).
+Run the full 7-step matching pipeline. Returns a confident match, narrowed candidates for the LLM to choose from, or an `unavailable` signal. **Resolve-only** — it does not write the cache (that rides `place_order`, Change 06b) and it does not substitute (that's `propose_substitutions`).
 
 **Params:**
 - `ingredient` (string, required)
@@ -314,9 +358,15 @@ Return contents of `taste.md`.
 
 Return contents of `diet_principles.md`.
 
-### `update_preferences(updates)` / `update_taste(content)` / `update_diet_principles(content)` / `update_substitutions(rules)` / `update_aliases(mappings)`
+### `update_preferences(content)` / `update_taste(content)` / `update_diet_principles(content)` / `update_substitutions(content)` / `update_aliases(content)`
 
-Write to user-curated files. **These should only be called when the user explicitly directs an edit.** The tools exist; the discipline of when to call them lives in CLAUDE.md.
+Write to user-curated files. **Content-faithful:** each writes exactly the full file content supplied by the caller — no inferred merge. **These should only be called when the user explicitly directs an edit.** The tools exist; the discipline of when to call them lives in CLAUDE.md.
+
+**Params:**
+- `content` (string, required) — the complete new file text
+
+**Returns:**
+- `{ file, commit_sha }`
 
 ---
 
@@ -348,52 +398,34 @@ Speculative menu re-evaluation with hypothetical pantry additions.
 
 ## Commit / atomic operations
 
-### `write_cart_and_commit(payload)`
-
-Atomic batched operation that does everything at conversation end:
-- Writes the Kroger cart
-- Updates `last_cooked` on selected recipes
-- Marks pantry items verified
-- Imports any draft recipes from discovery
-- Adds any draft ready-to-eat items
-- Appends new SKU mappings to cache
-- Creates a single git commit summarizing the session
-
-**Params:**
-```
-{
-  cart_items: [{ sku, quantity }],
-  recipes_cooked: [slug, slug, ...],
-  pantry_verified: [item, item, ...],
-  draft_recipes: [{ url, frontmatter }],
-  draft_ready_to_eat: [{ name, category }],
-  sku_mappings: [{ ingredient, sku, reason }],
-  commit_message: string
-}
-```
-
-**Returns:**
-- `{ commit_sha, cart_summary, items_added }`
-
-**Notes:** This is the *only* tool that writes to Kroger. Single point of cart-write enforcement. Single commit per session keeps git log clean.
+> **Re-cut (capture/flush split).** The original monolithic `write_cart_and_commit` is split into two tools that ship in different changes: **`commit_changes`** (repo commit, no cart — this change) and **`place_order`** (the order-time cart flush + SKU-cache write — Change 06b). The repo commit exists for memory's sake; the cart write is a separate, deferred, order-time operation. See `docs/notes/2026-06-09-order-flow-reframe.md`.
 
 ### `commit_changes(payload)`
 
-For non-cart updates that still need to be persisted (e.g., pantry update from "I ran out of milk" outside menu context). Same atomic-commit pattern, no cart write.
+Persist a batch of repo updates as **one** atomic git commit — no cart. The everyday persist path: use it at the end of a session to keep the git log clean instead of calling the granular write tools repeatedly. Every change is structurally validated before commit; the commit lands via the Git Data API (tree → commit → update ref) with optimistic ref-retry against the index-build Action.
 
 **Params:**
 ```
 {
-  pantry_updates: [...],
-  recipe_updates: [...],
-  ready_to_eat_updates: [...],
-  config_updates: [...],   // for user-curated files when user has directed an edit
-  commit_message: string
+  recipe_updates:       [{ slug, updates }],          // frontmatter merges (last_cooked, rating, status, ...)
+  pantry_operations:    [{ op, item?, name? }],       // op: add | remove | verify
+  pantry_verified:      [name, name, ...],            // reset last_verified_at
+  ready_to_eat_drafts:  [{ meal, name, category?, source?, brand?, notes? }],
+  ready_to_eat_updates: [{ name, updates }],          // matched by name across meal catalogs
+  config_updates:       [{ file, content }],          // file: preferences|taste|diet_principles|substitutions|aliases
+  commit_message:       string
 }
 ```
+All sections are optional except `commit_message`.
 
 **Returns:**
 - `{ commit_sha, summary }`
+
+**Notes:** Because the Worker is stateless, batching is **LLM-orchestrated** — accumulate a session's intended changes and flush them through one `commit_changes` call. The granular write tools (`update_recipe`, `update_pantry`, …) each commit on their own and are for standalone one-offs; don't call them N times mid-session.
+
+### `place_order(payload)` — Change 06b (not yet implemented)
+
+The order-time flush: resolve the whole `grocery_list.toml` against current Kroger availability, write the cart (`PUT /v1/cart/add`), and persist learned SKU mappings to `skus/kroger.toml`. The **only** tool that writes to Kroger. Lands in Change 06b with the Kroger `authorization_code` OAuth + KV bundle.
 
 ---
 

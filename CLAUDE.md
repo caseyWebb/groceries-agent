@@ -21,7 +21,14 @@ See `docs/TOOLS.md` in the repo for the full tool inventory. The grocery-mcp too
 
 **Pantry data drifts.** I forget to tell you when I run out of spices. Every menu request begins with a comprehensive pantry confirmation pass — list relevant items including staples and spices, flag anything stale, surface inventory-based substitutions. This is the primary mechanism for waste prevention; items flagged "use soon" become priorities.
 
-**Batched commits.** Tool operations within a conversation accumulate into a single git commit at the end via `write_cart_and_commit` or equivalent. Don't make a separate commit for every small update. The commit log should read like a session summary, not a play-by-play.
+**Batched commits.** Tool operations within a conversation accumulate into a single git commit at the end via `commit_changes`. Don't make a separate commit for every small update. The commit log should read like a session summary, not a play-by-play. Because the Worker is stateless (no server-side staging), batching is **your** job: hold the session's intended changes and flush them through one `commit_changes` call. The granular write tools (`update_recipe`, `update_pantry`, …) each commit on their own — use them for standalone one-offs ("rate the salmon 4 stars"), not N times inside a session.
+
+**Capture vs. flush (two stores, opposite mutability).** The repo is a freely-mutable store; the Kroger cart is append-only (no remove, no checkout, no read via API). So capture buy-intent continuously into the repo's `grocery_list.toml` all week, and flush it to the cart exactly once, at order time, via `place_order` (Change 06b). Three distinct kinds of state, never conflated:
+- `pantry.toml` — **observation**: what's physically in the kitchen.
+- `stockup.toml` — **conditional intent**: buy IF it drops below the threshold.
+- `grocery_list.toml` — **committed intent**: buy on the next order (ingredient-level, SKU-free).
+
+Transitions between them are **prompted, never automatic**. "I'm low/out of olive oil" → update `pantry.toml`, then *ask* "want that on the next order?" before adding it (record `source: "pantry_low"`). "Out" removes the item from the pantry, so only the list remembers the rebuy — the prompt is load-bearing. Non-food items ("paper towels") belong on the list too (`kind: "household"`).
 
 ## User-curated configuration
 
@@ -40,6 +47,7 @@ For these, if you notice something worth noting ("you've been preferring sheet-p
 
 - `recipes/*.md` — frontmatter updates: `last_cooked`, `rating`, `status` (draft → active / rejected), discovery imports.
 - `pantry.toml` — verifications, additions, removals.
+- `grocery_list.toml` — the buy list: add/merge items (prompted promotion from low/out pantry, menu-derived restocks, non-food). SKU-free; resolution + cart write happen later via `place_order`.
 - `ready_to_eat/*.toml` — disposition updates and new discoveries (draft state).
 - `skus/kroger.toml` — append new mappings as you learn them via the matching pipeline.
 
@@ -74,9 +82,9 @@ Two starting points: **open-ended** (you pick recipes) or **recipe-seeded** (I n
 
 6. Send the proposal in chat. Iterate based on my revisions — rerun affected tool calls as needed.
 
-7. On agreement, call `write_cart_and_commit(payload)` to do everything in one atomic operation: cart write, last_cooked updates, draft imports, SKU cache appends, pantry verifications, single git commit.
+7. On agreement, persist the repo side of the session in one `commit_changes` call: `last_cooked` updates, draft imports, pantry verifications, and the to-buy items added to `grocery_list.toml`. This does **not** touch the cart — capturing intent into the list is separate from placing the order. (The cart flush is `place_order`, Change 06b: resolve the list against current availability, write the cart, persist SKU mappings — invoked when I'm ready to order, which may be this sitting or later.)
 
-8. Final message in chat: summarize what was added, remind me to review the cart in the Kroger app before checkout (the API can't remove items, so I have to do it manually if I want to adjust).
+8. Final message in chat: summarize what was added to the list / committed, and when an order is placed, remind me to review the cart in the Kroger app before checkout (the API can't remove items, so I have to do it manually if I want to adjust).
 
 **Empty-cart case:** if the pantry covers what's needed, say so explicitly. Commit any pantry verifications, skip the cart write.
 

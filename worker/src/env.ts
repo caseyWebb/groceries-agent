@@ -15,4 +15,13 @@ export interface Env {
   KROGER_CLIENT_ID: string;
   /** Kroger Developer (public tier) client_credentials client secret. Secret. */
   KROGER_CLIENT_SECRET: string;
+  /**
+   * Cloudflare Access team domain, e.g. "casey.cloudflareaccess.com" (no scheme).
+   * Non-secret. In-Worker JWT validation is enforced only when this AND
+   * ACCESS_AUD are both set; empty disables the in-Worker check (Access still
+   * gates at the edge).
+   */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag. Non-secret. */
+  ACCESS_AUD?: string;
 }

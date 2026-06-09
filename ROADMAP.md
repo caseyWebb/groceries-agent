@@ -128,9 +128,9 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 **This is the "external services" half of the tool surface** — the counterpart to Change 04's repo-data reads.
 
-**Read-only scope (decided).** Change 05 is **entirely read-only** and stays **authless + stateless**, inheriting Change 04's posture unchanged. Every Kroger tool here uses the `client_credentials` grant (products, prices, flyer, availability) — none needs the user-context `authorization_code` flow, because none writes a cart. Two writes that earlier drafts placed here move to **Change 06** so the first write and the Cloudflare Access gate that protects it ship together:
-- **SKU cache writes** → Change 06, folded into `write_cart_and_commit`'s atomic batched commit. The matching pipeline here *resolves and returns* a mapping; it does **not** persist it.
-- **`authorization_code` OAuth + callback route + KV refresh-token storage** → Change 06, paired with the cart-write tool that consumes them. (Kroger refresh tokens are **single-use/rotating**, so they need a writable KV slot — that lands in Change 06, not here.) Change 05 needs no persistent storage: client-credentials access tokens live in isolate memory, re-minted on expiry.
+**Read-only scope (decided).** Change 05 is **entirely read-only** and stays **authless + stateless**, inheriting Change 04's posture unchanged. Every Kroger tool here uses the `client_credentials` grant (products, prices, flyer, availability) — none needs the user-context `authorization_code` flow, because none writes a cart. Two writes that earlier drafts placed here move to the order-placement change, **Change 06b** (the Cloudflare Access gate that protects the Worker ships earlier, in Change 06, with the first git write):
+- **SKU cache writes** → Change 06b, folded into `place_order`'s atomic batched commit. The matching pipeline here *resolves and returns* a mapping; it does **not** persist it.
+- **`authorization_code` OAuth + callback route + KV refresh-token storage** → Change 06b, paired with the `place_order` cart-write tool that consumes them. (Kroger refresh tokens are **single-use/rotating**, so they need a writable KV slot — that lands in Change 06b, not here.) Change 05 needs no persistent storage: client-credentials access tokens live in isolate memory, re-minted on expiry.
 
 **Kroger API reality (decided — researched 2026-06):**
 - **Public tier only.** The richer **Catalog API / Catalog API V2** are *partner*-gated (negotiated Kroger Digital contract, bespoke catalog) — out of reach for a personal app. The **public Products API** (term search + per-item price, location-scoped) is the ceiling. The *partner* Cart API can read/remove items; the **public Cart API is add-only** — so the write-only cart limitation is a tier artifact, not a choice.
@@ -169,28 +169,65 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 ---
 
-## Change 06: Write tools + atomic commit
+## Change 06: Git write tools + atomic commit + Access gate
 
-**Scope:** Implement the **write** tools from docs/TOOLS.md: `update_recipe`, `update_pantry`, `mark_pantry_verified`, `add_draft_ready_to_eat`, `update_ready_to_eat`, the user-curated `update_*` tools, and the headline `write_cart_and_commit` + `commit_changes`. Implement atomic batched commits via GitHub's Git Data API (build a tree, create commit, update ref) instead of sequential file commits.
+**Scope:** The **capture** half of the write surface — everything that persists to the repo, plus the security gate in front of the Worker. Implement the repo-data **write** tools from docs/TOOLS.md and the atomic batched-commit engine. **No Kroger, no cart, no order-side OAuth here** — placing an order is Change 06b. (Re-cut from a single "write tools + cart" Change 06; see the capture/flush reframe below.)
 
-**This change also lands the write-side Kroger + security bundle (decided — moved here from Change 05's earlier draft so the first write and its gate ship together):**
-- **`authorization_code` OAuth (PKCE)** for cart writes: a small auth-callback route in the Worker for the one-time token exchange, plus automatic refresh. Kroger refresh tokens are **single-use/rotating**, so the refresh token lives in a **KV namespace** (one key) — the minimal writable slot, *not* a Durable Object (no coordination / strong-consistency need for a single-user token). This is the one piece of state in an otherwise stateless Worker.
-- **SKU cache writes** folded into `write_cart_and_commit`'s atomic batched commit (Change 05's matching pipeline only *resolves* mappings; here they get persisted to `skus/kroger.toml`).
-- **Cloudflare Access in front of the Worker** (policy: only Casey's identity) — the gate for leg 2 (Claude.ai → Worker), required the moment write/cart tools exist. **Carve-out:** the OAuth callback path (`/oauth/*`) must bypass Access so Kroger's redirect isn't blocked; protect it with OAuth `state` / PKCE instead. Change 07 then points Claude.ai at the already-secured Worker.
+**Write tools:** `update_recipe`, `update_pantry`, `mark_pantry_verified`, `add_draft_ready_to_eat`, `update_ready_to_eat`, the user-curated `update_*` tools, the new **grocery-list** tools (`read_grocery_list`, `add_to_grocery_list`, `update_grocery_list`, `remove_from_grocery_list`), and `commit_changes`. Atomic commits via GitHub's Git Data API (build tree → create commit → update ref), never sequential per-file commits.
 
-**Dependencies:** Changes 04 and 05.
+**Capture/flush reframe (decided — see `docs/notes/2026-06-09-order-flow-reframe.md`):** `write_cart_and_commit` fused two unlike operations — persist memory (atomic git, mutable store) and place an order (external, write-only, un-rollback-able). The repo commits exist for **memory's sake**, not the cart's: the repo *is* the database (stateless conversations). So the cart write is split out to Change 06b. Mutable store (repo) → capture continuously; append-only store (Kroger cart) → flush once, at order time. `commit_changes` becomes the everyday persist path; `place_order` (06b) is the order-time flush. The roadmap's "first write and its gate ship together" is satisfied **here** — the gate must precede the first *git* write, which is earlier than the cart write.
+
+**`grocery_list.toml` (new, decided):** an ingredient-level, **SKU-free** buy list that accumulates intent across the week (mid-week "I'm low on X", menu-derived restocks, staples promoted from low/out pantry, stockup items hitting their sale price, and non-food household items). Resolution to a Kroger SKU is deferred to order time (06b), against current availability — which immunizes against brand/price drift between capture and order. Three-file state model: `pantry.toml` = observation (what's in the kitchen), `stockup.toml` = conditional intent (buy IF on sale), `grocery_list.toml` = committed intent (buy next order). Transitions are always **prompted, never automatic** (low/out → prompt "add to list?"). Non-food items are an intentional feature (general shopping list). Schema + field rationale in the design note; needs a `docs/SCHEMAS.md` entry. Agent-writable side-effect file (NOT curated-config).
+
+**Lifecycle state (decided):** `active → in_cart → ordered → received`. The agent **cannot read the Kroger cart or verify checkout** (write-only API), so every state past `in_cart` is **user-asserted** ("I placed the order", "I picked up the groceries"), never agent-verified — same honesty rule as "never claim cart items were removed." `received` is terminal: entry removed + pantry restocked (grocery items only). The underlying state writes are this change's tools; the order-time orchestration that drives them lands in 06b. Stale-cart across sessions is an accepted human-in-the-loop limitation (Casey clears the cart manually), not engineered around.
+
+**Access gate (decided — spike complete, see design note):** Cloudflare Access in front of the Worker (policy: only Casey's identity). Claude.ai **web** connectors are **OAuth-only** (no custom headers / service tokens), so the gate uses Cloudflare Access **Managed OAuth**: Access becomes the OAuth authorization server (emits `WWW-Authenticate`, runs DCR + PKCE + token issuance), and the Worker needs **no MCP-facing OAuth code** — it validates `Cf-Access-Jwt-Assertion` (defense-in-depth) or trusts Access fronting it. Managed OAuth is **open beta** — re-verify before Change 07; fallback is `workers-oauth-provider` (OAuth endpoints in the Worker). This is leg 2 (Claude.ai → Worker), **distinct** from leg 3 (Worker → Kroger, 06b).
+
+**Atomic commit (decided):** optimistic ref-update with retry — the index-build Action (Change 02) is a second writer, so a non-fast-forward `update ref` re-reads base and replays the changeset. High-frequency mid-week writes touch **non-indexed** files (pantry, grocery_list) → no index Action triggered → no race in the common case; the recipe/index-touching commit happens ~once per order.
+
+**Validation (decided):** the Worker validates **structurally** before commit (TOML/YAML parses, enums/status well-formed) so it never commits syntactic garbage; cross-reference / index validation remains the post-push Action's job. The Node validator (`scripts/build-indexes.mjs`) can't run on `workerd`, so the Worker reimplements the structural subset in TS.
+
+**Dependencies:** Change 04. **Not Change 05** — no Kroger here, so this can be built in parallel with 05 (the repo currently has 05 done, so in practice 06 is next).
 
 **Deliverables:**
-- Write tools per docs/TOOLS.md
-- Atomic batched commit implementation (including the SKU cache append from the matching pipeline)
-- Kroger `authorization_code` OAuth + PKCE: one-time callback route, automatic refresh, single-use refresh-token rotation handled correctly
-- KV namespace holding the rotating Kroger refresh token (read on cold start; rewritten on each refresh)
-- Cloudflare Access in front of the Worker + `/oauth/*` carve-out
-- Cart-write integration with Kroger (`PUT /v1/cart/add` subroutine inside `write_cart_and_commit`)
-- Validation that updates pass schema checks before commit
-- Tests for the atomic-commit path
+- Repo-data write tools per docs/TOOLS.md, incl. the grocery-list tools
+- `grocery_list.toml` schema + `docs/SCHEMAS.md` entry; `CLAUDE.md` side-effect-files + capture/flush behavior + prompting rules
+- Atomic batched-commit engine (Git Data API: tree → commit → update ref) with optimistic ref-retry against the second-writer Action
+- `commit_changes` (no cart); structural pre-commit validation (TS subset, workerd-safe)
+- Cloudflare Access in front of the Worker via Managed OAuth (only-Casey policy); optional `Cf-Access-Jwt-Assertion` validation in the Worker
+- `docs/TOOLS.md` kept in sync (grocery-list tools; `write_cart_and_commit` re-cut into `commit_changes` + `place_order`)
+- Tests for the atomic-commit path (tree build, ref-retry, structural validation)
 
-**Done when:** A single tool call can write a Kroger cart, update multiple recipes, verify pantry items, and create one clean git commit summarizing all of it — with Cloudflare Access protecting the Worker, the OAuth callback reachable for token exchange, and cart writes using a correctly-rotated refresh token.
+**Done when:** a single `commit_changes` call updates multiple recipes, verifies pantry items, edits the grocery list, and lands one clean git commit — behind Cloudflare Access, with the second-writer ref-retry exercised in tests. No Kroger involved.
+
+---
+
+## Change 06b: Order placement (cart + Kroger write-side OAuth)
+
+**Scope:** The **flush** half — turn the accumulated `grocery_list.toml` into a populated Kroger cart, once, at order time, and drive the order lifecycle. Implement `place_order` and the Kroger write-side auth bundle.
+
+**`place_order` (decided):** resolve the **whole** grocery list at once via the Change 05 matcher (`match_ingredient_to_kroger_sku`, with cache revalidation against current price + curbside/delivery availability) → surface ambiguous/unavailable items as a single batch checkpoint for Casey to disposition → `PUT /v1/cart/add` for the resolved set → append learned mappings to `skus/kroger.toml`. Marks items `in_cart`. Order-time dedup: to-buy = `grocery_list ∪ (menu needs) − (pantry has)`. Partials prompt Casey ("the plan needs ~X; you have a partial — enough, or add?"); default buy is 1 package unless told.
+
+**Partial-failure (decided):** nothing in the repo is transactional with the cart. The SKU-cache commit and the cart write are **two independent best-effort ops** — SKU cache is a hint, so either failing alone corrupts nothing. `place_order` returns honest partial status; the agent never claims a cart is populated when the write failed.
+
+**Lifecycle orchestration (decided):** the conversational flow that advances `in_cart → ordered` (on "I placed the order") and `ordered → received` (on "I picked up" → pantry restock for grocery items + clear from list). The underlying state writes are Change 06 tools; 06b owns the CLAUDE.md orchestration + the stale-cart reminder at the start of a new order.
+
+**Kroger `authorization_code` OAuth + PKCE + KV (decided):** a one-time auth-callback route in the Worker for the token exchange, plus automatic refresh. Kroger refresh tokens are **single-use/rotating**, so the refresh token lives in a **KV namespace** (one key) — the minimal writable slot, *not* a Durable Object (single-user, no coordination need). Write the new refresh token to KV **before** using the access token (the brick-risk window); treat a rejected refresh as a clean `{ error: "reauth_required" }` (re-run the one-time auth), never a silent 500. This is leg 3 (Worker → Kroger), distinct from the Change 06 Access gate (leg 2).
+
+**Access carve-out (decided):** the Kroger OAuth callback path (`/oauth/*`) must **bypass** Cloudflare Access (Kroger's redirect carries no Access JWT); protect it with OAuth `state` / PKCE instead. Confirm no path collision with Access's own Managed-OAuth endpoints at build time.
+
+**Dependencies:** Changes 05 (matching pipeline) and 06 (atomic commit engine + grocery-list tools + Access gate).
+
+**Deliverables:**
+- `place_order` tool: whole-list resolution + ambiguity/unavailable batch checkpoint + `PUT /v1/cart/add` + SKU-cache append, with honest partial-failure status
+- Kroger `authorization_code` OAuth + PKCE: one-time callback route, automatic refresh, single-use rotation handled correctly (KV write-before-use; `reauth_required` on rejection)
+- KV namespace holding the rotating Kroger refresh token (read on cold start; rewritten on each refresh)
+- `/oauth/*` Access carve-out
+- CLAUDE.md order-lifecycle orchestration (place / "I placed the order" / "I picked up" → pantry restock; stale-cart reminder)
+- `docs/TOOLS.md` in sync (`place_order` semantics, lifecycle)
+- Tests for resolution-to-cart and refresh-token rotation (mocked Kroger)
+
+**Done when:** "place my order" resolves the whole grocery list against current availability, surfaces any calls as one batch, populates the Kroger cart, and persists the SKU-cache learnings — and you check out by hand in the Kroger app, then tell the agent "I placed the order" / "I picked up" to advance state.
 
 ---
 
@@ -198,7 +235,7 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 **Scope:** Connect the deployed Worker to Claude.ai as a custom connector. Add the GitHub MCP connector. Create the "Grocery Agent" project and paste CLAUDE.md into project instructions. Validate basic conversational flows end-to-end: "what's in my pantry?", "show me chicken recipes", "I ran out of olive oil", "rate the salmon thing 4 stars".
 
-**Dependencies:** Changes 04, 05, 06.
+**Dependencies:** Changes 04, 05, 06, 06b.
 
 **Deliverables:**
 - Custom MCP connector configured in Claude.ai account settings
@@ -239,7 +276,7 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 **Deliverables:**
 - Updated CLAUDE.md with full menu-generation orchestration
 - Conversational test of open-ended ("make me a menu") and recipe-seeded flows
-- Cart write at the end of an agreed menu via `write_cart_and_commit`
+- Agreed-menu items appended to `grocery_list.toml` via `commit_changes` (06); cart populated via `place_order` (06b) when you're ready to order
 
 **Done when:** An end-to-end menu request from a fresh conversation produces a useful menu proposal, you iterate with revisions, you agree, and the Kroger cart populates. The first real cycle works.
 
@@ -324,10 +361,15 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
     ↓                                     │
 04 Worker skeleton + read tools ←─────────┘
     ↓
-05 Kroger API + matching pipeline
-    ↓
-06 Write tools + atomic commit
-    ↓
+    ├───────────────────────────┐
+    ↓                           ↓
+05 Kroger API +            06 Git write tools + atomic
+   matching pipeline          commit + Access gate
+    ↓                           ↓
+    └─────────────┬─────────────┘
+                  ↓
+06b Order placement (cart + Kroger write-side OAuth)
+                  ↓
 07 Claude.ai connection + smoke test  ← milestone: agent live
     ↓
 08 Pantry verification + sequencing
@@ -343,6 +385,7 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 **Parallelization options:**
 - 02 and 03 can run in parallel after 01.
+- **05 and 06 can run in parallel after 04** — 06 is repo-data + the Access gate (no Kroger), so it doesn't depend on 05. 06b then needs both. (In the current repo 05 is already done, so 06 is simply next.)
 - 10 and 11 can run in parallel after 09.
 
 **Natural pause points** (where you'd want to actually use the system for a few weeks before continuing):
