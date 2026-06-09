@@ -105,18 +105,26 @@ lunch_strategy = "leftovers"     # leftovers | buy | mixed
 ready_to_eat_default_action = "opt-in"   # opt-in | auto-add
 
 [brands]
+# Tri-state, and the source of matching confidence (see note below):
+#   key absent  → ask me (ambiguous)
+#   key = []    → "don't care," pick cheapest acceptable, stop asking
+#   key = [..]  → ranked preference; LIST ORDER IS RANK (first available wins)
 olive_oil = ["California Olive Ranch", "Cobram Estate"]
 butter = ["Kerrygold", "Plugra"]
 yogurt = ["Fage", "Siggi's"]
+yellow_onion = []                # commodity — cheapest acceptable, never ask
 
 [stores]
 primary = "Kroger"
-preferred_location = "Kroger - 76104"   # for in-stock filtering
+preferred_location = "Kroger - 76104"   # resolved to a Kroger locationId, then used
+                                        # for pricing + curbside/delivery availability
 
 [dietary]
 avoid = []                       # ingredients to always exclude
 limit = ["cilantro"]             # ingredients to deprioritize but not reject
 ```
+
+**`[brands]` is tri-state and drives matching confidence.** The Kroger matching pipeline reads a key's *presence* as the confidence signal: absent → ambiguous (Claude asks); `[]` → "don't care," pick cheapest acceptable without asking; a non-empty list → ranked preference, **list order is rank**. Keys are the canonical normalized ingredient term with spaces as underscores (`extra virgin olive oil` → normalize via aliases.toml → `olive oil` → key `olive_oil`). A non-empty list whose brands are all unavailable falls back to ambiguous.
 
 ## substitutions.toml
 
@@ -156,6 +164,36 @@ Ingredient name variants. Agent edits only when directed (it can suggest additio
 "chicken thigh" = "chicken thighs"
 "cherry tomato" = "cherry tomatoes"
 ```
+
+## flyer_terms.toml
+
+User-curated. Broad scan terms for `kroger_flyer`'s serendipitous sale
+discovery. Agent edits only when directed (it may suggest additions during a
+flyer scan, but never writes on its own).
+
+```toml
+# flyer_terms.toml — broad scan terms for serendipitous sale discovery
+
+terms = [
+  "fruit",
+  "vegetables",
+  "frozen meals",
+  "cheese",
+  "yogurt",
+  "chicken",
+  "ground beef",
+  "salmon",
+  "pasta",
+  "coffee",
+  "snacks",
+  "ice cream",
+]
+```
+
+**Notes:**
+- The public Kroger API has no flyer/circular endpoint. `kroger_flyer` synthesizes a sale list by searching terms and keeping products where `promo > 0`. These **broad** terms supplement the **precise** terms derived from caller context (current menu ingredients, `stockup.toml`, substitution candidates), widening the net past the known-items list.
+- A flat top-level `terms` array of strings. **Absent or empty degrades gracefully**: `kroger_flyer` still scans the precise context terms and returns a (smaller) sale list rather than erroring.
+- Each term is scanned a few pages deep, but the scan is **relevance**-ranked (no sort-by-discount), so it samples the head of each category — deep sales on low-relevance items can be missed. This limitation is documented, not hidden.
 
 ## feeds.toml
 
@@ -290,6 +328,8 @@ last_used = "2025-05-14"
 reason = "default brand; price-per-unit best in deterministic narrowing"
 ambiguity_resolved = false
 ```
+
+**This is a speed cache, not the source of truth for dispositions.** It stores *resolved SKUs* to skip the expensive search/narrowing; the *disposition* (care / don't-care / ranked) lives in `preferences.toml [brands]`. Every cache hit is revalidated against the live API for current price + curbside/delivery availability before use — no TTL, and `last_used` is informational (for pruning). Unavailable → re-resolve. "Don't care" commodities (`[]` in preferences) carry no pinned SKU here; they re-resolve to cheapest-acceptable each run, so they never go stale.
 
 ## taste.md
 

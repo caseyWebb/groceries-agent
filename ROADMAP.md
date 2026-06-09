@@ -124,21 +124,48 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 ## Change 05: Kroger API integration + matching pipeline
 
-**Scope:** Implement the Kroger-facing (external-service) tools inside the Worker: `kroger_flyer`, `kroger_prices`, `kroger_search` (internal helper), `ready_to_eat_available` (catalog read **+** Kroger availability cross-reference — moved here from Change 04 because its defining behavior needs Kroger), and the headline `match_ingredient_to_kroger_sku` with its full 7-step deterministic pipeline. Sign up for the Kroger Developer account, complete OAuth (auth code flow), store tokens as Worker secrets. Append new SKU mappings to `skus/kroger.toml` via the GitHub API.
+**Scope:** Implement the Kroger-facing (external-service) **read** tools inside the Worker: `kroger_flyer`, `kroger_prices`, `kroger_search` (internal helper), `ready_to_eat_available` (catalog read **+** Kroger availability cross-reference — moved here from Change 04 because its defining behavior needs Kroger), and the headline `match_ingredient_to_kroger_sku` with its full 7-step deterministic pipeline (**resolve-only** — see below). Sign up for the Kroger Developer account; authenticate with the `client_credentials` grant; store the Kroger client ID/secret as Worker secrets.
 
-**This is the "external services" half of the tool surface** — the counterpart to Change 04's repo-data reads. It introduces the first real secrets (Kroger OAuth tokens, kept as Worker secrets, never committed — matters more now that the repo is public).
+**This is the "external services" half of the tool surface** — the counterpart to Change 04's repo-data reads.
+
+**Read-only scope (decided).** Change 05 is **entirely read-only** and stays **authless + stateless**, inheriting Change 04's posture unchanged. Every Kroger tool here uses the `client_credentials` grant (products, prices, flyer, availability) — none needs the user-context `authorization_code` flow, because none writes a cart. Two writes that earlier drafts placed here move to **Change 06** so the first write and the Cloudflare Access gate that protects it ship together:
+- **SKU cache writes** → Change 06, folded into `write_cart_and_commit`'s atomic batched commit. The matching pipeline here *resolves and returns* a mapping; it does **not** persist it.
+- **`authorization_code` OAuth + callback route + KV refresh-token storage** → Change 06, paired with the cart-write tool that consumes them. (Kroger refresh tokens are **single-use/rotating**, so they need a writable KV slot — that lands in Change 06, not here.) Change 05 needs no persistent storage: client-credentials access tokens live in isolate memory, re-minted on expiry.
+
+**Kroger API reality (decided — researched 2026-06):**
+- **Public tier only.** The richer **Catalog API / Catalog API V2** are *partner*-gated (negotiated Kroger Digital contract, bespoke catalog) — out of reach for a personal app. The **public Products API** (term search + per-item price, location-scoped) is the ceiling. The *partner* Cart API can read/remove items; the **public Cart API is add-only** — so the write-only cart limitation is a tier artifact, not a choice.
+- **No flyer/circular endpoint.** There is no "list all sales" primitive. Product price is `{ regular, promo }` where `promo: 0` means not on sale; the only way to find a sale is to search a term and inspect `promo`. So `kroger_flyer` is a **synthesized scan**, not a feed (see below).
+- **`filter.locationId` is required for pricing.** Resolving `preferences.toml`'s `preferred_location` label → a Kroger `locationId` via the Locations API (cached) is a **hard prerequisite** for every priced call.
+- **Availability = curbside/delivery fulfillment.** Per user decision, availability means `fulfillment.curbside || fulfillment.delivery` at the location — *not* live in-store inventory (the API exposes no stock level). `ready_to_eat_available` and the pipeline's "in stock" filter use this fulfillment signal.
+- **Rate limits are undocumented.** Kroger publishes no firm numeric limits (community-cited figures exist but aren't canonical). Design the Kroger client for `429` + `Retry-After` / exponential backoff rather than a hardcoded budget.
+
+**`kroger_flyer` mechanics (decided).** Two term sources, deduped by `productId`, each scanned and filtered to `promo > 0`:
+- **Precise terms** — *derived* (stockup-flagged pantry items, current menu ingredients, substitution candidates). High precision.
+- **Broad terms** — *curated* in a new `flyer_terms.toml` (e.g. `"fruit"`, `"frozen meals"`, `"cheese"`). Serendipity. **Explicitly non-exhaustive**: each term returns a bounded, *relevance*-ranked page (the API has no "sort by discount"), so this samples the head of each category, not the whole category. Paginate a few pages deep per term for coverage; cost is trivial. `flyer_terms.toml` is **user-curated config** (edit-only-when-directed bucket) — needs a `docs/SCHEMAS.md` entry and a line in `CLAUDE.md`'s curated-config list.
+
+**Matching pipeline (decided).** `match_ingredient_to_kroger_sku` is **resolve-only** and runs the deterministic narrowing per docs/PROJECT.md, with these specifics:
+- **Confidence = cache hit OR a defined `preferences.toml [brands]` entry.** The `[brands]` table is **tri-state**: key absent → ambiguous (ask); `[]` → "don't care," cheapest acceptable; non-empty list → ranked preference (list order = rank). Otherwise return narrowed candidates for the LLM to resolve; every resolution caches, so it asks less over time.
+- **Scoring, not hard filters** — a missing preferred brand can't empty the candidate set. Dietary is a **best-effort soft score** ("organic" in the name), never a gate (the API exposes no dietary attributes).
+- **No substitution.** If nothing is fulfillable via curbside/delivery, return `{ resolved: false, reason: "unavailable" }`; substitution stays with `propose_substitutions` (sole owner of `substitutions.toml`, always confirmed). **PROJECT.md step 4 reconciled accordingly.**
+- **Cache revalidation, no TTL.** A cache hit short-circuits search/narrowing but is revalidated with one targeted lookup (current price + curbside/delivery availability) before use; unavailable → re-resolve. The LLM may pass `bypass_cache` when a hit doesn't fit the recipe context.
+- **`compare_unit_price` (new tool):** deterministic price-per-unit, dimension-bucketed (never compares `$/fl oz` to `$/lb`); the LLM normalizes only unparseable size strings, never does the math. One core — used internally for the tiebreaker and exposed for the conversational ambiguous-flow.
+
+**Build-time confirmations (not blockers):** the `filter.fulfillment` codes (curbside/delivery) and whether `filter.productId` accepts multiple IDs (would let cache revalidation batch into 1–2 calls).
 
 **Dependencies:** Change 04.
 
 **Deliverables:**
-- Kroger Developer credentials configured as Worker secrets
-- OAuth flow handler (probably a small auth route in the Worker for the initial token exchange; refresh handled automatically)
-- All Kroger tools per docs/TOOLS.md, including `ready_to_eat_available`
-- The 7-step matching pipeline as specified in docs/PROJECT.md
-- SKU cache writes via GitHub API
-- Tests for the matching pipeline (canonicalization, cache, narrowing, tiebreaker, LLM-fallback signal)
+- Kroger Developer `client_credentials` (client ID/secret) configured as Worker secrets
+- Kroger API client wrapper: `client_credentials` token caching (in-memory, re-mint on expiry) + `429`/backoff handling, structured errors per the Change 04 convention
+- Location resolution: `preferred_location` label → `locationId`, cached
+- `kroger_search` internal helper; `kroger_prices`, `kroger_flyer`, `ready_to_eat_available` per docs/TOOLS.md
+- `flyer_terms.toml` curated config + `docs/SCHEMAS.md` / `CLAUDE.md` sync
+- `match_ingredient_to_kroger_sku`: the 7-step deterministic pipeline per docs/PROJECT.md, **resolve-only** (confident match / narrowed candidates / `unavailable`; tri-state brand confidence; scoring not filtering; `bypass_cache` param; cache revalidation; cache *write* deferred to Change 06)
+- `compare_unit_price` tool + its deterministic unit-conversion core (shared by the matcher's tiebreaker and the exposed tool); `flyer_terms.toml` consumed by `kroger_flyer`
+- Tests for the matching pipeline (canonicalization, cache lookup + revalidation, scoring, tiebreaker/unit-price, confidence gate, `unavailable` signal) with mocked Kroger responses
+- `docs/TOOLS.md` kept in sync (fulfillment-based availability semantics; flyer term-source behavior)
 
-**Done when:** `match_ingredient_to_kroger_sku("extra virgin olive oil")` returns a confident SKU with reasoning, or `ambiguous: true` with candidates. Cache populates after the first run.
+**Done when:** `match_ingredient_to_kroger_sku("extra virgin olive oil")` returns a confident SKU with reasoning, or `ambiguous: true` with candidates — invoked from MCP Inspector against the live public Products API. `kroger_flyer` returns real on-sale items synthesized from the precise + broad term scan.
 
 ---
 
@@ -146,16 +173,24 @@ Each entry below contains enough description for the OpenSpec proposal skill to 
 
 **Scope:** Implement the **write** tools from docs/TOOLS.md: `update_recipe`, `update_pantry`, `mark_pantry_verified`, `add_draft_ready_to_eat`, `update_ready_to_eat`, the user-curated `update_*` tools, and the headline `write_cart_and_commit` + `commit_changes`. Implement atomic batched commits via GitHub's Git Data API (build a tree, create commit, update ref) instead of sequential file commits.
 
+**This change also lands the write-side Kroger + security bundle (decided — moved here from Change 05's earlier draft so the first write and its gate ship together):**
+- **`authorization_code` OAuth (PKCE)** for cart writes: a small auth-callback route in the Worker for the one-time token exchange, plus automatic refresh. Kroger refresh tokens are **single-use/rotating**, so the refresh token lives in a **KV namespace** (one key) — the minimal writable slot, *not* a Durable Object (no coordination / strong-consistency need for a single-user token). This is the one piece of state in an otherwise stateless Worker.
+- **SKU cache writes** folded into `write_cart_and_commit`'s atomic batched commit (Change 05's matching pipeline only *resolves* mappings; here they get persisted to `skus/kroger.toml`).
+- **Cloudflare Access in front of the Worker** (policy: only Casey's identity) — the gate for leg 2 (Claude.ai → Worker), required the moment write/cart tools exist. **Carve-out:** the OAuth callback path (`/oauth/*`) must bypass Access so Kroger's redirect isn't blocked; protect it with OAuth `state` / PKCE instead. Change 07 then points Claude.ai at the already-secured Worker.
+
 **Dependencies:** Changes 04 and 05.
 
 **Deliverables:**
 - Write tools per docs/TOOLS.md
-- Atomic batched commit implementation
-- Cart-write integration with Kroger (cart_add subroutine inside `write_cart_and_commit`)
+- Atomic batched commit implementation (including the SKU cache append from the matching pipeline)
+- Kroger `authorization_code` OAuth + PKCE: one-time callback route, automatic refresh, single-use refresh-token rotation handled correctly
+- KV namespace holding the rotating Kroger refresh token (read on cold start; rewritten on each refresh)
+- Cloudflare Access in front of the Worker + `/oauth/*` carve-out
+- Cart-write integration with Kroger (`PUT /v1/cart/add` subroutine inside `write_cart_and_commit`)
 - Validation that updates pass schema checks before commit
 - Tests for the atomic-commit path
 
-**Done when:** A single tool call can write a Kroger cart, update multiple recipes, verify pantry items, and create one clean git commit summarizing all of it.
+**Done when:** A single tool call can write a Kroger cart, update multiple recipes, verify pantry items, and create one clean git commit summarizing all of it — with Cloudflare Access protecting the Worker, the OAuth callback reachable for token exchange, and cart writes using a correctly-rotated refresh token.
 
 ---
 

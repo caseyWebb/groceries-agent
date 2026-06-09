@@ -253,34 +253,58 @@ The hardest deterministic problem in the system: turning recipe ingredient strin
 Input: "extra virgin olive oil, 1 tbsp"
 
 1. Normalize (deterministic)
-   strip qualifiers, lowercase, apply aliases.toml
+   strip quantity/units, lowercase, apply aliases.toml.
+   Alias-driven — NOT an aggressive qualifier-stripper. aliases.toml is the
+   curated source of truth for which variants collapse to which canonical term.
 
-2. Cache lookup (deterministic)
-   if normalized term → SKU exists in skus/kroger.toml, use it. Done.
+2. Cache lookup → revalidate (deterministic)
+   if normalized term → SKU exists in skus/kroger.toml, take that SKU and
+   revalidate it with ONE targeted lookup (current price + curbside/delivery
+   availability at the preferred location).
+   - available → use it, with FRESH price/promo
+   - unavailable → treat as a miss, fall through to search (self-healing)
+   The cache short-circuits the EXPENSIVE search/narrowing, not the price check.
+   No TTL needed — every hit is revalidated. The LLM may pass `bypass_cache` to
+   force re-resolution when a hit doesn't fit the recipe context (cached generic,
+   recipe wants organic).
 
 3. Kroger search (deterministic API call)
-   → ~30 candidate SKUs
+   filter.term + filter.locationId (+ curbside/delivery fulfillment)
+   → candidate products with price {regular, promo}, size, brand
 
-4. Apply preferences and filters (deterministic, rule-driven)
-   - brand defaults from preferences.toml
-   - size defaults, dietary filters, in-stock at preferred store
-   - apply substitutions.toml if exact unavailable
+4. Score candidates (deterministic, rule-driven — SCORING, not hard filters)
+   - brand preference from preferences.toml [brands] (tri-state — see below)
+   - dietary: best-effort soft score (e.g. "organic" in the name); never a gate
+   - availability: must be fulfillable via curbside or delivery at the location
+   Scoring (not filtering) means a missing preferred brand can't empty the set —
+   it just leaves nothing scoring on the brand axis.
+   This step does NOT substitute. If nothing is available, return
+   { resolved: false, reason: "unavailable" }. Substitution is a SEPARATE,
+   confirmed step via propose_substitutions — the sole owner of substitutions.toml.
 
-5. Deterministic tiebreaker (if multiple remain)
-   - prefer on-sale > regular price
-   - prefer best price-per-unit
-   - first one wins if still tied
+5. Deterministic tiebreaker (within the top-scoring set)
+   - prefer on-sale (promo > 0) over regular
+   - prefer best price-per-unit (via the unit-price calculator — deterministic
+     arithmetic; the LLM normalizes messy size strings, never does the math)
+   - "don't care" commodities ([] brand pref): smallest package covering the
+     quantity hint, then cheapest absolute
 
-6. LLM fallback (only if step 5 still ambiguous)
-   - Tool returns narrowed candidates + "ambiguous, please choose"
-   - Claude picks one OR asks me via chat
-   - Result with reasoning recorded for cache
+6. Confidence gate (deterministic) → LLM only when ambiguous
+   CONFIDENT (auto-pick): a cache hit, OR a defined brand preference resolves it
+     — including [] meaning "don't care, cheapest acceptable".
+   AMBIGUOUS: no cache hit AND no defined brand preference → return narrowed
+     candidates + "ambiguous, please choose". Claude presents the options, picks
+     from context OR asks me (and may record a standing "don't care" as []).
+   Either way the resolution is recorded, so next time is a confident cache hit.
 
-7. Cache result (always)
-   Append to skus/kroger.toml as part of the next batched commit.
+7. Cache result (persisted via the Change 06 batched commit)
+   Append the resolved mapping to skus/kroger.toml. The matcher itself only
+   RESOLVES and returns; the cache write rides the atomic write_cart_and_commit.
 ```
 
 Expected behavior: after 4–6 weeks of normal use, most common ingredients are cached and never hit the LLM. The cache is committed to git, reviewable as a list.
+
+**Confidence is legible and self-extinguishing.** It comes entirely from `preferences.toml` `[brands]`, which is **tri-state**: key absent → ask; `[]` → "don't care," pick cheapest acceptable; `["A","B"]` → ranked preference (list order is rank). So "when will it ask me?" is predictable from the config, and every answered question caches — it asks less over time. See docs/SCHEMAS.md.
 
 **Quantity translation is intentionally coarse.** "3 cloves garlic" → buy a bulb. "1.5 lb chicken thighs" → round up to whatever package Kroger sells. Grocery shopping operates at coarser granularity than recipes; pantry tracking absorbs the slack.
 

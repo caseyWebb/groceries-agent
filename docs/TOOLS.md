@@ -137,31 +137,41 @@ Reset `last_verified_at` on confirmed items.
 
 ### `kroger_flyer(filter)`
 
-Get this week's Kroger sale items, optionally filtered.
+Synthesized sale scan — the public API has **no** flyer/circular endpoint, so this searches terms and keeps products where `promo > 0`, deduped by `productId`. Scans **precise** terms (caller-passed plus stockup/substitution candidates) and **broad** curated terms from `flyer_terms.toml`. Explicitly **non-exhaustive**: each term returns a relevance-ranked page (no sort-by-discount), so it samples the head of each category.
 
 **Params:**
-- `filter` (object, optional): `{ against_stockup?, against_substitutions?, categories? }`
+- `filter` (object, optional): `{ terms?, against_stockup?, against_substitutions? }`
+  - `terms` (array of strings): precise context terms (current menu ingredients, etc.).
+  - `against_stockup` (boolean): also scan `stockup.toml` item names.
+  - `against_substitutions` (boolean): also scan `substitutions.toml` ingredients + their acceptable substitutes.
 
 **Returns:**
-- `{ items: [{ sku, name, regular_price, sale_price, category, notes }] }`
+- `{ items: [{ sku, brand, description, size, price: { regular, promo }, savings, categories, matched_term }] }`
+
+**Notes:** Degrades gracefully when `flyer_terms.toml` is absent/empty — still scans the precise terms and returns a smaller list. Each term is paginated a couple of pages deep.
 
 ### `kroger_prices(ingredients)`
 
-Get current prices for a specific list of ingredients (used for menu pre-pass).
+Get current prices for a specific list of ingredients (used for menu pre-pass). Takes the top relevant fulfillable product per term.
 
 **Params:**
 - `ingredients` (array of strings)
 
 **Returns:**
-- `{ prices: [{ ingredient, sku, price, in_stock, on_sale }] }`
+- `{ prices: [{ ingredient, sku, brand, size, price: { regular, promo }, on_sale, available: { curbside, delivery } }] }`
+
+**Notes:** `price` is `{ regular, promo }` (`promo: 0` = not on sale); `available` reflects curbside/delivery fulfillment at the preferred location — the public API exposes no live in-store stock. When no product matches a term, that entry is `{ ingredient, sku: null, available: { curbside: false, delivery: false } }`.
 
 ### `match_ingredient_to_kroger_sku(ingredient, context)`
 
-Run the full 7-step matching pipeline. Returns either a confident match or narrowed candidates for the LLM to choose from.
+Run the full 7-step matching pipeline. Returns a confident match, narrowed candidates for the LLM to choose from, or an `unavailable` signal. **Resolve-only** — it does not write the cache (that rides `write_cart_and_commit`) and it does not substitute (that's `propose_substitutions`).
 
 **Params:**
 - `ingredient` (string, required)
 - `context` (object, optional): `{ recipe_slug, dietary, quantity_hint }`
+- `bypass_cache` (boolean, optional): force re-resolution, skipping the cache hit — for when a cached SKU doesn't fit the recipe context (cached generic, recipe wants organic).
+
+**Confidence rule:** confident when a cache hit OR a defined `preferences.toml [brands]` entry resolves it (including `[]` = "don't care, cheapest acceptable"); otherwise ambiguous. Cache hits are revalidated for current price + curbside/delivery availability before being returned.
 
 **Returns (confident match):**
 ```
@@ -170,8 +180,9 @@ Run the full 7-step matching pipeline. Returns either a confident match or narro
   sku: "0001111046025",
   brand: "Simple Truth Organic",
   size: "16.9 fl oz",
-  price: 8.99,
-  reason: "cache hit" | "preferred brand match" | etc.
+  price: { regular: 8.99, promo: 0 },
+  on_sale: false,
+  reason: "cache hit" | "preferred brand match" | "don't-care: cheapest acceptable" | etc.
 }
 ```
 
@@ -180,16 +191,37 @@ Run the full 7-step matching pipeline. Returns either a confident match or narro
 {
   resolved: false,
   ambiguous: true,
-  candidates: [{ sku, brand, size, price, ... }],
-  reason: "multiple equivalent matches after deterministic narrowing"
+  candidates: [{ sku, brand, size, price: { regular, promo }, on_sale, unit_price?, fulfillment: { curbside, delivery } }],
+  reason: "no brand preference defined; choose or say 'don't care'"
 }
 ```
 
-**Notes:** When ambiguous, the LLM picks based on conversational context or asks the user. The result feeds back into the cache.
+**Returns (unavailable):**
+```
+{
+  resolved: false,
+  reason: "unavailable",
+  message: "No candidate is fulfillable via curbside/delivery at the preferred location."
+}
+```
+
+**Notes:** When ambiguous, the LLM picks from conversational context or asks the user; a standing "don't care" answer is recorded as `[]` in `preferences.toml [brands]`. On `unavailable`, the LLM may call `propose_substitutions` (which surfaces alternatives for confirmation) — the matcher never substitutes itself. All resolutions feed back into the cache via the next batched commit.
+
+### `compare_unit_price(items)`
+
+Deterministic price-per-unit comparison, used by the matching tiebreaker and when presenting ambiguous candidates. **The LLM never does the arithmetic** — it forwards raw `price` + `size` strings; the tool parses, converts units, and ranks.
+
+**Params:**
+- `items` (array): `[{ id, price, size, quantity_override?, unit_override? }]` — `size` is the raw Kroger size string (`"1/2 gal"`, `"16.9 fl oz"`, `"6 ct"`). Pass `quantity_override`/`unit_override` only for residue the parser couldn't handle (see `incomparable`).
+
+**Returns:**
+- `{ ranked: [{ id, unit_price, base_unit }], cheapest, incomparable: [id] }`
+
+**Notes:** Ranks only WITHIN a dimension (volume / weight / count) — never compares `$/fl oz` to `$/lb`. Cross-dimension or unparseable items land in `incomparable`; the LLM may normalize an unparseable size into `quantity_override`/`unit_override` and re-call. Same deterministic core the matcher uses internally for step-5 tiebreaking.
 
 ### `ready_to_eat_available()`
 
-Cross-reference `ready_to_eat/*.toml` catalogs against current Kroger availability.
+Cross-reference `ready_to_eat/*.toml` catalogs against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`fulfillment.curbside || fulfillment.delivery`) — the public Products API exposes no live in-store stock level.
 
 **Returns:**
 - `{ available: { breakfast: [...], lunch: [...], dinner: [...] }, unavailable: [...] }`

@@ -11,4 +11,8 @@ export interface Env {
   GITHUB_REPO: string;
   /** Ref to read at, e.g. "main". */
   GITHUB_REF: string;
+  /** Kroger Developer (public tier) client_credentials client ID. Secret. */
+  KROGER_CLIENT_ID: string;
+  /** Kroger Developer (public tier) client_credentials client secret. Secret. */
+  KROGER_CLIENT_SECRET: string;
 }

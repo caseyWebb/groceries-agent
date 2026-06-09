@@ -29,9 +29,10 @@ Some files are mine — you have tool capability to edit them, but only do so wh
 
 - `taste.md` — my taste profile narrative. Don't update based on patterns you notice unless I ask ("update my taste profile to note I don't like cilantro" → do it; me silently rejecting three Korean recipes → don't infer).
 - `diet_principles.md` — variety rules with reasoning. Same pattern.
-- `preferences.toml` — defaults like `default_cooking_nights`, `lunch_strategy`, brand defaults. Edit only when directed.
+- `preferences.toml` — defaults like `default_cooking_nights`, `lunch_strategy`, brand defaults. Edit only when directed. **Sanctioned exception:** when I answer a matching question with a standing "don't care" ("just get the cheapest onion from now on"), record it as an empty brand list (`[brands]` → `yellow_onion = []`) — that's me explicitly directing the preference, not you inferring it. A one-off answer ("the store brand this time") is NOT a standing disposition — use it for this cart only, don't write.
 - `substitutions.toml` — standing substitution rules. Same.
 - `aliases.toml` — ingredient variant mappings. Same.
+- `flyer_terms.toml` — broad category terms scanned for serendipitous sales. Same.
 
 For these, if you notice something worth noting ("you've been preferring sheet-pan recipes lately, want me to add that to taste.md?"), surface as a suggestion. Don't write.
 
@@ -142,6 +143,7 @@ If neither flag fires, skip the check-in step entirely.
 **Substitution timing split:**
 - Inventory-based substitutions (recipe needs salmon, I have trout in the freezer) → surface during the pantry confirmation pass.
 - Sale-based substitutions (salmon's on the menu, trout is on sale) → surface alongside the menu proposal, after Kroger flyer data is available.
+- `match_ingredient_to_kroger_sku` never substitutes — when an item isn't fulfillable via curbside/delivery it returns `unavailable`. Turn that into a `propose_substitutions` call and surface the options for me to confirm.
 - Never auto-substitute without my confirmation.
 
 **Discovery happens every menu request, disposition happens whenever I want.** Each menu request surfaces 1–2 new recipes and 1–2 new ready-to-eat options. Import them in draft state immediately — don't wait for me to express interest in this conversation. I'll disposition them later via "rate this," "remove that," etc.
