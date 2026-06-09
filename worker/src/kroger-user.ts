@@ -19,9 +19,10 @@ import { KrogerError } from "./kroger.js";
 const AUTHORIZE_URL = "https://api.kroger.com/v1/connect/oauth2/authorize";
 const TOKEN_URL = "https://api.kroger.com/v1/connect/oauth2/token";
 const CART_ADD_URL = "https://api.kroger.com/v1/cart/add";
-// The documented scope for PUT /v1/cart/add. profile.compact is requested too so
-// the authorize step yields a user-context token usable for the cart API.
-export const CART_SCOPE = "cart.basic:write profile.compact";
+// The documented scope for PUT /v1/cart/add. This alone yields a user-context
+// token usable for the cart API; profile.compact is NOT requested (it isn't
+// granted on the public-tier app and triggers invalid_scope at authorize).
+export const CART_SCOPE = "cart.basic:write";
 const REFRESH_KEY = "kroger:refresh_token";
 const EXPIRY_SKEW_MS = 30_000;
 
