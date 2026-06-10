@@ -671,7 +671,7 @@
     "meal_preppable": false,
     "produces_components": [],
     "protein": "vegetarian",
-    "rating": null,
+    "rating": 5,
     "season": [
       "summer"
     ],
@@ -1498,6 +1498,45 @@
     "title": "Mississippi Pot Roast",
     "uses_components": [],
     "veg_forward": false
+  },
+  "moo-shu-pork": {
+    "cuisine": "chinese",
+    "dietary": [],
+    "discovered_at": "2026-06-10",
+    "discovery_source": "rss",
+    "ingredients_key": [
+      "pork shoulder",
+      "cabbage",
+      "shiitake mushrooms",
+      "wood ear mushrooms",
+      "carrots",
+      "eggs",
+      "hoisin sauce",
+      "oyster sauce",
+      "Shaoxing wine"
+    ],
+    "meal_preppable": false,
+    "produces_components": [],
+    "protein": "pork",
+    "season": [
+      "all"
+    ],
+    "servings": 6,
+    "slug": "moo-shu-pork",
+    "source": "https://thewoksoflife.com/moo-shu-pork-recipe",
+    "status": "draft",
+    "style": "stir-fry",
+    "tags": [
+      "chinese-american",
+      "stir-fry",
+      "pork",
+      "weeknight",
+      "pancakes"
+    ],
+    "time_active": 75,
+    "time_total": 120,
+    "title": "Moo Shu Pork",
+    "uses_components": []
   },
   "moroccan-egg-drop-harira": {
     "cuisine": "moroccan",
