@@ -9,8 +9,8 @@ This file is for Claude Code (and humans) **working on** the grocery-agent backe
 A personal grocery agent that runs in **Claude.ai** (not Claude Code). This is the **code-only** repo — the agent's backend and build tooling. **The agent's data lives in a separate private data repo** (the multi-tenant split — see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) and the `multi-tenant-friend-group` OpenSpec change). This repo holds:
 
 - **`worker/`** — a Cloudflare Worker (TypeScript) exposing the `grocery-mcp` MCP server. The domain tool surface (pantry, recipes, Kroger, substitutions, cart). Deployed to `grocery-mcp.<subdomain>.workers.dev`. It reads/writes the data repo via a GitHub App installation token; "which tenant" is a `users/<username>/` path prefix in that repo.
-- **`scripts/`** — index + static-site build tooling (`build-indexes.mjs`, `build-site.mjs`, `site-assets/`, `migrate/`). Data repos run these against their own content via the reusable CI workflows in `.github/workflows/data-build-*.yml` (`--root <dir>`).
-- **`docs/`** — `PROJECT.md` (architecture), `SCHEMAS.md` (file formats), `TOOLS.md` (the tool contract — keep in sync with `worker/` code), `SELF_HOSTING.md` (operator setup), `MIGRATION.md` (single-repo → data-repo).
+- **`scripts/`** — index + static-site build tooling (`build-indexes.mjs`, `build-site.mjs`, `site-assets/`). Data repos run these against their own content via the reusable CI workflows in `.github/workflows/data-build-*.yml` (`--root <dir>`).
+- **`docs/`** — `PROJECT.md` (architecture), `SCHEMAS.md` (file formats), `TOOLS.md` (the tool contract — keep in sync with `worker/` code), `SELF_HOSTING.md` (operator setup).
 - **`openspec/`** — the change/spec workflow (see below).
 - **`ROADMAP.md`** — the sequence of OpenSpec changes building the system.
 

@@ -31,8 +31,6 @@ gh repo create <you>/groceries-agent-data --private \
 
 Seed it: add your recipes under `recipes/`, your reference data (`aliases.toml`, etc.), and your personal subtree `users/<username>/` (pantry, preferences, taste, diet_principles, stockup, grocery_list, an empty `overlay.toml`, `notes/`). Push. The repo's CI (inherited from the template) regenerates `_indexes/` on every recipe change.
 
-> Migrating an existing single-repo install instead? See [MIGRATION.md](MIGRATION.md).
-
 ## 2. Register the GitHub App
 
 GitHub → **Settings → Developer settings → GitHub Apps → New GitHub App** (on your account):
