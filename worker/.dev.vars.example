@@ -1,0 +1,20 @@
+# .dev.vars.example — local-dev secrets for `wrangler dev`. Copy to `.dev.vars`
+# (gitignored) and fill in. PRODUCTION secrets are set with `wrangler secret put`,
+# never here. Non-secret config (GITHUB_APP_ID, GITHUB_INSTALLATION_ID, DATA_*,
+# KV bindings) lives in wrangler.jsonc, not in this file.
+
+# GitHub App private key, PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`). Used to mint
+# installation tokens for local repo reads/writes. As a single dotenv line, quote
+# it and use literal \n between the PEM lines, e.g.:
+#   GITHUB_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+GITHUB_APP_PRIVATE_KEY=""
+
+# Kroger public-tier client_credentials app (search / flyer / prices, and the
+# user-context fallback when KROGER_OAUTH_* are unset).
+KROGER_CLIENT_ID=""
+KROGER_CLIENT_SECRET=""
+
+# Optional: a separate Kroger authorization_code app for cart writes. When unset,
+# the cart flow falls back to KROGER_CLIENT_ID/SECRET above.
+# KROGER_OAUTH_CLIENT_ID=""
+# KROGER_OAUTH_CLIENT_SECRET=""
