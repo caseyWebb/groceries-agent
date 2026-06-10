@@ -23,6 +23,8 @@ export interface ToBuyItem {
   name: string;
   quantity: number;
   for_recipes: string[];
+  /** True when no package count was supplied and the line defaulted to 1. */
+  assumed_quantity: boolean;
 }
 
 /** An item skipped because the pantry already has it (prompt candidate). */
@@ -62,8 +64,10 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
   const quantities = input.quantities ?? {};
   const includePartials = input.includePartials ?? new Set<string>();
 
-  // Accumulate by normalized name so list + menu needs dedupe cleanly.
-  const merged = new Map<string, { name: string; for_recipes: string[] }>();
+  // Accumulate by normalized name so list + menu needs dedupe cleanly. `needQty`
+  // is the package count carried on a menu need (max across merges); the separate
+  // `quantities` map overrides it below.
+  const merged = new Map<string, { name: string; for_recipes: string[]; needQty?: number }>();
 
   for (const it of input.list) {
     if (it.status !== "active") continue;
@@ -77,6 +81,10 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
     const key = normalizeName(need.name);
     const entry = merged.get(key) ?? { name: need.name, for_recipes: [] };
     entry.for_recipes = [...new Set([...entry.for_recipes, ...(need.for_recipes ?? [])])];
+    // Honor a per-need package count; take the max when several needs merge.
+    if (need.quantity != null && need.quantity > 0) {
+      entry.needQty = entry.needQty != null ? Math.max(entry.needQty, need.quantity) : need.quantity;
+    }
     merged.set(key, entry);
   }
 
@@ -89,11 +97,16 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
       partials.push({ name: entry.name, for_recipes: entry.for_recipes });
       continue;
     }
-    const q = quantities[key];
+    // Precedence: explicit `quantities` override → menu need quantity → default 1.
+    const override = quantities[key];
+    const hasOverride = override != null && override > 0;
+    const hasNeed = entry.needQty != null && entry.needQty > 0;
+    const quantity = hasOverride ? override : hasNeed ? entry.needQty! : 1;
     to_buy.push({
       name: entry.name,
-      quantity: q != null && q > 0 ? q : 1,
+      quantity,
       for_recipes: entry.for_recipes,
+      assumed_quantity: !hasOverride && !hasNeed,
     });
   }
 
@@ -108,6 +121,8 @@ export interface ResolvedLine {
   brand: string;
   size: string | null;
   quantity: number;
+  /** Carried from the to-buy line: quantity defaulted to 1 (no count supplied). */
+  assumed_quantity: boolean;
 }
 
 export interface CheckpointLine {
@@ -204,6 +219,7 @@ export async function placeOrder(
         brand: ov.brand ?? "",
         size: ov.size ?? null,
         quantity: item.quantity,
+        assumed_quantity: item.assumed_quantity,
       });
       continue;
     }
@@ -215,6 +231,7 @@ export async function placeOrder(
         brand: r.brand,
         size: r.size,
         quantity: item.quantity,
+        assumed_quantity: item.assumed_quantity,
       });
     } else if ("ambiguous" in r) {
       checkpoint.push({ name: item.name, kind: "ambiguous", candidates: r.candidates, message: r.reason });

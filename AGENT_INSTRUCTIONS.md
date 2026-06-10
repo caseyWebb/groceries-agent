@@ -145,6 +145,7 @@ Triggered on: "place the order", "send it to my cart", "I'm ready to order", "go
 2. **Resolve and preview.** Call `place_order(preview=true)` (optionally with `menu_needs` for needs not yet on the list). Surface, as one batch, anything that needs my decision before writing:
    - `checkpoint` items (`ambiguous` → pick from candidates; `unavailable` → offer `propose_substitutions`). Don't add these unilaterally.
    - `partials` — items the list/menu wants that the pantry already has. Tell me the plan's required amount (aggregated from `for_recipes`) and ask whether to buy more. Default buy is 1 package; never silently net partials against the order.
+   - **Assumed quantities.** Any resolved line with `assumed_quantity: true` defaulted to 1 package — no count was given. The tool won't judge produce; *you* do. For by-the-each produce (peppers, tomatillos, onions, limes, …), read the recipe (`read_recipe`) for the required amount and set an explicit count via `menu_needs[].quantity` or `quantities` before the real flush — a recipe wanting 4 Anaheim peppers must not silently order 1. Items that genuinely need a single package (a head of cabbage, one jar) need no action. Pass quantities on the menu need itself; the `quantities` map is for overriding after this preview.
 
 3. **Flush.** Once I've dispositioned the batch, call `place_order` for real — pass `overrides` for the items I picked SKUs for, `include_partials` for the partials I confirmed, `quantities` for anything beyond 1 package. Resolved items advance to `in_cart`.
 

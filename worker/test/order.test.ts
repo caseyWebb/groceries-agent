@@ -94,6 +94,53 @@ describe("computeToBuy", () => {
     expect(r.to_buy.find((t) => t.name === "milk")!.quantity).toBe(3);
     expect(r.to_buy.find((t) => t.name === "eggs")!.quantity).toBe(1);
   });
+
+  it("honors menu_needs[].quantity as the package count", () => {
+    const r = computeToBuy({
+      list: [],
+      menuNeeds: [{ name: "anaheim peppers", quantity: 4 }],
+      pantryNames: new Set(),
+    });
+    const line = r.to_buy.find((t) => t.name === "anaheim peppers")!;
+    expect(line.quantity).toBe(4);
+    expect(line.assumed_quantity).toBe(false);
+  });
+
+  it("the quantities map overrides menu_needs[].quantity", () => {
+    const r = computeToBuy({
+      list: [],
+      menuNeeds: [{ name: "anaheim peppers", quantity: 4 }],
+      pantryNames: new Set(),
+      quantities: { "anaheim peppers": 6 },
+    });
+    const line = r.to_buy.find((t) => t.name === "anaheim peppers")!;
+    expect(line.quantity).toBe(6);
+    expect(line.assumed_quantity).toBe(false);
+  });
+
+  it("flags a defaulted line as assumed_quantity", () => {
+    const r = computeToBuy({
+      list: [item("tomatillos")],
+      pantryNames: new Set(),
+    });
+    const line = r.to_buy.find((t) => t.name === "tomatillos")!;
+    expect(line.quantity).toBe(1);
+    expect(line.assumed_quantity).toBe(true);
+  });
+
+  it("takes the max when two menu needs merge to one name", () => {
+    const r = computeToBuy({
+      list: [],
+      menuNeeds: [
+        { name: "anaheim peppers", quantity: 2, for_recipes: ["chile-verde"] },
+        { name: "Anaheim Peppers", quantity: 5, for_recipes: ["arroz-caldo"] },
+      ],
+      pantryNames: new Set(),
+    });
+    const line = r.to_buy.find((t) => t.name.toLowerCase() === "anaheim peppers")!;
+    expect(line.quantity).toBe(5);
+    expect(line.assumed_quantity).toBe(false);
+  });
 });
 
 // A deps factory recording cart/commit calls, with injectable resolution + failures.
@@ -128,7 +175,7 @@ function makeDeps(
 }
 
 const toBuy = (...names: string[]): ToBuyItem[] =>
-  names.map((name) => ({ name, quantity: 1, for_recipes: [] }));
+  names.map((name) => ({ name, quantity: 1, for_recipes: [], assumed_quantity: true }));
 
 describe("placeOrder", () => {
   it("resolves, commits the cache, writes the cart, then advances the list", async () => {
@@ -190,10 +237,21 @@ describe("placeOrder", () => {
     const res = await placeOrder(deps, toBuy("cheese"), { overrides });
 
     expect(res.resolved).toEqual([
-      { name: "cheese", sku: "PICK", brand: "Tillamook", size: "8 oz", quantity: 1 },
+      { name: "cheese", sku: "PICK", brand: "Tillamook", size: "8 oz", quantity: 1, assumed_quantity: true },
     ]);
     expect(res.checkpoint).toEqual([]);
     expect(calls.cart).toBe(1);
+  });
+
+  it("carries assumed_quantity from the to-buy line onto the resolved line", async () => {
+    const { deps } = makeDeps({ peppers: confident("S1"), milk: confident("S2") });
+    const lines: ToBuyItem[] = [
+      { name: "peppers", quantity: 1, for_recipes: [], assumed_quantity: true },
+      { name: "milk", quantity: 2, for_recipes: [], assumed_quantity: false },
+    ];
+    const res = await placeOrder(deps, lines, { preview: true });
+    const byName = Object.fromEntries(res.resolved.map((r) => [r.name, r.assumed_quantity]));
+    expect(byName).toEqual({ peppers: true, milk: false });
   });
 
   it("preview resolves and reports without writing anything", async () => {

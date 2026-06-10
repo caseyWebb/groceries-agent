@@ -447,6 +447,8 @@ The order-time flush — the **only** tool that writes a Kroger cart. Resolves t
 
 **To-buy set (order-time dedup):** `grocery_list ∪ menu_needs − pantry_has`. Only `active` list items participate. A name present in the pantry is **not** silently dropped — it returns in `partials` for you to prompt on, and is bought only if the user confirms it via `include_partials` (the no-auto-decide rule). Default buy quantity is **1 package** per item unless overridden.
 
+**Quantity (package count):** supply it per item via `menu_needs[].quantity`, or via the `quantities` map; the `quantities` map **overrides** `menu_needs[].quantity` when both are present (precedence: `quantities` → `menu_needs[].quantity` → default 1). A line that fell back to the default carries `assumed_quantity: true`. The tool reports that fact but does **not** classify "by-the-each produce" or do portion math — at `preview`, *you* reconcile any `assumed_quantity` by-the-each produce (peppers, tomatillos, …) against the recipe's required amount and set an explicit quantity before the real flush. (`grocery_list` items' string `quantity` like "2 lbs" is a human need-annotation, not a package count.)
+
 **Resolution + checkpoint:** each item runs through the [matcher](#match_ingredient_to_kroger_skuingredient-context) with cache revalidation (a cache hit no longer fulfillable is re-resolved). Items the matcher returns as `ambiguous` or `unavailable` are collected into a single `checkpoint` and are **not** added to the cart. Disposition them and re-call with `overrides` (force a SKU) — already-carted items have advanced to `in_cart`, so they won't be re-added.
 
 **Params:**
@@ -464,7 +466,7 @@ All sections optional. With no args it flushes the current `grocery_list.toml`.
 **Returns:**
 ```
 {
-  resolved:  [{ name, sku, brand, size, quantity }],
+  resolved:  [{ name, sku, brand, size, quantity, assumed_quantity }],  // assumed_quantity: qty defaulted to 1
   checkpoint:[{ name, kind: "ambiguous"|"unavailable", candidates?, message }],
   partials:  [{ name, for_recipes }],
   sku_cache: { committed, commit_sha?, error? },
