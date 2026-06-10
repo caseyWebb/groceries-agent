@@ -1174,6 +1174,46 @@
     "uses_components": [],
     "veg_forward": false
   },
+  "grilled-lemongrass-chicken-thighs": {
+    "cuisine": "vietnamese",
+    "dietary": [
+      "gluten-free"
+    ],
+    "discovered_at": "2026-06-10",
+    "discovery_source": "rss",
+    "ingredients_key": [
+      "chicken thighs",
+      "lemongrass",
+      "fish sauce",
+      "garlic",
+      "serrano",
+      "lime",
+      "cilantro",
+      "cucumber"
+    ],
+    "meal_preppable": false,
+    "produces_components": [],
+    "protein": "chicken",
+    "season": [
+      "summer"
+    ],
+    "servings": 6,
+    "slug": "grilled-lemongrass-chicken-thighs",
+    "source": "https://www.bonappetit.com/recipe/grilled-lemongrass-chicken-thighs",
+    "status": "draft",
+    "style": "grilled",
+    "tags": [
+      "vietnamese",
+      "grilled",
+      "chicken",
+      "summer",
+      "cilantro"
+    ],
+    "time_active": 30,
+    "time_total": 40,
+    "title": "Grilled Lemongrass Chicken Thighs",
+    "uses_components": []
+  },
   "honey-mustard-salmon": {
     "cuisine": "american",
     "dietary": [
