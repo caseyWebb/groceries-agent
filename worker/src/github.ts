@@ -1,10 +1,18 @@
-// Authenticated GitHub data-access client (design D2). The single read path for
-// all repo data; reused by later changes. Reads files at GITHUB_REF via the
-// Contents API with the raw media type (avoids base64 round-trips). Retries
-// transient failures and rate limits with backoff, and surfaces exhaustion as a
-// typed error the tool boundary maps to a structured result.
+// Authenticated GitHub data-access client. The single read/write path for repo
+// data, bound to ONE repository (RepoCoords) and authenticated per request with a
+// short-lived GitHub App installation token (D3) — never a global PAT. Reads files
+// at the repo's ref via the Contents API with the raw media type (avoids base64
+// round-trips). Retries transient failures and rate limits with backoff, and
+// surfaces exhaustion as a typed error the tool boundary maps to a structured
+// result. Because a client is bound to one repo, a caller targets the shared
+// corpus vs. a tenant repo purely by which client it uses.
 
-import type { Env } from "./env.js";
+import type { RepoCoords } from "./tenant.js";
+
+/** A provider of a currently-valid GitHub bearer token (installation token). */
+export interface TokenProvider {
+  token(): Promise<string>;
+}
 
 /** Thrown by the client; callers map `status` to a structured error code. */
 export class GitHubError extends Error {
@@ -56,14 +64,14 @@ export interface GitHubClient {
   updateRef(commitSha: string): Promise<void>;
 }
 
-export function createGitHubClient(env: Env): GitHubClient {
-  const contentsBase = `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/contents`;
-  const gitBase = `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/git`;
-  const branch = env.GITHUB_REF;
+export function createGitHubClient(coords: RepoCoords, auth: TokenProvider): GitHubClient {
+  const contentsBase = `https://api.github.com/repos/${coords.owner}/${coords.repo}/contents`;
+  const gitBase = `https://api.github.com/repos/${coords.owner}/${coords.repo}/git`;
+  const branch = coords.ref;
 
-  function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  async function authHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
     return {
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      Authorization: `Bearer ${await auth.token()}`,
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": USER_AGENT,
       ...extra,
@@ -76,7 +84,7 @@ export function createGitHubClient(env: Env): GitHubClient {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const res = await fetch(url, {
-        headers: authHeaders({ Accept: "application/vnd.github.raw" }),
+        headers: await authHeaders({ Accept: "application/vnd.github.raw" }),
       });
 
       if (res.ok) return res.text();
@@ -112,7 +120,7 @@ export function createGitHubClient(env: Env): GitHubClient {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const res = await fetch(url, {
         method,
-        headers: authHeaders({
+        headers: await authHeaders({
           Accept: "application/vnd.github+json",
           ...(body != null ? { "Content-Type": "application/json" } : {}),
         }),
@@ -181,4 +189,26 @@ export function createGitHubClient(env: Env): GitHubClient {
   }
 
   return { getFile, getRef, getCommitTree, createTree, createCommit, updateRef };
+}
+
+/**
+ * Wrap a client so every repo-relative path is resolved under `prefix` (e.g.
+ * "users/alice"). Reads (`getFile`) and tree writes (`createTree` file paths) are
+ * prefixed; ref/commit/tree-sha operations target the same repo unchanged. This is
+ * how a tenant's personal files (`users/<username>/pantry.toml`) are addressed
+ * within the single shared data repo without a second client or repo. An empty
+ * prefix returns the client unchanged (the pre-migration root layout).
+ */
+export function prefixedClient(gh: GitHubClient, prefix: string): GitHubClient {
+  if (!prefix) return gh;
+  const at = (p: string): string => `${prefix}/${p}`;
+  return {
+    getFile: (path) => gh.getFile(at(path)),
+    getRef: gh.getRef,
+    getCommitTree: gh.getCommitTree,
+    createTree: (baseTree, files) =>
+      gh.createTree(baseTree, files.map((f) => ({ ...f, path: at(f.path) }))),
+    createCommit: gh.createCommit,
+    updateRef: gh.updateRef,
+  };
 }

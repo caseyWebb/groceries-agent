@@ -48,11 +48,14 @@ test('builds recipe + component indexes from fixtures', async () => {
 
   const salmon = recipes['salmon-with-rice'];
   assert.equal(salmon.slug, 'salmon-with-rice');
-  assert.equal(salmon.status, 'active');
   assert.equal(salmon.produces_components[0], 'cooked-rice');
 
-  // all statuses carried, including draft
-  assert.equal(recipes['experimental-tofu'].status, 'draft');
+  // Subjective fields are per-tenant (overlay/cooking_log) and SHALL NOT appear
+  // in the shared index, even when a not-yet-migrated fixture still carries them.
+  assert.equal(salmon.status, undefined);
+  assert.equal(salmon.rating, undefined);
+  assert.equal(salmon.last_cooked, undefined);
+  assert.equal(recipes['experimental-tofu'].status, undefined);
 
   // component adjacency
   assert.deepEqual(components['cooked-rice'], {
@@ -78,11 +81,11 @@ test('output is deterministic across runs', async () => {
   assert.equal(stableStringify(a.components), stableStringify(b.components));
 });
 
-test('date fields normalized to YYYY-MM-DD strings', async () => {
+test('subjective date field last_cooked is stripped from the shared index', async () => {
+  // Date normalization itself is covered by the normalizeValue unit test below;
+  // here we assert the per-tenant last_cooked never lands in the shared index.
   const { recipes } = await buildRecipeIndexes(FIXTURES);
-  const v = recipes['salmon-with-rice'].last_cooked;
-  assert.equal(typeof v, 'string');
-  assert.equal(v, '2025-04-15');
+  assert.equal(recipes['salmon-with-rice'].last_cooked, undefined);
 });
 
 test('normalizeValue converts nested Date instances', () => {
@@ -255,15 +258,17 @@ test('cooking artifacts: hard-fail on unknown type, unresolved slugs, bad dates'
   assert.ok(errors.some((e) => e.includes('planned_for')), errors.join('\n'));
 });
 
-test('cooking artifacts: last_cooked soft-check warns on drift, silent when absent from log', () => {
+test('cooking artifacts: last_cooked is no longer cross-checked against the log', () => {
+  // last_cooked is a per-tenant value derived at read time, not a shared-recipe
+  // field, so the shared build no longer reconciles frontmatter against the log —
+  // even an apparent "drift" produces no warning.
   const { errors, warnings } = validateCookingArtifacts({
-    recipes: { stale: { last_cooked: '2026-06-01' }, neverlogged: { last_cooked: '2025-01-01' } },
+    recipes: { stale: { last_cooked: '2026-06-01' } },
     cookingLog: { entries: [{ date: '2026-06-10', type: 'recipe', recipe: 'stale' }] },
     mealPlan: null,
   });
   assert.deepEqual(errors, []);
-  assert.ok(warnings.some((w) => w.includes('stale') && w.includes('last_cooked')), warnings.join('\n'));
-  assert.ok(!warnings.some((w) => w.includes('neverlogged')), 'recipe absent from the log must not warn');
+  assert.ok(!warnings.some((w) => w.includes('last_cooked')), warnings.join('\n'));
 });
 
 test('cooking artifacts: accepts a bare TOML date (Date) as well as a string', () => {

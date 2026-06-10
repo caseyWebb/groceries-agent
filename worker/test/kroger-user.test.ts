@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   createKrogerUserClient,
   ReauthRequiredError,
   toToolError,
+  __resetUserTokenCache,
   type KvStore,
   type UserTokenCache,
 } from "../src/kroger-user.js";
@@ -11,7 +12,8 @@ import type { Env } from "../src/env.js";
 
 const TOKEN_URL = "https://api.kroger.com/v1/connect/oauth2/token";
 const CART_URL = "https://api.kroger.com/v1/cart/add";
-const REFRESH_KEY = "kroger:refresh_token";
+const TENANT = "alice";
+const REFRESH_KEY = `kroger:refresh:${TENANT}`;
 
 const env = {
   KROGER_OAUTH_CLIENT_ID: "cid",
@@ -63,7 +65,7 @@ describe("Kroger user-context client — token rotation", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, {
+    const client = createKrogerUserClient(env, kv, TENANT, {
       fetch: fetchMock,
       cache: freshCache(),
       now: () => 1000,
@@ -87,7 +89,7 @@ describe("Kroger user-context client — token rotation", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, {
+    const client = createKrogerUserClient(env, kv, TENANT, {
       fetch: fetchMock,
       cache: freshCache(),
       now: () => 1000,
@@ -100,7 +102,7 @@ describe("Kroger user-context client — token rotation", () => {
   it("returns reauth_required when no refresh token is stored", async () => {
     const kv = memKv();
     const fetchMock = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await expect(client.getAccessToken()).rejects.toBeInstanceOf(ReauthRequiredError);
   });
 
@@ -120,7 +122,7 @@ describe("Kroger user-context client — token rotation", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await client.addToCart([{ upc: "a", quantity: 1 }]);
     await client.addToCart([{ upc: "b", quantity: 1 }]);
     expect(refreshes).toBe(1);
@@ -141,7 +143,7 @@ describe("Kroger user-context client — cart write", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await client.addToCart([{ upc: "0001111", quantity: 2 }]);
     expect(cartCalls).toBe(1);
   });
@@ -156,7 +158,7 @@ describe("Kroger user-context client — cart write", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await client.addToCart([{ upc: "x", quantity: 1 }]);
     expect(cartCalls).toBe(2);
   });
@@ -168,7 +170,7 @@ describe("Kroger user-context client — cart write", () => {
       return new Response("forbidden", { status: 403 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await expect(client.addToCart([{ upc: "x", quantity: 1 }])).rejects.toBeInstanceOf(KrogerError);
   });
 
@@ -183,8 +185,61 @@ describe("Kroger user-context client — cart write", () => {
       return json({ access_token: "A1", refresh_token: "R1", expires_in: 1800 });
     }) as unknown as typeof fetch;
 
-    const client = createKrogerUserClient(env, kv, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, cache: freshCache(), now: () => 1000 });
     await client.exchangeCode("CODE", "VERIFIER", "https://x/oauth/callback");
     expect(await kv.get(REFRESH_KEY)).toBe("R1");
+  });
+});
+
+describe("Kroger user-context client — per-tenant isolation (D8)", () => {
+  // These exercise the REAL module-level per-tenant cache (no injected `cache`),
+  // so they assert one tenant's token can never be served to another.
+  beforeEach(() => __resetUserTokenCache());
+
+  /** A token endpoint that echoes the presented refresh token into the issued tokens. */
+  const echoFetch = (async (url: string, init?: RequestInit) => {
+    if (url.startsWith(TOKEN_URL)) {
+      const body = new URLSearchParams(String(init?.body));
+      const tok = body.get("refresh_token");
+      return json({ access_token: `A-${tok}`, refresh_token: `${tok}-rot`, expires_in: 1800 });
+    }
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+
+  it("stores and rotates each tenant's refresh token under its own key", async () => {
+    const kv = memKv({ "kroger:refresh:alice": "RA0", "kroger:refresh:bob": "RB0" });
+    const alice = createKrogerUserClient(env, kv, "alice", { fetch: echoFetch, now: () => 1000 });
+    const bob = createKrogerUserClient(env, kv, "bob", { fetch: echoFetch, now: () => 1000 });
+
+    await alice.getAccessToken();
+    await bob.getAccessToken();
+
+    expect(await kv.get("kroger:refresh:alice")).toBe("RA0-rot");
+    expect(await kv.get("kroger:refresh:bob")).toBe("RB0-rot");
+  });
+
+  it("the per-tenant cache never serves one tenant's access token to another", async () => {
+    const kv = memKv({ "kroger:refresh:alice": "RA0", "kroger:refresh:bob": "RB0" });
+    const alice = createKrogerUserClient(env, kv, "alice", { fetch: echoFetch, now: () => 1000 });
+    const bob = createKrogerUserClient(env, kv, "bob", { fetch: echoFetch, now: () => 1000 });
+
+    const ta = await alice.getAccessToken();
+    const tb = await bob.getAccessToken();
+
+    expect(ta).toBe("A-RA0");
+    expect(tb).toBe("A-RB0");
+    expect(ta).not.toBe(tb);
+    // Alice's cached token is still hers on a repeat call — never bob's.
+    expect(await alice.getAccessToken()).toBe("A-RA0");
+  });
+
+  it("one tenant's reauth_required does not affect another tenant", async () => {
+    // Only bob has a stored refresh token; alice has none → alice reauth, bob fine.
+    const kv = memKv({ "kroger:refresh:bob": "RB0" });
+    const alice = createKrogerUserClient(env, kv, "alice", { fetch: echoFetch, now: () => 1000 });
+    const bob = createKrogerUserClient(env, kv, "bob", { fetch: echoFetch, now: () => 1000 });
+
+    await expect(alice.getAccessToken()).rejects.toBeInstanceOf(ReauthRequiredError);
+    expect(await bob.getAccessToken()).toBe("A-RB0");
   });
 });

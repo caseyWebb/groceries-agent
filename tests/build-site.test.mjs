@@ -40,13 +40,13 @@ test('escapeHtml escapes the five HTML-significant characters', () => {
   assert.equal(escapeHtml(`<a href="x">&'`), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;');
 });
 
-test('orderRecipes puts active before draft, alphabetical within group', () => {
+test('orderRecipes is alphabetical by title (status is not a shared field)', () => {
   const out = orderRecipes([
-    { title: 'Zebra', slug: 'zebra', status: 'active' },
-    { title: 'Apple', slug: 'apple', status: 'draft' },
-    { title: 'Mango', slug: 'mango', status: 'active' },
+    { title: 'Zebra', slug: 'zebra' },
+    { title: 'Apple', slug: 'apple' },
+    { title: 'Mango', slug: 'mango' },
   ]);
-  assert.deepEqual(out.map((r) => r.slug), ['mango', 'zebra', 'apple']);
+  assert.deepEqual(out.map((r) => r.slug), ['apple', 'mango', 'zebra']);
 });
 
 test('facetValues sorts difficulty by easy/medium/hard, others alpha', () => {
@@ -124,19 +124,18 @@ test('facetCss generates an AND-semantics hide rule per facet value', () => {
 
 // --- full build ----------------------------------------------------------
 
-test('buildSite excludes rejected/archived, emits page-per-recipe + assets', async () => {
+test('buildSite publishes the whole shared corpus, emits page-per-recipe + assets', async () => {
+  // status is per-tenant overlay, not shared content, so the public cookbook
+  // publishes every corpus recipe — no global rejected/archived exclusion.
   const dir = await tmpRecipes({
-    'keep.md': fm({ title: 'Keep', status: 'active' }) + body,
-    'draft.md': fm({ title: 'Draft', status: 'draft' }) + body,
-    'gone.md': fm({ title: 'Gone', status: 'rejected' }) + body,
-    'old.md': fm({ title: 'Old', status: 'archived' }) + body,
+    'keep.md': fm({ title: 'Keep' }) + body,
+    'second.md': fm({ title: 'Second' }) + body,
+    'third.md': fm({ title: 'Third' }) + body,
+    'fourth.md': fm({ title: 'Fourth' }) + body,
   });
   const { files, recipeCount } = await buildSite({ recipesDir: dir, componentsPath: '/nonexistent', assetsDir: ASSETS });
-  assert.equal(recipeCount, 2);
-  assert.ok(files.has('keep.html'));
-  assert.ok(files.has('draft.html'));
-  assert.ok(!files.has('gone.html'));
-  assert.ok(!files.has('old.html'));
+  assert.equal(recipeCount, 4);
+  for (const slug of ['keep', 'second', 'third', 'fourth']) assert.ok(files.has(`${slug}.html`), slug);
   assert.ok(files.has('index.html') && files.has('style.css') && files.has('sw.js') && files.has('manifest.webmanifest'));
   await rm(dir, { recursive: true, force: true });
 });
@@ -149,14 +148,14 @@ test('buildSite output is deterministic across runs', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('loadRecipes keeps body content and slug, drops excluded', async () => {
+test('loadRecipes keeps body content and slug for every recipe (no status exclusion)', async () => {
   const dir = await tmpRecipes({
-    'a.md': fm({ title: 'A', status: 'active' }) + body,
-    'b.md': fm({ title: 'B', status: 'rejected' }) + body,
+    'a.md': fm({ title: 'A' }) + body,
+    'b.md': fm({ title: 'B' }) + body,
   });
   const recipes = await loadRecipes(dir);
-  assert.deepEqual(recipes.map((r) => r.slug), ['a']);
-  assert.match(recipes[0].content, /## Ingredients/);
+  assert.deepEqual(recipes.map((r) => r.slug).sort(), ['a', 'b']);
+  assert.match(recipes.find((r) => r.slug === 'a').content, /## Ingredients/);
   await rm(dir, { recursive: true, force: true });
 });
 

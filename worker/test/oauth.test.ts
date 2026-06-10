@@ -40,31 +40,56 @@ const fixedPkce: Pkce = {
   challengeFromVerifier: async () => "fixed-challenge",
 };
 
+/** A clientFor factory that records which tenant each built client was bound to. */
+function recordingClientFor(overrides: Partial<KrogerUserClient> = {}) {
+  const tenants: string[] = [];
+  const clientFor = (tenantId: string): KrogerUserClient => {
+    tenants.push(tenantId);
+    return stubClient(overrides);
+  };
+  return { clientFor, tenants };
+}
+
 describe("/oauth route handling", () => {
-  it("init stores the verifier under state and redirects to Kroger", async () => {
+  it("init stores the verifier+tenant under state and redirects to Kroger", async () => {
     const kv = memKv();
-    const deps: OAuthDeps = { kv, client: stubClient(), pkce: fixedPkce };
-    const res = await handleOAuthRequest(deps, new URL("https://grocery-mcp.example.com/oauth/init"));
+    const { clientFor } = recordingClientFor();
+    const deps: OAuthDeps = { kv, clientFor, pkce: fixedPkce };
+    const res = await handleOAuthRequest(
+      deps,
+      new URL("https://grocery-mcp.example.com/oauth/init?tenant=alice"),
+    );
 
     expect(res.status).toBe(302);
     const loc = res.headers.get("location")!;
     expect(loc).toContain("state=fixed-state");
     expect(loc).toContain("code_challenge=fixed-challenge");
     expect(loc).toContain(encodeURIComponent("https://grocery-mcp.example.com/oauth/callback"));
-    expect(await kv.get("kroger:pkce:fixed-state")).toBe("fixed-verifier");
+    expect(JSON.parse((await kv.get("kroger:pkce:fixed-state"))!)).toEqual({
+      verifier: "fixed-verifier",
+      tenant: "alice",
+    });
   });
 
-  it("completes the init→callback handshake: verifies state, exchanges the code", async () => {
+  it("rejects an init with no tenant", async () => {
+    const kv = memKv();
+    const { clientFor } = recordingClientFor();
+    const res = await handleOAuthRequest({ kv, clientFor, pkce: fixedPkce }, new URL("https://x.com/oauth/init"));
+    expect(res.status).toBe(400);
+    expect(await kv.get("kroger:pkce:fixed-state")).toBeNull();
+  });
+
+  it("completes the init→callback handshake bound to the initiating tenant", async () => {
     const kv = memKv();
     let exchanged: { code: string; verifier: string } | null = null;
-    const client = stubClient({
+    const { clientFor, tenants } = recordingClientFor({
       exchangeCode: async (code, verifier) => {
         exchanged = { code, verifier };
       },
     });
-    const deps: OAuthDeps = { kv, client, pkce: fixedPkce };
+    const deps: OAuthDeps = { kv, clientFor, pkce: fixedPkce };
 
-    await handleOAuthRequest(deps, new URL("https://x.com/oauth/init"));
+    await handleOAuthRequest(deps, new URL("https://x.com/oauth/init?tenant=alice"));
     const res = await handleOAuthRequest(
       deps,
       new URL("https://x.com/oauth/callback?code=THECODE&state=fixed-state"),
@@ -72,19 +97,21 @@ describe("/oauth route handling", () => {
 
     expect(res.status).toBe(200);
     expect(exchanged).toEqual({ code: "THECODE", verifier: "fixed-verifier" });
-    // The single-use verifier is consumed.
+    // The callback resolved the client for the SAME tenant that initiated the flow.
+    expect(tenants).toEqual(["alice", "alice"]);
+    // The single-use record is consumed.
     expect(await kv.get("kroger:pkce:fixed-state")).toBeNull();
   });
 
-  it("rejects a forged/replayed callback whose state has no stored verifier", async () => {
+  it("rejects a forged/replayed callback whose state has no stored record", async () => {
     const kv = memKv();
     let exchangeCalled = false;
-    const client = stubClient({
+    const { clientFor } = recordingClientFor({
       exchangeCode: async () => {
         exchangeCalled = true;
       },
     });
-    const deps: OAuthDeps = { kv, client, pkce: fixedPkce };
+    const deps: OAuthDeps = { kv, clientFor, pkce: fixedPkce };
 
     const res = await handleOAuthRequest(
       deps,
@@ -98,24 +125,18 @@ describe("/oauth route handling", () => {
   it("rejects a callback missing state, with no exchange", async () => {
     const kv = memKv();
     let exchangeCalled = false;
-    const deps: OAuthDeps = {
-      kv,
-      client: stubClient({ exchangeCode: async () => { exchangeCalled = true; } }),
-      pkce: fixedPkce,
-    };
+    const { clientFor } = recordingClientFor({ exchangeCode: async () => { exchangeCalled = true; } });
+    const deps: OAuthDeps = { kv, clientFor, pkce: fixedPkce };
     const res = await handleOAuthRequest(deps, new URL("https://x.com/oauth/callback?code=c"));
     expect(res.status).toBe(400);
     expect(exchangeCalled).toBe(false);
   });
 
   it("surfaces a Kroger error param without attempting exchange", async () => {
-    const kv = memKv({ "kroger:pkce:fixed-state": "fixed-verifier" });
+    const kv = memKv({ "kroger:pkce:fixed-state": JSON.stringify({ verifier: "fixed-verifier", tenant: "alice" }) });
     let exchangeCalled = false;
-    const deps: OAuthDeps = {
-      kv,
-      client: stubClient({ exchangeCode: async () => { exchangeCalled = true; } }),
-      pkce: fixedPkce,
-    };
+    const { clientFor } = recordingClientFor({ exchangeCode: async () => { exchangeCalled = true; } });
+    const deps: OAuthDeps = { kv, clientFor, pkce: fixedPkce };
     const res = await handleOAuthRequest(
       deps,
       new URL("https://x.com/oauth/callback?error=access_denied&state=fixed-state"),

@@ -27,6 +27,10 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+# Private keys (e.g. the GitHub App PKCS#8 key used for `wrangler secret put`) —
+# NEVER commit. The key belongs in Cloudflare secrets only.
+*.pem
+*.key
 
 # OS
 .DS_Store
@@ -46,3 +50,4 @@ Desktop.ini
 *~
 .\#*
 \#*\#
+.migration/

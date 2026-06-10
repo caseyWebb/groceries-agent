@@ -5,7 +5,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
-import { createGitHubClient } from "./github.js";
+import type { Tenant } from "./tenant.js";
+import { createGitHubClient, prefixedClient } from "./github.js";
+import { createInstallationAuth } from "./github-app.js";
 import { readFile, readOptional } from "./gh-read.js";
 import { parseMarkdown, parseToml } from "./parse.js";
 import { ToolError, runTool } from "./errors.js";
@@ -15,6 +17,8 @@ import { registerOrderTools } from "./order-tools.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { filterRecipes, type RecipeFilters, type RecipeIndex } from "./recipes.js";
+import { parseOverlay, mergeOverlay, type Overlay } from "./overlay.js";
+import { entriesOf, deriveLastCooked } from "./cooking-log.js";
 import { createKrogerClient, type KrogerCandidate } from "./kroger.js";
 import {
   matchIngredient,
@@ -83,9 +87,22 @@ const unitPriceItemShape = {
 
 const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"] as const;
 
-export function buildServer(env: Env): McpServer {
+export function buildServer(env: Env, tenant: Tenant): McpServer {
   const server = new McpServer({ name: "grocery-mcp", version: "0.1.0" });
-  const gh = createGitHubClient(env);
+
+  // Repo access is authenticated with a short-lived GitHub App installation token
+  // (D3) against the single data repo. `sharedGh` addresses root paths (objective
+  // content `recipes/`, reference data, SKU cache, indexes); `gh` is the same repo
+  // wrapped to address this tenant's `users/<username>/` subtree (personal state,
+  // overlay, notes). One repo, two path views — never another tenant's subtree.
+  const installationAuth = createInstallationAuth(
+    env.GITHUB_APP_ID,
+    env.GITHUB_APP_PRIVATE_KEY,
+    tenant.installationId,
+  );
+  const dataGh = createGitHubClient(tenant.dataRepo, installationAuth);
+  const sharedGh = dataGh;
+  const gh = prefixedClient(dataGh, tenant.userPrefix);
   const kroger = createKrogerClient(env);
 
   // Per-request lazy caches: preferences is read once, the location resolved once,
@@ -127,7 +144,7 @@ export function buildServer(env: Env): McpServer {
   function getAliases(): Promise<Record<string, string>> {
     if (!aliasesPromise) {
       aliasesPromise = (async () => {
-        const aliasText = await readOptional(gh, "aliases.toml");
+        const aliasText = await readOptional(sharedGh, "aliases.toml");
         return aliasText !== null
           ? ((parseToml(aliasText, "aliases.toml").aliases as Record<string, string>) ?? {})
           : {};
@@ -137,7 +154,7 @@ export function buildServer(env: Env): McpServer {
   }
 
   async function getCacheMappings(): Promise<CachedMapping[]> {
-    const cacheText = await readOptional(gh, "skus/kroger.toml");
+    const cacheText = await readOptional(sharedGh, "skus/kroger.toml");
     const cache: CachedMapping[] = [];
     if (cacheText) {
       const mappings = (parseToml(cacheText, "skus/kroger.toml").mappings as Record<string, unknown>[]) ?? [];
@@ -155,6 +172,34 @@ export function buildServer(env: Env): McpServer {
     return cache;
   }
 
+  // Per-request lazy reads of the caller's subjective layer (on the personal
+  // client `gh`, so they resolve under users/<username>/). The overlay supplies
+  // rating+status; the cooking log supplies last_cooked. Both are merged onto
+  // shared recipe content at read time (§6.2).
+  let overlayPromise: Promise<Overlay> | null = null;
+  function getOverlay(): Promise<Overlay> {
+    if (!overlayPromise) {
+      overlayPromise = (async () => {
+        const text = await readOptional(gh, "overlay.toml");
+        return text ? parseOverlay(text) : {};
+      })();
+    }
+    return overlayPromise;
+  }
+
+  let lastCookedPromise: Promise<Map<string, string>> | null = null;
+  function getLastCookedMap(): Promise<Map<string, string>> {
+    if (!lastCookedPromise) {
+      lastCookedPromise = (async () => {
+        const text = await readOptional(gh, "cooking_log.toml");
+        return text
+          ? deriveLastCooked(entriesOf(parseToml(text, "cooking_log.toml")))
+          : new Map<string, string>();
+      })();
+    }
+    return lastCookedPromise;
+  }
+
   /** Read and parse pantry items; empty/comment-only pantry yields []. */
   async function getPantryItems(): Promise<PantryItem[]> {
     const text = await readFile(gh, "pantry.toml", "not_found", "pantry.toml is missing");
@@ -164,7 +209,7 @@ export function buildServer(env: Env): McpServer {
 
   /** Read standing substitution rules; absent/empty file yields []. */
   async function getSubstitutionRules(): Promise<SubRule[]> {
-    const text = await readOptional(gh, "substitutions.toml");
+    const text = await readOptional(sharedGh, "substitutions.toml");
     return text ? parseSubstitutionRules(parseToml(text, "substitutions.toml")) : [];
   }
 
@@ -174,7 +219,7 @@ export function buildServer(env: Env): McpServer {
     aliases: Record<string, string>,
   ): Promise<ParsedIngredient[]> {
     if (!SLUG_RE.test(slug)) throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
-    const text = await readFile(gh, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`);
+    const text = await readFile(sharedGh, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`);
     const { body } = parseMarkdown(text, `recipes/${slug}.md`);
     const lines = extractIngredientLines(body);
     if (lines === null) {
@@ -215,12 +260,16 @@ export function buildServer(env: Env): McpServer {
     },
     ({ filters }) =>
       runTool(async () => {
-        const raw = await readFile(
-          gh,
-          "_indexes/recipes.json",
-          "index_unavailable",
-          "_indexes/recipes.json is missing",
-        );
+        const [raw, overlay, lastCooked] = await Promise.all([
+          readFile(
+            sharedGh,
+            "_indexes/recipes.json",
+            "index_unavailable",
+            "_indexes/recipes.json is missing",
+          ),
+          getOverlay(),
+          getLastCookedMap(),
+        ]);
         let index: RecipeIndex;
         try {
           index = JSON.parse(raw) as RecipeIndex;
@@ -228,7 +277,17 @@ export function buildServer(env: Env): McpServer {
           const message = e instanceof Error ? e.message : String(e);
           throw new ToolError("index_unavailable", `_indexes/recipes.json is malformed: ${message}`);
         }
-        return { recipes: filterRecipes(index, (filters ?? {}) as RecipeFilters) };
+        // Join each shared entry with the caller's overlay (rating/status) and
+        // cooking-log-derived last_cooked before filtering, so filters see the
+        // caller's effective per-tenant view (effective status defaults to draft).
+        const effective: RecipeIndex = {};
+        for (const [slug, entry] of Object.entries(index)) {
+          effective[slug] = {
+            ...mergeOverlay(entry, overlay[slug], lastCooked.get(slug)),
+            slug,
+          };
+        }
+        return { recipes: filterRecipes(effective, (filters ?? {}) as RecipeFilters) };
       }),
   );
 
@@ -243,14 +302,14 @@ export function buildServer(env: Env): McpServer {
         if (!SLUG_RE.test(slug)) {
           throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
         }
-        const text = await readFile(
-          gh,
-          `recipes/${slug}.md`,
-          "not_found",
-          `Unknown recipe slug: ${slug}`,
-        );
+        const [text, overlay, lastCooked] = await Promise.all([
+          readFile(sharedGh, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`),
+          getOverlay(),
+          getLastCookedMap(),
+        ]);
         const { frontmatter, body } = parseMarkdown(text, `recipes/${slug}.md`);
-        return { slug, frontmatter, body };
+        const merged = mergeOverlay(frontmatter, overlay[slug], lastCooked.get(slug));
+        return { slug, frontmatter: merged, body };
       }),
   );
 
@@ -385,7 +444,7 @@ export function buildServer(env: Env): McpServer {
           }
         }
         if (f.against_substitutions) {
-          const text = await readOptional(gh, "substitutions.toml");
+          const text = await readOptional(sharedGh, "substitutions.toml");
           if (text) {
             const rules = (parseToml(text, "substitutions.toml").rules as Record<string, unknown>[]) ?? [];
             for (const r of rules) {
@@ -401,7 +460,7 @@ export function buildServer(env: Env): McpServer {
 
         // Broad terms: degrade gracefully when flyer_terms.toml is absent or empty.
         const broad: string[] = [];
-        const flyerText = await readOptional(gh, "flyer_terms.toml");
+        const flyerText = await readOptional(sharedGh, "flyer_terms.toml");
         if (flyerText) {
           const parsed = parseToml(flyerText, "flyer_terms.toml");
           if (Array.isArray(parsed.terms)) {
@@ -456,7 +515,7 @@ export function buildServer(env: Env): McpServer {
         const unavailable: unknown[] = [];
 
         for (const meal of READY_TO_EAT_MEALS) {
-          const text = await readOptional(gh, `ready_to_eat/${meal}.toml`);
+          const text = await readOptional(sharedGh, `ready_to_eat/${meal}.toml`);
           if (!text) continue;
           const items = (parseToml(text, `ready_to_eat/${meal}.toml`).items as Record<string, unknown>[]) ?? [];
           for (const item of items) {
@@ -572,9 +631,10 @@ export function buildServer(env: Env): McpServer {
       }),
   );
 
-  // Repo-data write tools + the grocery-list buy list. These persist via the
-  // atomic commit engine; no cart or external-service writes.
-  registerWriteTools(server, gh);
+  // Repo-data write tools route by category internally (content → shared root,
+  // personal/overlay → users/<username>/), so they take the ROOT client + the
+  // caller's prefix. The grocery list is personal, so it takes the prefixed client.
+  registerWriteTools(server, sharedGh, tenant.userPrefix);
   registerGroceryListTools(server, gh);
 
   // Cooking history + meal plan: read_meal_plan (resume) and retrospective.
@@ -586,7 +646,7 @@ export function buildServer(env: Env): McpServer {
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs. The one tool that reaches the cart (Change 06b).
-  registerOrderTools(server, gh, env, resolveIngredient);
+  registerOrderTools(server, gh, env, tenant.id, resolveIngredient);
 
   return server;
 }

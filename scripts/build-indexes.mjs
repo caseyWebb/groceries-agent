@@ -17,6 +17,11 @@ import { parse as parseToml } from 'smol-toml';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATUS_ENUM = new Set(['active', 'draft', 'rejected', 'archived']);
+// Subjective recipe fields are per-tenant (overlay + cooking_log), NOT shared
+// corpus content. They are stripped from the shared index and merged at read time
+// (multi-tenant-friend-group §6.1). `status`, when still present on a not-yet-
+// migrated recipe, is validated leniently but never emitted to the shared index.
+const SUBJECTIVE_FIELDS = ['rating', 'last_cooked', 'status'];
 // Controlled vocabularies for the variety dimensions (coarse buckets — `fish`
 // not `salmon`) so retrospective mixes and diet_principles rules stay reliable.
 // Validated only WHEN PRESENT (absence keeps the warn-only recommended-field
@@ -131,8 +136,11 @@ export async function buildRecipeIndexes(recipesDir) {
     if (typeof data.title !== 'string' || data.title.trim() === '') {
       errors.push(`${rel}: missing required field "title"`);
     }
-    if (!STATUS_ENUM.has(data.status)) {
-      errors.push(`${rel}: invalid or missing "status" (got ${JSON.stringify(data.status)})`);
+    // status is a per-tenant overlay field now; only validate it when a
+    // not-yet-migrated recipe still carries one. Absence is fine (effective
+    // status defaults to draft per tenant, resolved in the Worker at read time).
+    if (data.status != null && !STATUS_ENUM.has(data.status)) {
+      errors.push(`${rel}: invalid "status" (got ${JSON.stringify(data.status)})`);
     }
     const missing = RECOMMENDED_FIELDS.filter(
       (f) => data[f] == null || (Array.isArray(data[f]) && data[f].length === 0)
@@ -153,8 +161,12 @@ export async function buildRecipeIndexes(recipesDir) {
       }
     }
 
+    // Emit objective content only — strip the per-tenant subjective fields so the
+    // shared index never carries one tenant's rating/status/last_cooked.
+    const objective = { ...data };
+    for (const f of SUBJECTIVE_FIELDS) delete objective[f];
     recipes[slug] = normalizeValue({
-      ...data,
+      ...objective,
       slug,
       uses_components: data.uses_components ?? [],
       produces_components: data.produces_components ?? [],
@@ -251,17 +263,11 @@ export function validateCookingArtifacts({ recipes, cookingLog, mealPlan }) {
     }
   });
 
-  // Soft-check: last_cooked must equal the max log date for recipes that HAVE
-  // log entries. Recipes absent from the log never warn (empty/partial log is fine).
-  for (const [slug, maxDate] of maxLogDate) {
-    const lc = recipes[slug]?.last_cooked ?? null;
-    const lcStr = typeof lc === 'string' ? lc : null;
-    if (lcStr !== maxDate) {
-      warnings.push(
-        `recipes/${slug}.md: last_cooked (${JSON.stringify(lcStr)}) != max cooking_log date (${maxDate})`
-      );
-    }
-  }
+  // (The former frontmatter `last_cooked` vs. max-log-date soft-check is gone:
+  // last_cooked is no longer a shared-recipe field — it is a per-tenant value
+  // derived from each tenant's own cooking_log at read time, so the shared index
+  // build cannot and need not reconcile it.)
+  void maxLogDate;
 
   return { errors, warnings };
 }
@@ -336,7 +342,11 @@ async function writeIndexes(indexes, outDir) {
 
 async function main() {
   const checkOnly = process.argv.includes('--check');
-  const { indexes, errors, warnings } = await run();
+  // --root <dir> builds a SEPARATE data checkout (the data repo's CI runs these
+  // code-repo scripts against its own content). Defaults to this repo for dev.
+  const rootArg = process.argv.indexOf('--root');
+  const root = rootArg !== -1 ? path.resolve(process.argv[rootArg + 1]) : REPO_ROOT;
+  const { indexes, errors, warnings } = await run({ root });
 
   for (const w of warnings) console.warn(`warn: ${w}`);
 
@@ -351,7 +361,7 @@ async function main() {
     return;
   }
 
-  const outDir = path.join(REPO_ROOT, '_indexes');
+  const outDir = path.join(root, '_indexes');
   await stat(outDir); // _indexes/ exists (Change 01 skeleton)
   await writeIndexes(indexes, outDir);
   console.log(

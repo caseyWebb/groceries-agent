@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildRecipeUpdate, buildCookingLogUpdate, buildMealPlanUpdate } from "../src/write-tools.js";
+import {
+  buildRecipeUpdate,
+  buildCookingLogUpdate,
+  buildMealPlanUpdate,
+  buildOverlayUpdate,
+  splitRecipeUpdate,
+} from "../src/write-tools.js";
+import { parseOverlay } from "../src/overlay.js";
 import { applyPantryOperations, markVerified, type PantryItem } from "../src/pantry-write.js";
 import { serializeMarkdown } from "../src/serialize.js";
 import { parseMarkdown, parseToml } from "../src/parse.js";
@@ -57,6 +64,7 @@ describe("buildCookingLogUpdate", () => {
     const gh = ghWith({ "cooking_log.toml": "# header\n" });
     const { file, added, lastCooked } = await buildCookingLogUpdate(
       gh,
+      "cooking_log.toml",
       [
         { type: "recipe", recipe: "salmon", date: "2026-06-09" },
         { type: "ready_to_eat", name: "lasagna" }, // date defaults to today
@@ -78,6 +86,7 @@ describe("buildCookingLogUpdate", () => {
     const gh = ghWith({ "cooking_log.toml": existing });
     const { lastCooked } = await buildCookingLogUpdate(
       gh,
+      "cooking_log.toml",
       [{ type: "recipe", recipe: "salmon", date: "2026-06-09" }],
       "2026-06-30",
     );
@@ -88,7 +97,7 @@ describe("buildCookingLogUpdate", () => {
   it("rejects an invalid entry as validation_failed", async () => {
     const gh = ghWith({ "cooking_log.toml": "" });
     await expect(
-      buildCookingLogUpdate(gh, [{ type: "recipe", date: "2026-06-09" }], "2026-06-30"),
+      buildCookingLogUpdate(gh, "cooking_log.toml", [{ type: "recipe", date: "2026-06-09" }], "2026-06-30"),
     ).rejects.toMatchObject({ code: "validation_failed" });
   });
 });
@@ -96,7 +105,7 @@ describe("buildCookingLogUpdate", () => {
 describe("buildMealPlanUpdate", () => {
   it("adds a planned row, returning a file", async () => {
     const gh = ghWith({ "meal_plan.toml": "# header\n" });
-    const { file, applied } = await buildMealPlanUpdate(gh, [
+    const { file, applied } = await buildMealPlanUpdate(gh, "meal_plan.toml", [
       { op: "add", recipe: "salmon", planned_for: "2026-07-01" },
     ]);
     expect(file).not.toBeNull();
@@ -107,9 +116,57 @@ describe("buildMealPlanUpdate", () => {
 
   it("returns no file when nothing applied (remove of a missing row)", async () => {
     const gh = ghWith({ "meal_plan.toml": "" });
-    const { file, conflicts } = await buildMealPlanUpdate(gh, [{ op: "remove", recipe: "ghost" }]);
+    const { file, conflicts } = await buildMealPlanUpdate(gh, "meal_plan.toml", [{ op: "remove", recipe: "ghost" }]);
     expect(file).toBeNull();
     expect(conflicts).toHaveLength(1);
+  });
+});
+
+describe("splitRecipeUpdate (content vs overlay routing)", () => {
+  it("routes rating/status to the overlay and everything else to content", () => {
+    const r = splitRecipeUpdate({ title: "X", protein: "beef", rating: 5, status: "active" });
+    expect(r.content).toEqual({ title: "X", protein: "beef" });
+    expect(r.overlayEdit).toEqual({ rating: 5, status: "active" });
+    expect(r.hadLastCooked).toBe(false);
+  });
+
+  it("flags last_cooked and never routes it to content or overlay", () => {
+    const r = splitRecipeUpdate({ title: "X", last_cooked: "2026-06-09" });
+    expect(r.hadLastCooked).toBe(true);
+    expect(r.content).toEqual({ title: "X" });
+    expect(r.overlayEdit).toEqual({});
+  });
+});
+
+describe("buildOverlayUpdate", () => {
+  it("returns null when there are no edits", async () => {
+    const gh = ghWith({});
+    expect(await buildOverlayUpdate(gh, "users/alice/overlay.toml", new Map())).toBeNull();
+  });
+
+  it("writes the overlay at the given (user-prefixed) path, creating it when absent", async () => {
+    const gh = ghWith({}); // no existing overlay
+    const file = await buildOverlayUpdate(
+      gh,
+      "users/alice/overlay.toml",
+      new Map([["salmon", { rating: 5, status: "active" }]]),
+    );
+    expect(file!.path).toBe("users/alice/overlay.toml");
+    expect(parseOverlay(file!.content)).toEqual({ salmon: { rating: 5, status: "active" } });
+  });
+
+  it("merges onto an existing overlay without disturbing other slugs", async () => {
+    const existing = '[overlay.beef-stew]\nstatus = "rejected"\n';
+    const gh = ghWith({ "users/alice/overlay.toml": existing });
+    const file = await buildOverlayUpdate(
+      gh,
+      "users/alice/overlay.toml",
+      new Map([["salmon", { status: "active" }]]),
+    );
+    expect(parseOverlay(file!.content)).toEqual({
+      "beef-stew": { status: "rejected" },
+      salmon: { status: "active" },
+    });
   });
 });
 

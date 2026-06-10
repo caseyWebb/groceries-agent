@@ -3,14 +3,18 @@
 // context, so this implements the `authorization_code` + PKCE grant and the
 // single-use/rotating refresh-token rotation the design calls for.
 //
-// State model (design "KV for the rotating refresh token"):
-//   - The refresh token is the Worker's only persistent state — a single KV key.
-//   - Access tokens are held ONLY in isolate memory and re-minted on expiry.
+// State model (design "KV for the rotating refresh token"), now PER-TENANT (D8):
+//   - Each tenant's refresh token lives at its own KV key `kroger:refresh:<tenant>`.
+//   - Access tokens are held ONLY in isolate memory, in a PER-TENANT cache — there
+//     is no module-level single-token cache that could serve one tenant's token to
+//     another (the old singleton was a multi-tenancy correctness bug).
 //   - On refresh, the NEW refresh token is written to KV *before* the new access
 //     token is used for any Kroger request, so a crash mid-refresh cannot strand
 //     the account on a token Kroger has already consumed.
 //   - A Kroger-rejected refresh surfaces as a structured `reauth_required` (run
 //     the one-time /oauth/init again), never a silent failure or generic 5xx.
+//   - The read-side `client_credentials` client (kroger.ts) is unaffected: it is
+//     app-level and shared by all tenants.
 
 import type { Env } from "./env.js";
 import { ToolError } from "./errors.js";
@@ -23,7 +27,8 @@ const CART_ADD_URL = "https://api.kroger.com/v1/cart/add";
 // token usable for the cart API; profile.compact is NOT requested (it isn't
 // granted on the public-tier app and triggers invalid_scope at authorize).
 export const CART_SCOPE = "cart.basic:write";
-const REFRESH_KEY = "kroger:refresh_token";
+/** Per-tenant KV key for the rotating Kroger refresh token. */
+const refreshKeyFor = (tenantId: string): string => `kroger:refresh:${tenantId}`;
 const EXPIRY_SKEW_MS = 30_000;
 
 /** Thrown when Kroger rejects the stored refresh token; maps to `reauth_required`. */
@@ -58,12 +63,22 @@ export interface KrogerUserClient {
   addToCart(lines: CartLine[]): Promise<void>;
 }
 
-/** Isolate-lifetime cache of the user access token (the refresh token lives in KV). */
+/** Isolate-lifetime cache of one tenant's user access token (the refresh token lives in KV). */
 export interface UserTokenCache {
   token: { accessToken: string; expiresAt: number } | null;
 }
 
-const moduleCache: UserTokenCache = { token: null };
+// Per-tenant isolate caches, keyed by tenant id. A tenant only ever reads its own
+// entry, so one tenant's cached access token can never be served to another.
+const moduleCaches = new Map<string, UserTokenCache>();
+function tenantCache(tenantId: string): UserTokenCache {
+  let c = moduleCaches.get(tenantId);
+  if (!c) {
+    c = { token: null };
+    moduleCaches.set(tenantId, c);
+  }
+  return c;
+}
 
 export interface KrogerUserClientOptions {
   fetch?: typeof fetch;
@@ -80,11 +95,13 @@ interface TokenResponse {
 export function createKrogerUserClient(
   env: Env,
   kv: KvStore,
+  tenantId: string,
   opts: KrogerUserClientOptions = {},
 ): KrogerUserClient {
   const doFetch = opts.fetch ?? fetch;
-  const cache = opts.cache ?? moduleCache;
+  const cache = opts.cache ?? tenantCache(tenantId);
   const now = opts.now ?? (() => Date.now());
+  const refreshKey = refreshKeyFor(tenantId);
 
   // One Kroger app may carry both grants: fall back to the client_credentials
   // creds when the authorization_code-specific secrets aren't set separately.
@@ -143,7 +160,7 @@ export function createKrogerUserClient(
       throw new KrogerError(502, "Kroger code-exchange response missing tokens");
     }
     // Persist the refresh token first; only then cache the access token for use.
-    await kv.put(REFRESH_KEY, json.refresh_token);
+    await kv.put(refreshKey, json.refresh_token);
     cache.token = {
       accessToken: json.access_token,
       expiresAt: now() + (json.expires_in ?? 1800) * 1000,
@@ -151,7 +168,7 @@ export function createKrogerUserClient(
   }
 
   async function refresh(): Promise<string> {
-    const stored = await kv.get(REFRESH_KEY);
+    const stored = await kv.get(refreshKey);
     if (!stored) {
       throw new ReauthRequiredError("No Kroger refresh token stored; run the one-time /oauth/init");
     }
@@ -166,7 +183,7 @@ export function createKrogerUserClient(
     // access token is used for any request. If Kroger rotated it (it does), a
     // crash here cannot strand us on the consumed token.
     if (json.refresh_token) {
-      await kv.put(REFRESH_KEY, json.refresh_token);
+      await kv.put(refreshKey, json.refresh_token);
     }
     cache.token = {
       accessToken: json.access_token,
@@ -224,7 +241,7 @@ export function toToolError(e: unknown): ToolError {
   return new ToolError("upstream_unavailable", message);
 }
 
-/** Test helper: clear the module-level isolate token cache. */
+/** Test helper: clear all per-tenant isolate token caches. */
 export function __resetUserTokenCache(): void {
-  moduleCache.token = null;
+  moduleCaches.clear();
 }

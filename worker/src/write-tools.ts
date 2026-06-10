@@ -13,6 +13,14 @@ import { parseMarkdown, parseToml } from "./parse.js";
 import { serializeMarkdown, stringifyTomlWithHeader } from "./serialize.js";
 import { ToolError, runTool } from "./errors.js";
 import { commitFiles } from "./commit.js";
+import {
+  parseOverlay,
+  applyOverlayEdit,
+  serializeOverlay,
+  OVERLAY_PATH,
+  type Overlay,
+  type OverlayRow,
+} from "./overlay.js";
 import { applyPantryOperations, markVerified, type PantryItem } from "./pantry-write.js";
 import {
   COOKING_LOG_PATH,
@@ -36,8 +44,32 @@ function itemsOf(parsed: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(parsed.items) ? (parsed.items as Record<string, unknown>[]) : [];
 }
 
+/** The subjective recipe fields that route to the per-tenant overlay, not content. */
+const SUBJECTIVE_KEYS = new Set(["rating", "status"]);
+
+/**
+ * Partition a recipe update into the per-tenant overlay edit (rating/status) and
+ * the objective content edit (everything else). `last_cooked` is flagged: it is
+ * derived from the cooking log and SHALL NOT be written to content or overlay.
+ */
+export function splitRecipeUpdate(updates: Record<string, unknown>): {
+  overlayEdit: OverlayRow;
+  content: Record<string, unknown>;
+  hadLastCooked: boolean;
+} {
+  const overlayEdit: OverlayRow = {};
+  const content: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(updates)) {
+    if (k === "last_cooked") continue;
+    if (SUBJECTIVE_KEYS.has(k)) (overlayEdit as Record<string, unknown>)[k] = v;
+    else content[k] = v;
+  }
+  return { overlayEdit, content, hadLastCooked: "last_cooked" in updates };
+}
+
 // --- file-level builders (return a TreeFile for the atomic commit) -----------
 
+/** Build an objective-content update for a shared recipe (root `recipes/<slug>.md`). */
 export async function buildRecipeUpdate(
   gh: GitHubClient,
   slug: string,
@@ -51,13 +83,31 @@ export async function buildRecipeUpdate(
   return { path, content: serializeMarkdown(merged, body) };
 }
 
+/**
+ * Build the caller's overlay update from a set of per-slug subjective edits.
+ * Reads + writes `overlayPath` (the caller's `users/<username>/overlay.toml`).
+ * Returns null when there is nothing to write.
+ */
+export async function buildOverlayUpdate(
+  gh: GitHubClient,
+  overlayPath: string,
+  edits: Map<string, OverlayRow>,
+): Promise<TreeFile | null> {
+  if (edits.size === 0) return null;
+  const text = (await readOptional(gh, overlayPath)) ?? "";
+  let overlay: Overlay = text ? parseOverlay(text) : {};
+  for (const [slug, edit] of edits) overlay = applyOverlayEdit(overlay, slug, edit);
+  return { path: overlayPath, content: serializeOverlay(overlay) };
+}
+
 async function buildPantryUpdate(
   gh: GitHubClient,
+  path: string,
   operations: Parameters<typeof applyPantryOperations>[1],
   verifyNames: string[],
 ): Promise<{ file: TreeFile | null; applied: unknown[]; conflicts: unknown[] }> {
-  const text = await readFile(gh, "pantry.toml", "not_found", "pantry.toml is missing");
-  const parsed = parseToml(text, "pantry.toml");
+  const text = await readFile(gh, path, "not_found", "pantry.toml is missing");
+  const parsed = parseToml(text, path);
   let items = itemsOf(parsed) as PantryItem[];
 
   const opResult = applyPantryOperations(items, operations, today());
@@ -80,7 +130,7 @@ async function buildPantryUpdate(
 
   const content = stringifyTomlWithHeader(text, { ...parsed, items });
   return {
-    file: { path: "pantry.toml", content },
+    file: { path, content },
     applied: [...opResult.applied, ...verified.map((name) => ({ op: "verify" as const, name }))],
     conflicts,
   };
@@ -106,11 +156,12 @@ function makeLogEntry(raw: Record<string, unknown>, todayDate: string): CookingL
  */
 export async function buildCookingLogUpdate(
   gh: GitHubClient,
+  path: string,
   rawEntries: Record<string, unknown>[],
   todayDate: string,
 ): Promise<{ file: TreeFile; added: CookingLogEntry[]; lastCooked: Map<string, string> }> {
-  const text = (await readOptional(gh, COOKING_LOG_PATH)) ?? "";
-  const parsed = text ? parseToml(text, COOKING_LOG_PATH) : {};
+  const text = (await readOptional(gh, path)) ?? "";
+  const parsed = text ? parseToml(text, path) : {};
   const existing = entriesOf(parsed);
 
   const additions = rawEntries.map((r) => makeLogEntry(r, todayDate));
@@ -130,7 +181,7 @@ export async function buildCookingLogUpdate(
   }
 
   return {
-    file: { path: COOKING_LOG_PATH, content: stringifyTomlWithHeader(text, { ...parsed, entries: all }) },
+    file: { path, content: stringifyTomlWithHeader(text, { ...parsed, entries: all }) },
     added: additions,
     lastCooked,
   };
@@ -139,17 +190,18 @@ export async function buildCookingLogUpdate(
 /** Apply meal-plan add/remove ops. Returns the file (null when nothing changed) + report. */
 export async function buildMealPlanUpdate(
   gh: GitHubClient,
+  path: string,
   ops: MealPlanOp[],
 ): Promise<{ file: TreeFile | null; applied: unknown[]; conflicts: unknown[] }> {
-  const text = (await readOptional(gh, MEAL_PLAN_PATH)) ?? "";
-  const parsed = text ? parseToml(text, MEAL_PLAN_PATH) : {};
+  const text = (await readOptional(gh, path)) ?? "";
+  const parsed = text ? parseToml(text, path) : {};
   const planned = plannedOf(parsed);
   const result = applyMealPlanOps(planned, ops);
   if (result.applied.length === 0) {
     return { file: null, applied: result.applied, conflicts: result.conflicts };
   }
   return {
-    file: { path: MEAL_PLAN_PATH, content: stringifyTomlWithHeader(text, { ...parsed, planned: result.items }) },
+    file: { path, content: stringifyTomlWithHeader(text, { ...parsed, planned: result.items }) },
     applied: result.applied,
     conflicts: result.conflicts,
   };
@@ -222,22 +274,47 @@ const CURATED_FILES: Record<string, string> = {
   substitutions: "substitutions.toml",
   aliases: "aliases.toml",
 };
+/** Curated files that are SHARED reference data (root); the rest are per-tenant. */
+const SHARED_CURATED = new Set(["substitutions", "aliases"]);
 
 // --- registration ------------------------------------------------------------
 
-export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
+/**
+ * `gh` is the root data-repo client. `userPrefix` is the caller's subtree (e.g.
+ * "users/alice", empty pre-migration). Writes are routed by category: objective
+ * recipe content + shared reference data at the root; overlay/notes/personal state
+ * under the caller's `users/<username>/`. All writes commit via `gh` with explicit
+ * paths, so a batch lands as one atomic commit that may span both.
+ */
+export function registerWriteTools(server: McpServer, gh: GitHubClient, userPrefix: string): void {
+  const userPath = (p: string): string => (userPrefix ? `${userPrefix}/${p}` : p);
+
   server.registerTool(
     "update_recipe",
     {
       description:
-        "Update a recipe's frontmatter (last_cooked, rating, status transitions, or directed edits). Commits one change. For batching a whole session, use commit_changes instead.",
+        "Edit a recipe. Objective frontmatter and body edits change the SHARED recipe content; rating and status are the caller's PERSONAL disposition and are written to their overlay, never the shared recipe. last_cooked cannot be set here — it is derived from the cooking log (append a cooking_log entry via commit_changes). For batching a whole session, use commit_changes.",
       inputSchema: { slug: z.string(), updates: z.record(z.string(), z.unknown()) },
     },
     ({ slug, updates }) =>
       runTool(async () => {
-        const file = await buildRecipeUpdate(gh, slug, updates);
-        const { commit_sha } = await commitFiles(gh, [file], `update recipe ${slug}`);
-        return { slug, updated_fields: Object.keys(updates), commit_sha };
+        if (!SLUG_RE.test(slug)) throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+        const { overlayEdit, content, hadLastCooked } = splitRecipeUpdate(updates);
+        if (hadLastCooked) {
+          throw new ToolError(
+            "validation_failed",
+            "last_cooked is derived from the cooking log; append a cooking_log entry instead of setting it directly",
+          );
+        }
+        const files: TreeFile[] = [];
+        if (Object.keys(content).length > 0) files.push(await buildRecipeUpdate(gh, slug, content));
+        if (Object.keys(overlayEdit).length > 0) {
+          const f = await buildOverlayUpdate(gh, userPath(OVERLAY_PATH), new Map([[slug, overlayEdit]]));
+          if (f) files.push(f);
+        }
+        if (files.length === 0) return { slug, updated_fields: [] };
+        const { commit_sha } = await commitFiles(gh, files, `update recipe ${slug}`);
+        return { slug, updated_fields: Object.keys(updates).filter((k) => k !== "last_cooked"), commit_sha };
       }),
   );
 
@@ -258,7 +335,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
     },
     ({ operations }) =>
       runTool(async () => {
-        const { file, applied, conflicts } = await buildPantryUpdate(gh, operations, []);
+        const { file, applied, conflicts } = await buildPantryUpdate(gh, userPath("pantry.toml"), operations, []);
         if (!file) return { applied, conflicts };
         const { commit_sha } = await commitFiles(gh, [file], "update pantry");
         return { applied, conflicts, commit_sha };
@@ -273,7 +350,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
     },
     ({ items }) =>
       runTool(async () => {
-        const { file, applied, conflicts } = await buildPantryUpdate(gh, [], items);
+        const { file, applied, conflicts } = await buildPantryUpdate(gh, userPath("pantry.toml"), [], items);
         if (!file) return { verified: [], conflicts };
         const { commit_sha } = await commitFiles(gh, [file], "verify pantry items");
         return { verified: applied.filter((a: any) => a.op === "verify").map((a: any) => a.name), conflicts, commit_sha };
@@ -327,6 +404,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
   // supplies. The discipline of WHEN to call these (only on explicit user
   // direction) lives in AGENT_INSTRUCTIONS.md.
   for (const [key, path] of Object.entries(CURATED_FILES)) {
+    const target = SHARED_CURATED.has(key) ? path : userPath(path);
     server.registerTool(
       `update_${key}`,
       {
@@ -335,7 +413,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
       },
       ({ content }) =>
         runTool(async () => {
-          const { commit_sha } = await commitFiles(gh, [{ path, content }], `update ${path}`);
+          const { commit_sha } = await commitFiles(gh, [{ path: target, content }], `update ${path}`);
           return { file: path, commit_sha };
         }),
     );
@@ -345,7 +423,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
     "commit_changes",
     {
       description:
-        "Persist a batch of repo updates as ONE commit (no cart). Use at the end of a session to keep the git log clean instead of calling the granular tools repeatedly. cooking_log_entries append cooked meals (date defaults to today) and, for type=recipe, derive the recipe's last_cooked (max log date) in the SAME commit — never set last_cooked by hand. meal_plan_ops add/remove committed cook intent. Ready-to-eat consumption is a cooking_log_entries {type:'ready_to_eat'} plus a pantry_operations remove when the user used the last of it.",
+        "Persist a batch of repo updates as ONE commit (no cart). Use at the end of a session to keep the git log clean instead of calling the granular tools repeatedly. recipe_updates split automatically: objective frontmatter/body → shared recipe content; rating/status → the caller's personal overlay. cooking_log_entries append cooked meals (date defaults to today); last_cooked is DERIVED from the log at read time — never set it by hand. meal_plan_ops add/remove committed cook intent. Ready-to-eat consumption is a cooking_log_entries {type:'ready_to_eat'} plus a pantry_operations remove when the user used the last of it.",
       inputSchema: {
         recipe_updates: z
           .array(z.object({ slug: z.string(), updates: z.record(z.string(), z.unknown()) }))
@@ -407,36 +485,51 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
         const files: TreeFile[] = [];
         const summary: Record<string, unknown> = {};
 
-        // Cooking log first: appending entries derives last_cooked, which is then
-        // merged into the recipe-frontmatter updates so both land in one commit.
-        let derivedLastCooked = new Map<string, string>();
+        // Cooking log (per-tenant): append entries. last_cooked is DERIVED at read
+        // time from the log, so it is no longer co-written onto recipe frontmatter.
         if ((payload.cooking_log_entries?.length ?? 0) > 0) {
-          const { file, added, lastCooked } = await buildCookingLogUpdate(
+          const { file, added } = await buildCookingLogUpdate(
             gh,
+            userPath(COOKING_LOG_PATH),
             payload.cooking_log_entries!,
             today(),
           );
           files.push(file);
-          derivedLastCooked = lastCooked;
           summary.cooking_log = { added: added.length };
         }
 
-        // Merge explicit recipe_updates with derived last_cooked into one update
-        // per slug (derivation wins for last_cooked — it must reflect the log).
-        const recipeUpdates = new Map<string, Record<string, unknown>>();
+        // Recipe updates: objective content → shared root recipe; the caller's
+        // rating/status → their overlay. A subjective edit never touches shared content.
+        const overlayEdits = new Map<string, OverlayRow>();
+        const contentSlugs: string[] = [];
         for (const r of payload.recipe_updates ?? []) {
-          recipeUpdates.set(r.slug, { ...(recipeUpdates.get(r.slug) ?? {}), ...r.updates });
+          const { overlayEdit, content, hadLastCooked } = splitRecipeUpdate(r.updates);
+          if (hadLastCooked) {
+            throw new ToolError(
+              "validation_failed",
+              "last_cooked is derived from the cooking log; use cooking_log_entries instead of setting it on a recipe",
+            );
+          }
+          if (Object.keys(content).length > 0) {
+            files.push(await buildRecipeUpdate(gh, r.slug, content));
+            contentSlugs.push(r.slug);
+          }
+          if (Object.keys(overlayEdit).length > 0) {
+            overlayEdits.set(r.slug, { ...(overlayEdits.get(r.slug) ?? {}), ...overlayEdit });
+          }
         }
-        for (const [slug, lastCooked] of derivedLastCooked) {
-          recipeUpdates.set(slug, { ...(recipeUpdates.get(slug) ?? {}), last_cooked: lastCooked });
+        const overlayFile = await buildOverlayUpdate(gh, userPath(OVERLAY_PATH), overlayEdits);
+        if (overlayFile) files.push(overlayFile);
+        if (contentSlugs.length > 0 || overlayEdits.size > 0) {
+          summary.recipes = { content: contentSlugs, overlay: [...overlayEdits.keys()] };
         }
-        for (const [slug, updates] of recipeUpdates) {
-          files.push(await buildRecipeUpdate(gh, slug, updates));
-        }
-        if (recipeUpdates.size > 0) summary.recipes = [...recipeUpdates.keys()];
 
         if ((payload.meal_plan_ops?.length ?? 0) > 0) {
-          const { file, applied, conflicts } = await buildMealPlanUpdate(gh, payload.meal_plan_ops!);
+          const { file, applied, conflicts } = await buildMealPlanUpdate(
+            gh,
+            userPath(MEAL_PLAN_PATH),
+            payload.meal_plan_ops!,
+          );
           if (file) files.push(file);
           summary.meal_plan = { applied, conflicts };
         }
@@ -444,6 +537,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
         if ((payload.pantry_operations?.length ?? 0) > 0 || (payload.pantry_verified?.length ?? 0) > 0) {
           const { file, applied, conflicts } = await buildPantryUpdate(
             gh,
+            userPath("pantry.toml"),
             payload.pantry_operations ?? [],
             payload.pantry_verified ?? [],
           );
@@ -463,7 +557,8 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient): void {
         }
 
         for (const c of payload.config_updates ?? []) {
-          files.push({ path: CURATED_FILES[c.file], content: c.content });
+          const p = CURATED_FILES[c.file];
+          files.push({ path: SHARED_CURATED.has(c.file) ? p : userPath(p), content: c.content });
         }
         if ((payload.config_updates?.length ?? 0) > 0) {
           summary.config = payload.config_updates!.map((c) => c.file);

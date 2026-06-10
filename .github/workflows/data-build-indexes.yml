@@ -1,0 +1,55 @@
+# Reusable workflow: regenerate a DATA repo's _indexes/ from its recipes/.
+# A data repo (created from groceries-agent-data-template) calls this — see that
+# repo's thin .github/workflows/build-indexes.yml. Billing/runners are the CALLER's
+# (the data repo owner), never this repo's. The build scripts live ONLY here; the
+# data repo carries no copy. `code_ref` pins which version of the scripts to run.
+name: data-build-indexes
+
+on:
+  workflow_call:
+    inputs:
+      code_ref:
+        description: Ref of caseyWebb/groceries-agent to take the build scripts from.
+        type: string
+        default: main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the regenerated _indexes back to the data repo
+    steps:
+      # The caller's repo (the data repo) — its recipes/ are the build input.
+      - uses: actions/checkout@v4
+
+      # This code repo — for the build scripts + their deps. Goes in _code/ so it
+      # is never committed to the data repo.
+      - uses: actions/checkout@v4
+        with:
+          repository: caseyWebb/groceries-agent
+          ref: ${{ inputs.code_ref }}
+          path: _code
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install build deps
+        run: npm ci
+        working-directory: _code
+
+      # `--root .` builds THIS workspace (the data repo), not _code.
+      - name: Validate + regenerate indexes
+        run: node _code/scripts/build-indexes.mjs --root .
+
+      - name: Commit regenerated indexes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add _indexes
+          if git diff --cached --quiet; then
+            echo "Indexes unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Regenerate indexes [skip ci]"
+          git push

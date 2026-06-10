@@ -20,6 +20,14 @@ import {
 const PKCE_TTL_SECONDS = 600;
 const pkceKey = (state: string): string => `kroger:pkce:${state}`;
 
+/** The per-flow record stored under the state key: the PKCE verifier + the tenant
+ * that initiated the flow, so the callback stores the refresh token under that
+ * tenant's key (kroger-user-auth: "state SHALL be bound to the initiating tenant"). */
+interface FlowRecord {
+  verifier: string;
+  tenant: string;
+}
+
 /** Base64url (no padding) of raw bytes. */
 function base64url(bytes: Uint8Array): string {
   let s = "";
@@ -54,7 +62,8 @@ const defaultPkce: Pkce = { generateVerifier, generateState, challengeFromVerifi
 
 export interface OAuthDeps {
   kv: KvStore;
-  client: KrogerUserClient;
+  /** Build a Kroger user client bound to a specific tenant's refresh-token key. */
+  clientFor: (tenantId: string) => KrogerUserClient;
   pkce?: Pkce;
 }
 
@@ -72,11 +81,18 @@ export async function handleOAuthRequest(deps: OAuthDeps, url: URL): Promise<Res
   const redirectUri = `${url.origin}/oauth/callback`;
 
   if (url.pathname === "/oauth/init") {
+    // The initiating tenant. TRANSITIONAL: taken from a query param; Section 3
+    // replaces this with an agent-minted, single-use nonce so a caller cannot
+    // initiate a Kroger flow for another tenant.
+    const tenant = url.searchParams.get("tenant");
+    if (!tenant) return text("Missing tenant", 400);
+
     const verifier = pkce.generateVerifier();
     const state = pkce.generateState();
     const challenge = await pkce.challengeFromVerifier(verifier);
-    await deps.kv.put(pkceKey(state), verifier, { expirationTtl: PKCE_TTL_SECONDS });
-    const authorizeUrl = deps.client.buildAuthorizeUrl(redirectUri, state, challenge);
+    const record: FlowRecord = { verifier, tenant };
+    await deps.kv.put(pkceKey(state), JSON.stringify(record), { expirationTtl: PKCE_TTL_SECONDS });
+    const authorizeUrl = deps.clientFor(tenant).buildAuthorizeUrl(redirectUri, state, challenge);
     return new Response(null, { status: 302, headers: { location: authorizeUrl } });
   }
 
@@ -87,17 +103,29 @@ export async function handleOAuthRequest(deps: OAuthDeps, url: URL): Promise<Res
     const state = url.searchParams.get("state");
     if (!state) return text("Missing state", 400);
 
-    // The verifier is the proof this callback corresponds to a flow WE started.
-    // No stored verifier for this state → forged/replayed/expired → reject.
-    const verifier = await deps.kv.get(pkceKey(state));
-    if (!verifier) return text("Invalid or expired state; restart authorization", 400);
+    // The stored flow record is the proof this callback corresponds to a flow WE
+    // started. No record for this state → forged/replayed/expired → reject. The
+    // record also carries the initiating tenant, so the refresh token lands under
+    // that tenant's key.
+    const raw = await deps.kv.get(pkceKey(state));
+    if (!raw) return text("Invalid or expired state; restart authorization", 400);
     await deps.kv.delete(pkceKey(state));
+
+    let record: FlowRecord;
+    try {
+      record = JSON.parse(raw) as FlowRecord;
+    } catch {
+      return text("Corrupt authorization state; restart authorization", 400);
+    }
+    if (!record?.verifier || !record.tenant) {
+      return text("Corrupt authorization state; restart authorization", 400);
+    }
 
     const code = url.searchParams.get("code");
     if (!code) return text("Missing code", 400);
 
     try {
-      await deps.client.exchangeCode(code, verifier, redirectUri);
+      await deps.clientFor(record.tenant).exchangeCode(code, record.verifier, redirectUri);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return text(`Token exchange failed: ${message}`, 502);
@@ -111,6 +139,6 @@ export async function handleOAuthRequest(deps: OAuthDeps, url: URL): Promise<Res
 /** Thin wrapper: build real deps from env + the KV binding, then handle. */
 export function handleOAuth(env: Env, url: URL): Promise<Response> {
   const kv = env.KROGER_KV as unknown as KvStore;
-  const client = createKrogerUserClient(env, kv);
-  return handleOAuthRequest({ kv, client }, url);
+  const clientFor = (tenantId: string): KrogerUserClient => createKrogerUserClient(env, kv, tenantId);
+  return handleOAuthRequest({ kv, clientFor }, url);
 }

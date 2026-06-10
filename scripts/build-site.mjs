@@ -24,7 +24,6 @@ import { marked } from 'marked';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ASSETS_DIR = path.join(REPO_ROOT, 'scripts', 'site-assets');
-const EXCLUDED_STATUS = new Set(['rejected', 'archived']);
 const STATIC_ASSETS = ['style.css', 'search.js', 'read-aloud.js', 'icon-192.svg', 'icon-512.svg'];
 const FACET_AXES = ['protein', 'difficulty', 'cuisine', 'dietary'];
 const DIFFICULTY_ORDER = { easy: 0, medium: 1, hard: 2 };
@@ -47,10 +46,11 @@ export function compareByTitle(a, b) {
   return t !== 0 ? t : a.slug.localeCompare(b.slug);
 }
 
-// Index order: active before draft, each group alphabetical by title.
+// Index order: alphabetical by title. (Recipe `status` is a per-tenant overlay
+// field, not shared content, so the public cookbook has no global disposition to
+// order or filter by — it publishes the whole shared corpus.)
 export function orderRecipes(recipes) {
-  const rank = (r) => (r.status === 'active' ? 0 : 1);
-  return [...recipes].sort((a, b) => rank(a) - rank(b) || compareByTitle(a, b));
+  return [...recipes].sort((a, b) => compareByTitle(a, b));
 }
 
 function asArray(v) {
@@ -309,7 +309,6 @@ function cuisineDetails(recipes) {
 
 function recipeCard(r) {
   const data = [
-    `data-status="${escapeHtml(r.status)}"`,
     `data-protein="${escapeHtml(asArray(r.protein).join(' '))}"`,
     `data-difficulty="${escapeHtml(asArray(r.difficulty).join(' '))}"`,
     `data-cuisine="${escapeHtml(asArray(r.cuisine).join(' '))}"`,
@@ -332,7 +331,6 @@ function recipeCard(r) {
     `      <li ${data} data-search="${escapeHtml(haystack)}">\n` +
     `        <a class="card" href="${escapeHtml(r.slug)}.html">\n` +
     `          <h2>${escapeHtml(r.title)}</h2>\n` +
-    (r.status === 'draft' ? `          <span class="draft-badge">Draft</span>\n` : '') +
     `          <p class="meta">${meta}</p>\n` +
     `          <p class="tags">${tagRow(r.tags)}</p>\n` +
     `        </a>\n      </li>`
@@ -456,7 +454,6 @@ export async function loadRecipes(recipesDir) {
   const recipes = [];
   for (const file of files) {
     const { data, content } = matter(await readFile(file, 'utf8'));
-    if (EXCLUDED_STATUS.has(data.status)) continue;
     recipes.push({ ...data, slug: deriveSlug(file), content });
   }
   return recipes;
@@ -508,12 +505,19 @@ async function writeSite(files, outDir) {
 }
 
 async function main() {
+  // --root <dir> builds a SEPARATE data checkout (recipes/ + _indexes/components.json
+  // live there); defaults to this repo. --out <dir> overrides the output (default <root>/site).
+  const rootArg = process.argv.indexOf('--root');
+  const root = rootArg !== -1 ? path.resolve(process.argv[rootArg + 1]) : REPO_ROOT;
   const outArg = process.argv.indexOf('--out');
-  const outDir = outArg !== -1 ? path.resolve(process.argv[outArg + 1]) : path.join(REPO_ROOT, 'site');
+  const outDir = outArg !== -1 ? path.resolve(process.argv[outArg + 1]) : path.join(root, 'site');
 
-  const { files, recipeCount } = await buildSite();
+  const { files, recipeCount } = await buildSite({
+    recipesDir: path.join(root, 'recipes'),
+    componentsPath: path.join(root, '_indexes', 'components.json'),
+  });
   await writeSite(files, outDir);
-  console.log(`site built: ${recipeCount} recipe(s), ${files.size} file(s) → ${path.relative(REPO_ROOT, outDir) || outDir}`);
+  console.log(`site built: ${recipeCount} recipe(s), ${files.size} file(s) → ${path.relative(root, outDir) || outDir}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

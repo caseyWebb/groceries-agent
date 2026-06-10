@@ -7,6 +7,7 @@
 
 import { createMcpHandler } from "agents/mcp";
 import type { Env } from "./env.js";
+import { tenantFromEnv } from "./env.js";
 import { buildServer } from "./tools.js";
 import { createAccessVerifier, type AccessVerifier } from "./access.js";
 import { handleOAuth } from "./oauth.js";
@@ -56,7 +57,9 @@ export default {
       if (!(await v.verify(token))) return unauthorized("Invalid Cloudflare Access JWT");
     }
 
-    const server = buildServer(env);
+    // TRANSITIONAL: resolve the single operator tenant from env. Section 3.3
+    // replaces this with per-request bearer-token -> resolveTenant.
+    const server = buildServer(env, tenantFromEnv(env));
     return createMcpHandler(server)(request, env, ctx);
   },
 };

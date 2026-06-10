@@ -1,43 +1,59 @@
 {
-  // grocery-mcp — custom MCP server for the grocery agent.
-  // Transport: createMcpHandler over Streamable HTTP (no Durable Objects). The
-  // single piece of persistent state is the KV namespace below, holding the
-  // rotating Kroger refresh token (Change 06b).
-  // Secrets are NOT in this file. Set them out-of-band and they persist across deploys:
-  //   wrangler secret put GITHUB_TOKEN
-  //   wrangler secret put KROGER_OAUTH_CLIENT_ID
-  //   wrangler secret put KROGER_OAUTH_CLIENT_SECRET
-  // Non-secret config (public repo coordinates) lives in vars below.
-  "name": "grocery-mcp",
-  "main": "src/index.ts",
-  // The Worker is reached only through the Cloudflare Access-gated custom domain.
-  // Disable the raw *.workers.dev route so there is no un-gated way in.
-  "workers_dev": false,
-  "compatibility_date": "2025-06-01",
-  // Required by the `agents` SDK internals (mimetext / node:diagnostics_channel).
-  // Our own parsing (js-yaml + smol-toml) is workerd-safe and does not depend on it.
-  "compatibility_flags": ["nodejs_compat"],
-  "vars": {
-    "GITHUB_OWNER": "caseyWebb",
-    "GITHUB_REPO": "groceries",
-    "GITHUB_REF": "main",
-    // Cloudflare Access (non-secret). In-Worker JWT validation activates only when
-    // BOTH are set; ACCESS_TEAM_DOMAIN stays blank until the Zero Trust team domain
-    // (e.g. "casey.cloudflareaccess.com") is filled in, then enforcement turns on.
-    "ACCESS_AUD": "bd70d44841bf62d25e53280251f1f5b2f8dc7131057bca9d3f54128b56f9985c",
-    "ACCESS_TEAM_DOMAIN": "dirtbags.cloudflareaccess.com"
-  },
-  // KV: the rotating Kroger refresh token (key `kroger:refresh_token`) + short-
-  // lived PKCE verifiers (`kroger:pkce:<state>`). Create the namespace and paste
-  // its id here (infra — Change 06b §8.1):
-  //   npx wrangler kv namespace create KROGER_KV
-  "kv_namespaces": [
-    {
-      "binding": "KROGER_KV",
-      "id": "aee060bb679141d995c8bc0d5643b9d3"
-    }
-  ],
-  "observability": {
-    "enabled": true
-  }
+	// grocery-mcp — custom MCP server for the grocery agent (multi-tenant).
+	// Transport: createMcpHandler over Streamable HTTP (no Durable Objects). Persistent
+	// state lives in KV only: per-tenant Kroger refresh tokens, the tenant directory,
+	// and (from Section 3) OAuth provider state — never domain data (D9).
+	// Repo access is via a GitHub App (D3), NOT a PAT. Secrets are NOT in this file;
+	// set them out-of-band and they persist across deploys:
+	//   wrangler secret put GITHUB_APP_PRIVATE_KEY   # PKCS#8 PEM
+	//   wrangler secret put KROGER_CLIENT_ID
+	//   wrangler secret put KROGER_CLIENT_SECRET
+	//   wrangler secret put KROGER_OAUTH_CLIENT_ID      (optional)
+	//   wrangler secret put KROGER_OAUTH_CLIENT_SECRET  (optional)
+	"name": "grocery-mcp",
+	"main": "src/index.ts",
+	// The Worker is reached only through the Cloudflare Access-gated custom domain.
+	// Disable the raw *.workers.dev route so there is no un-gated way in.
+	// (Access is removed in Section 3.3 once the OAuth provider gates the MCP surface.)
+	"workers_dev": false,
+	"compatibility_date": "2025-06-01",
+	// Required by the `agents` SDK internals (mimetext / node:diagnostics_channel).
+	// Our own parsing (js-yaml + smol-toml) is workerd-safe and does not depend on it.
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"vars": {
+		// GitHub App (non-secret id + install id on the operator's account). Private key is a secret.
+		"GITHUB_APP_ID": "4022505",
+		"GITHUB_INSTALLATION_ID": "139471207",
+		// The single private data repo (recipes/ + reference data + users/<id>/).
+		// TRANSITIONAL: point at today's repo and keep DATA_USER_PREFIX empty until the
+		// migration moves personal files under users/operator/ (Section 5).
+		"DATA_OWNER": "caseyWebb",
+		"DATA_REPO": "groceries-agent-data",
+		"DATA_REF": "main",
+		"DATA_TENANT_ID": "casey",
+		"DATA_USER_PREFIX": "users/casey",
+		// Cloudflare Access (non-secret, TRANSITIONAL — removed in Section 3.3). In-Worker
+		// JWT validation activates only when BOTH are set.
+		"ACCESS_AUD": "bd70d44841bf62d25e53280251f1f5b2f8dc7131057bca9d3f54128b56f9985c",
+		"ACCESS_TEAM_DOMAIN": "dirtbags.cloudflareaccess.com"
+	},
+	// KV. KROGER_KV: per-tenant Kroger refresh tokens (`kroger:refresh:<tenant>`) +
+	// PKCE verifiers (`kroger:pkce:<state>`). TENANT_KV: the tenant directory
+	// (`tenant:<id>`) + OAuth provider state (Section 3). Create each namespace and
+	// paste its id:  npx wrangler kv namespace create <BINDING>
+	"kv_namespaces": [
+		{
+			"binding": "KROGER_KV",
+			"id": "aee060bb679141d995c8bc0d5643b9d3"
+		},
+		{
+			"binding": "TENANT_KV",
+			"id": "3f4eb3ff016647c9b32e340d0b2dfe64"
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
 }

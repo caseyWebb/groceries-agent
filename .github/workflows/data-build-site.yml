@@ -1,0 +1,61 @@
+# Reusable workflow: build a DATA repo's public cookbook site and deploy it to
+# that repo's GitHub Pages. Called by a data repo's thin .github/workflows/build-site.yml.
+# Billing/runners/Pages are the CALLER's (the data repo owner). The data repo is
+# PRIVATE, so publishing public Pages from it needs GitHub Pro. The site renders
+# ONLY recipes/ — never users/<username>/ — so no personal data is exposed.
+name: data-build-site
+
+on:
+  workflow_call:
+    inputs:
+      code_ref:
+        description: Ref of caseyWebb/groceries-agent to take the build scripts from.
+        type: string
+        default: main
+
+# Capped by the caller's grant; the caller workflow must grant the same.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # the data repo (recipes/)
+
+      - uses: actions/checkout@v4
+        with:
+          repository: caseyWebb/groceries-agent
+          ref: ${{ inputs.code_ref }}
+          path: _code
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install build deps
+        run: npm ci
+        working-directory: _code
+
+      # Indexes first (the site reads _indexes/components.json), then the site.
+      - name: Build indexes + site
+        run: |
+          node _code/scripts/build-indexes.mjs --root .
+          node _code/scripts/build-site.mjs --root . --out site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
