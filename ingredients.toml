@@ -1,7 +1,0 @@
-# ingredients.toml — RESERVED for Phase 7; empty in v1
-#
-# This file will hold perishability metadata (shelf_life_days_fridge,
-# shelf_life_days_freezer, typical_unit, perishability_class) used to make
-# pantry verification thresholds explicit instead of LLM judgment, and to drive
-# cross-recipe waste optimization. It is intentionally empty until Phase 7.
-# See docs/SCHEMAS.md for the schema that will apply when it is populated.
