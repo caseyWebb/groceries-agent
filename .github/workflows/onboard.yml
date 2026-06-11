@@ -41,6 +41,34 @@ jobs:
           npx --yes wrangler kv key put --binding=TENANT_KV --remote "tenant:${U}" "{\"id\":\"${U}\"}"
           npx --yes wrangler kv key put --binding=TENANT_KV --remote "invite:${CODE}" "${U}"
 
+      - name: Resolve connector host (Cloudflare custom domain)
+        id: host
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          # Worker name from wrangler.jsonc → the custom domain's `service`.
+          name=$(node -e '
+            const fs = require("fs");
+            const raw = fs.readFileSync("wrangler.jsonc", "utf8")
+              .replace(/\/\*[\s\S]*?\*\//g, "")
+              .split("\n").map((l) => l.replace(/^\s*\/\/.*$/, "")).join("\n")
+              .replace(/,(\s*[}\]])/g, "$1");
+            process.stdout.write(String(JSON.parse(raw).name || ""));
+          ')
+          host=""
+          acct=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts" | jq -r '.result[0].id // empty')
+          if [ -n "$acct" ] && [ -n "$name" ]; then
+            host=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$acct/workers/domains" \
+              | jq -r --arg n "$name" '[.result[]? | select(.service==$n)][0].hostname // empty')
+          fi
+          # Fall back to a placeholder if the token can't read domains, or the worker
+          # is reached via workers.dev rather than a custom domain (set WORKER_HOST then).
+          if [ -z "$host" ]; then host="${{ vars.WORKER_HOST }}"; fi
+          if [ -z "$host" ]; then host="<your-worker-host>"; fi
+          echo "value=$host" >> "$GITHUB_OUTPUT"
+
       - name: Summary
         run: |
           {
@@ -49,9 +77,9 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Invite code | \`${{ steps.code.outputs.value }}\` |"
-            echo "| Connector URL | \`https://<your-worker-host>/mcp\` |"
+            echo "| Connector URL | \`https://${{ steps.host.outputs.value }}/mcp\` |"
             echo ""
-            echo "Send them the invite code + connector URL, and \`AGENT_INSTRUCTIONS.md\` to paste into their Claude.ai Project. They enter the code at \`/authorize\`, then run their Kroger consent at \`/oauth/init?tenant=${{ inputs.username }}\`. Their \`users/${{ inputs.username }}/\` subtree is created automatically on their first write (e.g. setting their store)."
+            echo "Send them the invite code + connector URL, and \`AGENT_INSTRUCTIONS.md\` to paste into their Claude.ai Project. They enter the code at the \`/authorize\` page Claude.ai sends them to, then run their Kroger consent at \`https://${{ steps.host.outputs.value }}/oauth/init?tenant=${{ inputs.username }}\`. Their \`users/${{ inputs.username }}/\` subtree is created automatically on their first write (e.g. setting their store)."
             echo ""
             echo "> The invite code is visible in this run to anyone with repo access. For a trusted group that's fine; rotate it by re-running with a new code if needed."
           } >> "$GITHUB_STEP_SUMMARY"
