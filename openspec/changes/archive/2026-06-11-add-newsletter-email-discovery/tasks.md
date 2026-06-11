@@ -32,14 +32,14 @@
 
 - [ ] 4.1 **`caseyWebb/groceries-agent-data-template`:** in `README.md`, move `feeds.toml` from the per-tenant `users/<username>/` block to the shared reference-data block; add a seeded root `feeds.toml`, an empty root `discoveries_inbox.toml`, and an allowlist stub (`[[members]]` / `[[senders]]` with commented examples); document the spare-domain / Email Routing operator step. *(Separate repo; the vendored `docs/data-template/` submodule currently has unrelated uncommitted changes from the kitchen-equipment change — do not entangle.)*
 - [ ] 4.2 Bump the vendored `docs/data-template/` submodule pin in this repo to the updated template (`git submodule update --remote && git add docs/data-template`) — after 4.1 is pushed.
-- [ ] 4.3 **`caseyWebb/groceries-agent-data` (live, BREAKING):** merge every `users/<id>/feeds.toml` into one root `feeds.toml` (union, dedup by URL), delete the per-tenant copies, add an empty root `discoveries_inbox.toml`, and seed `discovery_sources.toml` with the real friend-group members. Land together with the deployed `personalGh → sharedGh` switch (1.1); keep the pre-merge per-tenant files until the shared read is confirmed live.
-- [ ] 4.4 Redeploy the Worker (new `email()` handler) via the data repo's `deploy.yml`.
+- [x] 4.3 **`caseyWebb/groceries-agent-data` (live, BREAKING):** done — `feeds.toml` moved to root (single tenant `casey`, renamed), empty `discoveries_inbox.toml` + `discovery_sources.toml` stub added (commit `fa303b5`); `casey@dirtbag.social` added as a member via `update_discovery_sources`.
+- [x] 4.4 Redeployed the Worker (new `email()` handler) via the data repo's `deploy.yml` (plus the bounce-on-failure + auth-header-source fixes deployed during live validation).
 
 ## 5. Infra + docs
 
-- [ ] 5.1 **EXTERNAL (operator):** add the spare domain to Cloudflare, enable Email Routing, route `groceries-agent@<domain>` to the Worker (dashboard; no `wrangler.jsonc` change needed — Email Routing binds the address to the Worker).
+- [x] 5.1 **DONE (operator):** Email Routing enabled on `caseywebb.xyz`, `groceries-agent@caseywebb.xyz` routed to the `grocery-mcp` Worker (no `wrangler.jsonc` change). MX + SPF live.
 - [x] 5.2 Documented the address, the forwarder-only model (both forward forms), and allowlist setup in `docs/SELF_HOSTING.md` (new "Newsletter discovery via email" section); noted discovery sources are shared in `docs/PROJECT.md` (repo-tree + shared list).
-- [ ] 5.3 **EXTERNAL (operator):** deploy + smoke test — forward a real newsletter (auto-forward rule and manual forward), confirm it lands in `discoveries_inbox.toml` with unwrapped URLs and surfaces at menu time. *(Live test is also where relay-SPF path (c) gets its real auth verdict to wire up.)*
+- [x] 5.3 **DONE (member path):** smoke test validated end-to-end — a DKIM-aligned send from `casey@dirtbag.social` accepts, extracts 2 links, unwraps the tracker URL, dedups, and commits (`a4ac383`). Surfaced two bugs fixed live: bounce-on-failure feedback, and reading Cloudflare's auth verdict from the raw headers (`email.headers`) not `message.headers`. **Still to validate:** the auto-forward *rule* path (original-sender DKIM surviving the relay) — pending a real newsletter; that's where relay-SPF path (c) gets its verdict if needed.
 
 ## 6. Follow-on (NOT in this change — noted for later)
 
