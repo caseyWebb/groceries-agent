@@ -16,31 +16,31 @@ The system SHALL package the agent's behavior as an installable Claude plugin bu
 
 ### Requirement: Skills generated from the canonical instructions source
 
-`AGENT_INSTRUCTIONS.md` SHALL remain the single canonical source of agent behavior. The plugin's skills SHALL be **generated** from it by a build script (`scripts/build-plugin.mjs`), not hand-maintained as parallel copies. The build SHALL emit a `grocery-persona` skill, one skill per conversational flow, the `grocery-onboarding` skill, a `plugin.json` manifest, and the connector config, following the established build-from-source pattern of `build-indexes.mjs` / `build-site.mjs` (including a `--check` validate-only mode). The build SHALL fail if the source cannot be mapped to the expected skill set.
+`AGENT_INSTRUCTIONS.md` SHALL remain the single canonical source of agent behavior. The plugin's skills SHALL be **generated** from it by a build script (`scripts/build-plugin.mjs`), not hand-maintained as parallel copies. The build SHALL emit **persona-tier library skills** (`grocery-core` plus the `grocery-cart` / `grocery-corpus` depth tiers), one workflow skill per conversational flow (including the profile/onboarding flow), a `plugin.json` manifest, and the connector config (`.mcp.json`), following the established build-from-source pattern of `build-indexes.mjs` / `build-site.mjs` (including a `--check` validate-only mode). The build SHALL fail if the source cannot be mapped to the expected skill set (missing `core`, a flow needing an absent depth tier, or a duplicate/invalid skill name).
 
 #### Scenario: Building produces the skill set from source
 
 - **WHEN** `scripts/build-plugin.mjs` runs against `AGENT_INSTRUCTIONS.md`
-- **THEN** it emits a plugin tree containing the `grocery-persona` skill, one skill per flow, the onboarding skill, a `plugin.json`, and the connector config
+- **THEN** it emits a plugin tree containing the persona-tier library skills, one workflow skill per flow, a `plugin.json`, and the connector config
 
 #### Scenario: Source and bundle do not drift
 
 - **WHEN** a behavior change is made
 - **THEN** it is made in `AGENT_INSTRUCTIONS.md` and the plugin is rebuilt from it, and no skill body is edited directly in the generated bundle
 
-### Requirement: Persona loaded by reference from workflow skills
+### Requirement: Persona shipped as reference-loaded library skills
 
-The core persona SHALL live in a single `grocery-persona` skill whose trigger description is intentionally minimal so that it never self-triggers and never competes for relevance-based auto-load. Every workflow skill SHALL reference the persona skill in its opening directive so that firing a workflow loads the persona alongside it. The persona SHALL NOT be carried in the MCP server `instructions` field, and this change SHALL make no modification to the Worker or MCP server.
+The shared persona SHALL ship as **library skills** — a `grocery-core` skill loaded by every workflow, plus depth skills (`grocery-cart`, `grocery-corpus`) carrying the rules only some flows need — each with an intentionally minimal description so it never self-triggers or competes for relevance-based auto-load. Each workflow skill SHALL be prefixed with a **prerequisite line** that loads `grocery-core` plus any depth tier the flow declares it `needs`, hedged with "if you haven't already this session" so the shared content loads at most once per session rather than being re-inlined into every skill. The persona SHALL NOT be carried in the MCP server `instructions` field, and this change SHALL make no modification to the Worker or MCP server.
 
-#### Scenario: Firing a workflow loads the persona
+#### Scenario: Firing a workflow loads its prerequisites once
 
 - **WHEN** a workflow skill is triggered by a user request
-- **THEN** the workflow's opening directive causes the `grocery-persona` skill to load, applying persona, modes, behavior rules, never-do, and tone for that interaction
+- **THEN** its prerequisite line loads `grocery-core` (and any depth tier it needs), supplying persona, modes, behavior rules, and tone — and a tier already loaded earlier in the session is not re-loaded
 
-#### Scenario: Persona does not self-trigger
+#### Scenario: Library skills do not self-trigger
 
 - **WHEN** the model evaluates skills for relevance to a request
-- **THEN** the `grocery-persona` skill is not auto-selected on its own (its description is minimal); it is loaded only via a workflow's reference
+- **THEN** the `grocery-core` / depth library skills are not auto-selected on their own (their descriptions are minimal); they load only via a workflow's prerequisite line
 
 ### Requirement: One skill per conversational flow
 

@@ -2,7 +2,7 @@
 
 ### Requirement: Guided first-run setup skill
 
-The system SHALL provide a `grocery-onboarding` skill that walks a new member through initial setup conversationally rather than requiring a wall of typed input. The skill SHALL gather the member's profile, preferences, pantry, and diet principles, and SHALL persist each via the existing write tools (`update_preferences`, `update_pantry`, `update_taste`, `update_diet_principles`). It SHALL introduce no new MCP tools. Like every workflow skill, its opening directive SHALL reference the `grocery-persona` skill.
+The system SHALL provide a `configure-grocery-profile` skill that handles a member's grocery profile — taste, cooking preferences, diet principles, and starting pantry — **idempotently**: on an empty profile it walks first-time setup conversationally (rather than requiring a wall of typed input); on an existing profile it reads back what it already knows and edits only what the member names. It SHALL persist each piece via the existing write tools (`update_taste`, `update_preferences`, `update_diet_principles`, `update_pantry`) and SHALL introduce no new MCP tools. Like every workflow skill, it SHALL load `grocery-core` via its prerequisite line.
 
 #### Scenario: New member is guided through setup
 

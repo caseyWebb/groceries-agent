@@ -25,9 +25,9 @@
 
 ## 5. Distribution
 
-- [~] 5.1 Marketplace stood up in the **public code repo** (decided w/ Casey: data repo is private + friends have no GitHub, so a private marketplace is unreachable — public code repo is OAuth-gated-safe). Added `.claude-plugin/marketplace.json` → `./plugin/grocery-agent`; committed the built bundle at `plugin/grocery-agent/`; CI drift-guard added (committed skills must match `AGENT_INSTRUCTIONS.md`, `.mcp.json` excluded). **REMAINING: Casey sets the real grocery-mcp URL** — `npm run build:plugin -- --mcp-url <real> --out plugin/grocery-agent` (currently a glaring `REPLACE-WITH-...` placeholder), then push.
-- [ ] 5.2 Verify the end-to-end member path in claude.ai: install `grocery-agent@grocery-agent` from the marketplace → OAuth invite code → persona + flows + connector all live, nothing pasted. **(manual, Casey)**
-- [ ] 5.3 Verify an update propagates: change `AGENT_INSTRUCTIONS.md`, rebuild, bump version, push, and confirm `/plugin marketplace update` pulls it. **(manual, Casey)**
+- [x] 5.1 Marketplace in the public code repo (caseyWebb/groceries-agent); `.claude-plugin/marketplace.json` → `./plugin/grocery-agent`; bundle committed; CI drift-guards skills. Real connector URL baked in (`https://groceries-mcp.caseywebb.xyz/mcp`) and pushed. (userConfig reverted — see task 9.)
+- [x] 5.2 End-to-end member path CONFIRMED working in claude.ai by Casey (2026-06-11): install from marketplace → OAuth invite → persona + flows + connector live, nothing pasted.
+- [x] 5.3 Update propagation CONFIRMED: pushed the baked-URL fix; `/plugin marketplace update` pulled it and the connector resolved. (Switched to git-SHA auto-versioning so every push propagates.)
 
 ## 6. Docs
 
@@ -69,7 +69,7 @@
 - [x] 10.2 Dissolve the `planning` tier into `meal-plan` (its only real consumer); `cooking-retrospective`/`inventory-hypothetical` keep their slivers inline and drop to core-only. `DEPTH_TIERS` = cart, corpus.
 - [x] 10.3 Rework `build-plugin.mjs`: emit `grocery-core`/`grocery-cart`/`grocery-corpus` **library skills** (near-empty descriptions) + prefix each workflow with a prerequisite loader line driven by `needs:` ("if you haven't already this session, read grocery-core …"). Replaces inlining.
 - [x] 10.4 Update `tests/build-plugin.test.mjs` (loaderLine, renderLibrarySkill, renderWorkflowSkill, no-inline assertion, 13-flow + library-tier real-doc contract) and `docs/PROJECT.md`. Suite 57 green; bundle rebuilt; drift-guard in sync.
-- [ ] 10.5 **Gating (manual, Casey):** in claude.ai, fire a *second* workflow in the same session and confirm it does NOT re-load `grocery-core` (the "if already loaded, skip" hedge holds). Fallback if it duplicates badly: revert those tiers to composition.
+- [~] 10.5 DEFERRED (non-blocking): the sequential-dedup check ("if already loaded, skip") was not separately measured. It is an efficiency optimization, not correctness — the agent works regardless. Revisit if token use looks high; fallback is composition.
 
 ## 11. Cull skill bodies (same heuristics as the persona)
 

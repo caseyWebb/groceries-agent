@@ -30,4 +30,4 @@
 
 ## 6. Ship
 
-- [ ] 6.1 Commit `src/**`, `AGENT_INSTRUCTIONS.md`, `plugin/**`, `docs/TOOLS.md` together. Push to `main`, then trigger the data-repo deploy (`gh workflow run deploy.yml --repo <operator-data-repo>`) since `src/**` changed.
+- [x] 6.1 Committed (`8b9690c`) `src/**` + `AGENT_INSTRUCTIONS.md` + `plugin/**` + `docs/TOOLS.md` + the change artifacts; pushed to `main`; triggered the data-repo deploy (`gh workflow run deploy.yml --repo caseyWebb/groceries-agent-data`).
