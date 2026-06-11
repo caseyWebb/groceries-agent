@@ -132,12 +132,14 @@ export interface CheckpointLine {
   message: string;
 }
 
-/** A learned ingredient→SKU mapping to append to skus/kroger.toml. */
+/** A learned ingredient→SKU mapping to append to the shared skus/kroger.toml. */
 export interface NewMapping {
   ingredient: string;
   sku: string;
   brand?: string;
   size?: string;
+  /** The Kroger locationId this mapping was resolved at (D7). */
+  locationId?: string;
 }
 
 /** Caller-supplied disposition for a previously-ambiguous item: force this SKU. */

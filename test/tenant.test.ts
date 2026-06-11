@@ -21,13 +21,23 @@ const env = {
 const ALICE: TenantRecord = { id: "alice" };
 
 function store(records: Record<string, TenantRecord>): TenantStore {
-  return { async get(id) { return records[id] ?? null; } };
+  return {
+    async get(id) { return records[id] ?? null; },
+    async list() { return Object.keys(records); },
+  };
 }
 
 /** In-memory KV holding `tenant:<id>` allowlist entries + `invite:<code>` codes. */
 function memKv(initial: Record<string, string> = {}): KVNamespace {
   const m = new Map(Object.entries(initial));
-  return { async get(key: string) { return m.get(key) ?? null; } } as unknown as KVNamespace;
+  return {
+    async get(key: string) { return m.get(key) ?? null; },
+    async list({ prefix = "", cursor }: { prefix?: string; cursor?: string } = {}) {
+      void cursor;
+      const keys = [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name }));
+      return { keys, list_complete: true, cacheStatus: null };
+    },
+  } as unknown as KVNamespace;
 }
 
 const isUnauthorized = (r: Tenant | Unauthorized): r is Unauthorized =>
@@ -101,5 +111,16 @@ describe("kvTenantStore", () => {
     expect(await s.get("alice")).toEqual(ALICE);
     expect(await s.get("nobody")).toBeNull();
     expect(await s.get("broken")).toBeNull();
+  });
+
+  it("lists every tenant id (the §8.2 group enumeration), ignoring non-tenant keys", async () => {
+    const s = kvTenantStore(
+      memKv({
+        "tenant:alice": JSON.stringify(ALICE),
+        "tenant:bob": JSON.stringify({ id: "bob" }),
+        "invite:CODE": "alice",
+      }),
+    );
+    expect((await s.list()).sort()).toEqual(["alice", "bob"]);
   });
 });

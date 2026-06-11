@@ -56,6 +56,8 @@ export interface TenantRecord {
 export interface TenantStore {
   /** The record for `tenantId`, or null if no such tenant exists. */
   get(tenantId: string): Promise<TenantRecord | null>;
+  /** Every tenant id on the allowlist — drives group-wide note/rating aggregation (§8.2). */
+  list(): Promise<string[]>;
 }
 
 const DIRECTORY_PREFIX = "tenant:";
@@ -84,6 +86,19 @@ export function kvTenantStore(kv: KVNamespace): TenantStore {
       } catch {
         return null;
       }
+    },
+    async list(): Promise<string[]> {
+      const ids: string[] = [];
+      let cursor: string | undefined;
+      // Page through `tenant:*` keys; the id is the key minus the prefix. The
+      // allowlist is the source of truth for "who is in the group" (§8.2).
+      for (;;) {
+        const res = await kv.list({ prefix: DIRECTORY_PREFIX, cursor });
+        for (const k of res.keys) ids.push(k.name.slice(DIRECTORY_PREFIX.length));
+        if (res.list_complete) break;
+        cursor = res.cursor;
+      }
+      return ids;
     },
   };
 }

@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import type { Tenant } from "./tenant.js";
+import { directoryFromEnv } from "./tenant.js";
 import { createGitHubClient, prefixedClient } from "./github.js";
 import { createInstallationAuth } from "./github-app.js";
 import { readFile, readOptional } from "./gh-read.js";
@@ -15,6 +16,7 @@ import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
 import { registerOrderTools } from "./order-tools.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
+import { registerNoteTools } from "./notes-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { filterRecipes, type RecipeFilters, type RecipeIndex } from "./recipes.js";
 import { parseOverlay, mergeOverlay, type Overlay } from "./overlay.js";
@@ -32,6 +34,7 @@ import { compareUnitPrice, type UnitPriceItem } from "./unit-price.js";
 import { parseRecipeIngredient, extractIngredientLines, type ParsedIngredient } from "./recipe-ingredients.js";
 import {
   parseSubstitutionRules,
+  mergeSubstitutionRules,
   findRule,
   proposeInventory,
   proposeSale,
@@ -165,6 +168,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
             sku: m.sku,
             brand: typeof m.brand === "string" ? m.brand : undefined,
             size: typeof m.size === "string" ? m.size : undefined,
+            locationId: typeof m.locationId === "string" ? m.locationId : undefined,
           });
         }
       }
@@ -207,10 +211,21 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     return Array.isArray(parsed.items) ? (parsed.items as PantryItem[]) : [];
   }
 
-  /** Read standing substitution rules; absent/empty file yields []. */
+  /**
+   * Read standing substitution rules: the shared corpus rules joined with this
+   * tenant's optional personal override layer (`users/<id>/substitutions.toml`).
+   * A personal rule for an ingredient wins over the shared rule for that tenant
+   * only (§7.2). Absent/empty files yield [].
+   */
   async function getSubstitutionRules(): Promise<SubRule[]> {
-    const text = await readOptional(sharedGh, "substitutions.toml");
-    return text ? parseSubstitutionRules(parseToml(text, "substitutions.toml")) : [];
+    const [sharedText, overrideText] = await Promise.all([
+      readOptional(sharedGh, "substitutions.toml"),
+      readOptional(gh, "substitutions.toml"),
+    ]);
+    const shared = sharedText ? parseSubstitutionRules(parseToml(sharedText, "substitutions.toml")) : [];
+    if (!overrideText) return shared;
+    const override = parseSubstitutionRules(parseToml(overrideText, "substitutions.toml"));
+    return mergeSubstitutionRules(shared, override, await getAliases());
   }
 
   /** Parse a recipe's `## Ingredients` section into normalized ingredients. */
@@ -247,6 +262,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
       aliases,
       brands,
       cache,
+      locationId,
     };
     return matchIngredient(deps, ingredient, context, bypassCache);
   }
@@ -641,12 +657,19 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   // The corresponding writes ride commit_changes (cooking_log_entries / meal_plan_ops).
   registerCookingTools(server, gh);
 
-  // Discovery: RSS recipe candidates, parse-only URL import, draft create.
-  registerDiscoveryTools(server, gh);
+  // Discovery: RSS recipe candidates, parse-only URL import, draft create. Recipes
+  // are SHARED content (root client); only feeds.toml is this tenant's personal
+  // config (prefixed client). Imports dedupe by source URL against the shared
+  // corpus so a recipe is reused, not duplicated (§6.4).
+  registerDiscoveryTools(server, sharedGh, gh);
+
+  // Recipe notes (§8): attributed annotations authored in this tenant's subtree,
+  // aggregated across the group at read time (KV tenant directory → each subtree).
+  registerNoteTools(server, sharedGh, gh, tenant.id, directoryFromEnv(env));
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
-  // persist learned SKUs. The one tool that reaches the cart (Change 06b).
-  registerOrderTools(server, gh, env, tenant.id, resolveIngredient);
+  // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
+  registerOrderTools(server, gh, sharedGh, env, tenant.id, resolveIngredient, getLocationId);
 
   return server;
 }

@@ -18,7 +18,8 @@ export type ErrorCode =
   | "no_jsonld" // the page exposed no <script type="application/ld+json"> blocks
   | "not_a_recipe" // JSON-LD was present but contained no schema.org Recipe
   | "incomplete" // a Recipe was found but yielded no ingredients or no instructions
-  | "slug_exists"; // create_recipe target already exists; not overwritten
+  | "slug_exists" // create_recipe target already exists; not overwritten
+  | "already_exists"; // create_recipe source URL is already in the shared corpus; reuse the existing slug
 
 export interface ToolErrorShape {
   error: ErrorCode;

@@ -24,16 +24,29 @@ import {
   buildNewRecipe,
   canonicalizeUrl,
   extractRecipeSources,
+  indexSourceToSlug,
   type FeedEntry,
 } from "./discovery.js";
 
 const MAX_PER_FEED = 8;
+const RECIPE_INDEX = "_indexes/recipes.json";
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): void {
+/**
+ * Discovery tools (recipe-discovery capability). Recipes are SHARED content, so
+ * the corpus index + draft writes go through `sharedGh` (the data-repo root);
+ * only `feeds.toml` is this tenant's personal config, read through `personalGh`
+ * (their `users/<id>/` subtree). Imports dedupe by source URL against the shared
+ * corpus so a recipe already present is reused, never duplicated (§6.4).
+ */
+export function registerDiscoveryTools(
+  server: McpServer,
+  sharedGh: GitHubClient,
+  personalGh: GitHubClient,
+): void {
   server.registerTool(
     "fetch_rss_discoveries",
     {
@@ -43,13 +56,13 @@ export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): voi
     },
     () =>
       runTool(async () => {
-        const feedsText = await readOptional(gh, "feeds.toml");
+        const feedsText = await readOptional(personalGh, "feeds.toml");
         if (!feedsText) return { candidates: [] };
         const parsed = parseToml(feedsText, "feeds.toml");
         const feeds = Array.isArray(parsed.feeds) ? (parsed.feeds as Record<string, unknown>[]) : [];
         if (feeds.length === 0) return { candidates: [] };
 
-        const seen = extractRecipeSources(await readOptional(gh, "_indexes/recipes.json"));
+        const seen = extractRecipeSources(await readOptional(sharedGh, RECIPE_INDEX));
 
         const entries: FeedEntry[] = [];
         const skipped: { feed: string; reason: string }[] = [];
@@ -80,7 +93,7 @@ export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): voi
     "import_recipe",
     {
       description:
-        "PARSE-ONLY: fetch a recipe page and return its schema.org JSON-LD as structured data ({ title, ingredients[], instructions[], servings, time_total, time_active, source }). Writes nothing and commits nothing — clean up / classify the data, assemble the markdown body (with ## Ingredients and ## Instructions), then call create_recipe. Structured errors: unreachable (couldn't fetch), no_jsonld (no JSON-LD on page), not_a_recipe (JSON-LD but no Recipe), incomplete (Recipe missing ingredients/instructions). Bot-walled/paywalled sites (e.g. Serious Eats, NYT) return unreachable — paste the recipe instead.",
+        "PARSE-ONLY: fetch a recipe page and return its schema.org JSON-LD as structured data ({ title, ingredients[], instructions[], servings, time_total, time_active, source }). Writes nothing and commits nothing — clean up / classify the data, assemble the markdown body (with ## Ingredients and ## Instructions), then call create_recipe. If the source URL is already in the shared corpus, the result carries `existing_slug` — reuse that recipe instead of re-creating it (it's shared, you can rate/note it). Structured errors: unreachable (couldn't fetch), no_jsonld (no JSON-LD on page), not_a_recipe (JSON-LD but no Recipe), incomplete (Recipe missing ingredients/instructions). Bot-walled/paywalled sites (e.g. Serious Eats, NYT) return unreachable — paste the recipe instead.",
       inputSchema: { url: z.string() },
     },
     ({ url }) =>
@@ -116,7 +129,15 @@ export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): voi
           });
         }
 
-        return { ...norm.recipe, source: norm.recipe.source ?? canonicalizeUrl(url) };
+        const source = norm.recipe.source ?? canonicalizeUrl(url);
+        // Idempotency (§6.4): if this source is already in the shared corpus, tell
+        // the agent which slug to reuse rather than minting a duplicate.
+        const existingSlug = indexSourceToSlug(await readOptional(sharedGh, RECIPE_INDEX)).get(
+          canonicalizeUrl(source),
+        );
+        return existingSlug
+          ? { ...norm.recipe, source, existing_slug: existingSlug }
+          : { ...norm.recipe, source };
       }),
   );
 
@@ -124,7 +145,7 @@ export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): voi
     "create_recipe",
     {
       description:
-        "Write a NEW recipe markdown file (recipes/<slug>.md) from agent-assembled frontmatter + body, as one solo commit. Slug derives from the title unless `slug` is given. Discovery imports: pass status 'draft' with discovered_at + discovery_source (status defaults to 'draft' if omitted). The body MUST contain ## Ingredients and ## Instructions. Refuses to overwrite an existing recipe (slug_exists).",
+        "Write a NEW recipe markdown file (recipes/<slug>.md) to the SHARED corpus, as one solo commit. Slug derives from the title unless `slug` is given. Discovery imports: pass status 'draft' with discovered_at + discovery_source (status defaults to 'draft' if omitted). The body MUST contain ## Ingredients and ## Instructions. Refuses to overwrite an existing slug (slug_exists), and refuses to duplicate a recipe whose `source` URL is already in the corpus (already_exists, with the existing slug — reuse it).",
       inputSchema: {
         frontmatter: z.record(z.string(), z.unknown()),
         body: z.string(),
@@ -133,8 +154,24 @@ export function registerDiscoveryTools(server: McpServer, gh: GitHubClient): voi
     },
     ({ frontmatter, body, slug }) =>
       runTool(async () => {
-        const { slug: finalSlug, file } = await buildNewRecipe(gh, frontmatter, body, slug);
-        const { commit_sha } = await commitFiles(gh, [file], `add draft recipe ${finalSlug}`);
+        // Idempotency (§6.4): a recipe is shared and single-source. If this
+        // `source` already resolves to a corpus recipe, refuse the duplicate and
+        // point the agent at the existing slug to reuse.
+        const source = typeof frontmatter.source === "string" ? frontmatter.source : null;
+        if (source) {
+          const existing = indexSourceToSlug(await readOptional(sharedGh, RECIPE_INDEX)).get(
+            canonicalizeUrl(source),
+          );
+          if (existing) {
+            throw new ToolError(
+              "already_exists",
+              `A recipe for ${source} already exists at recipes/${existing}.md — reuse it`,
+              { slug: existing, source },
+            );
+          }
+        }
+        const { slug: finalSlug, file } = await buildNewRecipe(sharedGh, frontmatter, body, slug);
+        const { commit_sha } = await commitFiles(sharedGh, [file], `add draft recipe ${finalSlug}`);
         return { slug: finalSlug, commit_sha };
       }),
   );

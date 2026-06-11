@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   canonicalizeUrl,
   extractRecipeSources,
+  indexSourceToSlug,
   buildCandidates,
   slugify,
   buildNewRecipe,
@@ -60,6 +61,29 @@ describe("extractRecipeSources", () => {
   it("returns an empty set for absent or malformed index", () => {
     expect(extractRecipeSources(null).size).toBe(0);
     expect(extractRecipeSources("{not json").size).toBe(0);
+  });
+});
+
+describe("indexSourceToSlug (idempotent import, §6.4)", () => {
+  it("maps canonicalized source URLs to their recipe slug", () => {
+    const index = JSON.stringify({
+      "miso-salmon": { slug: "miso-salmon", source: "https://ex.com/salmon/?utm=1" },
+      "no-source": { slug: "no-source" },
+    });
+    const map = indexSourceToSlug(index);
+    // A tracker-wrapped variant of the same URL resolves to the existing slug.
+    expect(map.get(canonicalizeUrl("https://ex.com/salmon#print"))).toBe("miso-salmon");
+    expect(map.size).toBe(1);
+  });
+
+  it("first slug wins on a source collision; empty for absent/malformed", () => {
+    const dupes = JSON.stringify({
+      a: { source: "https://ex.com/x" },
+      b: { source: "https://ex.com/x/" },
+    });
+    expect(indexSourceToSlug(dupes).get("https://ex.com/x")).toBe("a");
+    expect(indexSourceToSlug(null).size).toBe(0);
+    expect(indexSourceToSlug("{ not json").size).toBe(0);
   });
 });
 

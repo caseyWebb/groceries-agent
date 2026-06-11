@@ -38,8 +38,13 @@ type Resolver = (
   bypassCache?: boolean,
 ) => Promise<MatchResult>;
 
-/** Read skus/kroger.toml, append only genuinely new (ingredient, sku) pairs, commit. */
-function makeCommitSkuCache(gh: GitHubClient) {
+/**
+ * Read the shared skus/kroger.toml, append only genuinely new (ingredient, sku)
+ * pairs, commit. Each new entry is tagged with the caller's resolved `locationId`
+ * (D7) so a cross-tenant cache hit can be revalidated against the right store.
+ * `gh` here is the SHARED (root) client — the SKU cache lives in the shared corpus.
+ */
+function makeCommitSkuCache(gh: GitHubClient, getLocationId: () => Promise<string>) {
   return async (mappings: NewMapping[]): Promise<string | null> => {
     const text = (await readOptional(gh, SKU_CACHE_PATH)) ?? "";
     const data = text ? parseToml(text, SKU_CACHE_PATH) : {};
@@ -49,13 +54,16 @@ function makeCommitSkuCache(gh: GitHubClient) {
     const seen = new Set(existing.map((m) => `${String(m.ingredient)}\0${String(m.sku)}`));
 
     const additions: Record<string, unknown>[] = [];
+    let locationId: string | null = null;
     for (const m of mappings) {
       const key = `${m.ingredient}\0${m.sku}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      if (locationId === null) locationId = await getLocationId();
       const entry: Record<string, unknown> = { ingredient: m.ingredient, sku: m.sku };
       if (m.brand) entry.brand = m.brand;
       if (m.size) entry.size = m.size;
+      if (locationId) entry.locationId = locationId;
       additions.push(entry);
     }
     if (additions.length === 0) return null;
@@ -123,11 +131,15 @@ const overrideShape = {
 export function registerOrderTools(
   server: McpServer,
   gh: GitHubClient,
+  sharedGh: GitHubClient,
   env: Env,
   tenantId: string,
   resolve: Resolver,
+  getLocationId: () => Promise<string>,
 ): void {
-  const commitSkuCache = makeCommitSkuCache(gh);
+  // The SKU cache is shared corpus (root client); the grocery list + pantry are
+  // this tenant's personal state (prefixed client).
+  const commitSkuCache = makeCommitSkuCache(sharedGh, getLocationId);
   const advanceInCart = makeAdvanceInCart(gh);
 
   server.registerTool(

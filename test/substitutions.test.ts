@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseSubstitutionRules,
+  mergeSubstitutionRules,
   findRule,
   proposeInventory,
   proposeSale,
@@ -25,6 +26,46 @@ describe("parseSubstitutionRules", () => {
 
   it("returns [] for an empty (comment-only) file", () => {
     expect(parseSubstitutionRules({})).toEqual([]);
+  });
+});
+
+describe("mergeSubstitutionRules (per-tenant override, §7.2)", () => {
+  const shared: SubRule[] = [
+    { ingredient: "salmon", acceptable: ["trout", "cod"], unacceptable: ["tilapia"] },
+    { ingredient: "butter", acceptable: ["margarine"], unacceptable: [] },
+  ];
+
+  it("a tenant override replaces the shared rule for that ingredient", () => {
+    const override: SubRule[] = [{ ingredient: "salmon", acceptable: ["arctic char"], unacceptable: [] }];
+    const merged = mergeSubstitutionRules(shared, override, {});
+    expect(findRule(merged, "salmon", {})).toEqual({
+      ingredient: "salmon",
+      acceptable: ["arctic char"],
+      unacceptable: [],
+    });
+    // The non-overridden shared rule is untouched.
+    expect(findRule(merged, "butter", {})?.acceptable).toEqual(["margarine"]);
+  });
+
+  it("matches the overridden ingredient through aliases", () => {
+    const aliases = { "wild salmon": "salmon" };
+    const override: SubRule[] = [{ ingredient: "wild salmon", acceptable: ["char"], unacceptable: [] }];
+    const merged = mergeSubstitutionRules(shared, override, aliases);
+    // Only one salmon rule survives (the override), reachable by either name.
+    expect(findRule(merged, "salmon", aliases)?.acceptable).toEqual(["char"]);
+    expect(merged.filter((r) => r.ingredient === "salmon" || r.ingredient === "wild salmon")).toHaveLength(1);
+  });
+
+  it("adds an override-only rule and leaves shared rules intact", () => {
+    const override: SubRule[] = [{ ingredient: "honey", acceptable: ["maple syrup"], unacceptable: [] }];
+    const merged = mergeSubstitutionRules(shared, override, {});
+    expect(merged).toHaveLength(3);
+    expect(findRule(merged, "honey", {})?.acceptable).toEqual(["maple syrup"]);
+    expect(findRule(merged, "salmon", {})?.acceptable).toEqual(["trout", "cod"]);
+  });
+
+  it("no override → shared rules unchanged", () => {
+    expect(mergeSubstitutionRules(shared, [], {})).toEqual(shared);
   });
 });
 

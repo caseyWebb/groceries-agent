@@ -28,6 +28,7 @@ function makeDeps(opts: Partial<MatchDeps> & { byId?: Record<string, KrogerCandi
     aliases: opts.aliases ?? {},
     brands: opts.brands ?? {},
     cache: opts.cache ?? [],
+    locationId: opts.locationId ?? "L1",
   };
 }
 
@@ -87,6 +88,69 @@ describe("matchIngredient — cache lookup + revalidation", () => {
     });
     const res = await matchIngredient(deps, "olive oil", {}, true);
     expect(res).toMatchObject({ resolved: true, sku: "S2" });
+  });
+});
+
+describe("matchIngredient — shared, location-tagged cache (D7/§7.1)", () => {
+  it("prefers the caller's-location entry and revalidates it before use", async () => {
+    const here = cand({ productId: "HERE", price: { regular: 5, promo: 0 } });
+    const deps = makeDeps({
+      locationId: "L2",
+      cache: [
+        { ingredient: "olive oil", sku: "OTHER", locationId: "L1" },
+        { ingredient: "olive oil", sku: "HERE", locationId: "L2" },
+      ],
+      byId: { HERE: here, OTHER: cand({ productId: "OTHER" }) },
+      search: async () => {
+        throw new Error("search should not run when a same-location hit revalidates");
+      },
+    });
+    const res = await matchIngredient(deps, "olive oil");
+    expect(res).toMatchObject({ resolved: true, sku: "HERE", reason: "cache hit (revalidated)" });
+  });
+
+  it("uses another tenant's (cross-location) entry when it revalidates at the caller's store", async () => {
+    // Entry was resolved at L1; caller is at L2. It is a candidate, revalidated at L2.
+    const fresh = cand({ productId: "X", price: { regular: 6, promo: 0 } });
+    const deps = makeDeps({
+      locationId: "L2",
+      cache: [{ ingredient: "olive oil", sku: "X", locationId: "L1" }],
+      byId: { X: fresh },
+      search: async () => {
+        throw new Error("search should not run when the cross-location hit is available here");
+      },
+    });
+    const res = await matchIngredient(deps, "olive oil");
+    expect(res).toMatchObject({
+      resolved: true,
+      sku: "X",
+      reason: "shared cache hit (revalidated at your store)",
+    });
+  });
+
+  it("falls through to search when a cross-location entry is unavailable at the caller's store", async () => {
+    const dead = cand({ productId: "X", fulfillment: { curbside: false, delivery: false } });
+    const searchHit = cand({ productId: "Y", description: "Olive Oil", price: { regular: 3, promo: 0 } });
+    const deps = makeDeps({
+      locationId: "L2",
+      brands: { olive_oil: [] }, // don't-care → re-resolution is confident
+      cache: [{ ingredient: "olive oil", sku: "X", locationId: "L1" }],
+      byId: { X: dead },
+      search: async () => [searchHit],
+    });
+    const res = await matchIngredient(deps, "olive oil");
+    expect(res).toMatchObject({ resolved: true, sku: "Y" });
+  });
+
+  it("treats an untagged (legacy) entry as same-location", async () => {
+    const fresh = cand({ productId: "S1", price: { regular: 7, promo: 0 } });
+    const deps = makeDeps({
+      locationId: "L9",
+      cache: [{ ingredient: "olive oil", sku: "S1" }], // no locationId
+      byId: { S1: fresh },
+    });
+    const res = await matchIngredient(deps, "olive oil");
+    expect(res).toMatchObject({ resolved: true, sku: "S1", reason: "cache hit (revalidated)" });
   });
 });
 

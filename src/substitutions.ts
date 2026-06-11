@@ -37,6 +37,23 @@ export function parseSubstitutionRules(parsed: Record<string, unknown>): SubRule
   return rules;
 }
 
+/**
+ * Join shared substitution rules with a tenant's personal override layer (§7.2).
+ * An override rule for an ingredient REPLACES the shared rule for that same
+ * (alias-normalized) ingredient — for this tenant only; the shared rule is
+ * untouched for everyone else. Override-only ingredients are added. Shared rules
+ * with no override carry through unchanged.
+ */
+export function mergeSubstitutionRules(
+  shared: SubRule[],
+  override: SubRule[],
+  aliases: Record<string, string>,
+): SubRule[] {
+  const key = (r: SubRule): string => normalizeIngredient(r.ingredient, aliases);
+  const overridden = new Set(override.map(key));
+  return [...shared.filter((r) => !overridden.has(key(r))), ...override];
+}
+
 /** Find the rule for an ingredient, matching on alias-normalized names. */
 export function findRule(
   rules: SubRule[],

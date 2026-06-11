@@ -54,7 +54,7 @@ Update recipe frontmatter fields. Use for `last_cooked`, `rating`, `status` tran
 **Returns:**
 - `{ slug, updated_fields }` — confirmation of what was changed
 
-**Notes:** Side-effect updates (last_cooked, rating, status) happen during normal flow. Other frontmatter edits require user direction.
+**Notes:** Side-effect updates (last_cooked, rating, status) happen during normal flow. Other frontmatter edits require user direction. **Per-tenant routing (D5):** `rating` and `status` are *subjective* — they write to the caller's `users/<id>/overlay.toml`, not the shared recipe, so one member's rating/disposition never changes another's. Objective frontmatter edits write the shared recipe content. `last_cooked` is never set by hand — it's derived from the caller's `cooking_log.toml`. `read_recipe`/`list_recipes` merge the caller's overlay (+ cooking-log `last_cooked`) onto shared content at read time; an absent overlay row means effective `status: draft`.
 
 ### `import_recipe(url)`
 
@@ -64,7 +64,7 @@ Update recipe frontmatter fields. Use for `last_cooked`, `rating`, `status` tran
 - `url` (string, required)
 
 **Returns:**
-- `{ title, ingredients: [...], instructions: [...], servings, time_total, time_active, source }` — `ingredients`/`instructions` are string arrays; `servings` is a scalar (number when parseable); `time_total`/`time_active` are minutes or null; `source` is the recipe's canonical URL.
+- `{ title, ingredients: [...], instructions: [...], servings, time_total, time_active, source, existing_slug? }` — `ingredients`/`instructions` are string arrays; `servings` is a scalar (number when parseable); `time_total`/`time_active` are minutes or null; `source` is the recipe's canonical URL. **`existing_slug`** is present only when this source URL is **already in the shared corpus** (idempotent import, §6.4) — reuse that recipe (rate it, note it) instead of calling `create_recipe`.
 
 **Errors (structured):**
 - `{ error: "unreachable" }` — the page couldn't be fetched (network error or non-2xx). Bot-walled/paywalled sites (Serious Eats, NYT, Food52) land here — paste the recipe instead.
@@ -76,7 +76,7 @@ Update recipe frontmatter fields. Use for `last_cooked`, `rating`, `status` tran
 
 ### `create_recipe(frontmatter, body, slug?)`
 
-Write a **new** recipe markdown file (`recipes/<slug>.md`) from agent-assembled frontmatter + body, as **one solo commit**. The slug derives from the title unless `slug` is supplied. The body MUST contain `## Ingredients` and `## Instructions` H2 sections (guarded — a body missing them is rejected, never committed).
+Write a **new** recipe markdown file (`recipes/<slug>.md`) to the **shared corpus** (the data-repo root, read by everyone), from agent-assembled frontmatter + body, as **one solo commit**. The slug derives from the title unless `slug` is supplied. The body MUST contain `## Ingredients` and `## Instructions` H2 sections (guarded — a body missing them is rejected, never committed). A recipe is shared and single-source: if the `source` URL is already in the corpus, the write is refused (`already_exists`) so the existing recipe is reused, not duplicated.
 
 **Params:**
 - `frontmatter` (object, required) — full recipe frontmatter. `status` defaults to `draft` if omitted, so discovery imports never land active by accident; discovery should also set `discovered_at` and `discovery_source`.
@@ -88,9 +88,50 @@ Write a **new** recipe markdown file (`recipes/<slug>.md`) from agent-assembled 
 
 **Errors (structured):**
 - `{ error: "slug_exists", slug }` — a recipe already exists at that path; not overwritten.
+- `{ error: "already_exists", slug, source }` — a recipe with this `source` URL is already in the shared corpus (idempotent import, §6.4); `slug` is the existing recipe to reuse.
 - `{ error: "validation_failed" }` — no derivable slug (missing title), or the body lacks the required H2 sections.
 
 **Notes:** The everyday discovery write path: `import_recipe` (parse) → agent cleans/classifies → `create_recipe`. Disposition of the resulting draft happens later via `update_recipe` (→ `active` + rating, or `rejected`).
+
+---
+
+## Recipe note tools
+
+Notes are the **spin-capture mechanism** (D6): a tweak or observation is an *attributed note*, never an edit to shared recipe content. The canonical recipe stays canonical; "sub gochujang, cut the sugar" lives as a note. This is what makes a shared corpus safe — only a genuine "different dish" warrants a personal-recipe fork. Notes are authored in the caller's own subtree (`users/<id>/notes/<slug>.toml`), so authorship is **structural** (the path), not a spoofable field.
+
+### `add_recipe_note(slug, body, tags?, private?)`
+
+Append an attributed note to a recipe (shared or personal) in the caller's notes. **Append-mostly** — prior notes are retained, never overwritten; shared content is never touched.
+
+**Params:**
+- `slug` (string, required) — the recipe the note is about.
+- `body` (string, required) — free-form markdown (the tweak/observation).
+- `tags` (array of strings, optional) — e.g. `["tweak"]`, `["observation"]`.
+- `private` (boolean, optional) — default `false` (shared with the group). A `private` note is visible only to its author.
+
+**Returns:**
+- `{ slug, author, created_at, commit_sha }`
+
+**Errors (structured):**
+- `{ error: "validation_failed" }` — malformed slug or empty body.
+
+### `read_recipe_notes(slug)`
+
+Read the **group's** notes and ratings for a recipe — the collaborative-cookbook view. Aggregated across everyone in the group at read time (the tenant directory → each member's subtree).
+
+**Params:**
+- `slug` (string, required)
+
+**Returns:**
+```
+{
+  slug,
+  notes:   [{ author, created_at, body, tags, private }],   // ordered by timestamp
+  ratings: [{ author, rating, status? }]                    // attributed; one per member who rated
+}
+```
+
+**Notes:** The caller sees their **own** private notes plus **everyone's shared** notes; another member's `private` note is never returned. Ratings are never private. Use this to surface group signal ("rated 4+ by two others") before recommending a recipe the caller hasn't tried.
 
 ---
 
@@ -255,6 +296,8 @@ Run the full 7-step matching pipeline. Returns a confident match, narrowed candi
 
 **Confidence rule:** confident when a cache hit OR a defined `preferences.toml [brands]` entry resolves it (including `[]` = "don't care, cheapest acceptable"); otherwise ambiguous. Cache hits are revalidated for current price + curbside/delivery availability before being returned.
 
+**Shared, location-tagged cache (D7/§7.1).** The SKU cache (`skus/kroger.toml`) lives in the **shared corpus**, so a mapping resolved by *any* member warms it for everyone (a network effect). Each entry is tagged with the `locationId` it was resolved at. On lookup, an entry tagged with the caller's own location is tried first, but **every** candidate is revalidated against the caller's `preferred_location` before use — a cross-location entry that isn't carried at the caller's store falls through to a fresh search (so a shared cache can never serve an unavailable SKU). A cross-location hit that *does* revalidate returns `reason: "shared cache hit (revalidated at your store)"`.
+
 **Identity relevance (near-hard).** Beyond curbside/delivery availability, a second near-hard constraint guards *which product*: each candidate is scored by how many query tokens appear in its description/categories, and a confident pick may only come from the **top relevance tier**. So `"anaheim peppers"` resolves to the Fresh Anaheim Peppers PLU, not a cheaper unrelated item that merely shows up in Kroger's results; and `[]` "don't care" picks the cheapest *matching* candidate, never the cheapest unrelated one. If nothing in the pool shares a query token, the tool returns `ambiguous` rather than confidently guessing. (Brand/dietary remain soft preferences — this constraint is about identity, not preference.)
 
 **Returns (confident match):**
@@ -325,7 +368,7 @@ Apply `substitutions.toml` rules to surface acceptable alternatives.
 **Returns:**
 - `{ substitutes: [...], unacceptable: [...] }`
 
-**Notes:** Tool applies rules deterministically; LLM presents result to user for confirmation. `"sale"` mode fetches current Kroger flyer/price data **internally** (it does not require the caller to pre-pass `kroger_flyer`). Empty until `substitutions.toml` is seeded — the file is edit-when-directed user config.
+**Notes:** Tool applies rules deterministically; LLM presents result to user for confirmation. `"sale"` mode fetches current Kroger flyer/price data **internally** (it does not require the caller to pre-pass `kroger_flyer`). Empty until `substitutions.toml` is seeded — the file is edit-when-directed user config. **Shared + per-tenant override (§7.2):** rules come from the shared corpus `substitutions.toml` joined with this tenant's optional `users/<id>/substitutions.toml`; a personal rule for an ingredient **replaces** the shared rule for that ingredient — for this tenant only, others keep the shared rule.
 
 ---
 

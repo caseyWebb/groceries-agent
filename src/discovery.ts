@@ -57,6 +57,33 @@ export function extractRecipeSources(indexRaw: string | null): Set<string> {
   return set;
 }
 
+/**
+ * Map canonicalized `source:` URL → recipe slug for every recipe in
+ * `_indexes/recipes.json` (absent/malformed → empty map). The slug is the index
+ * key. Drives idempotent import (§6.4): a parsed page whose source is already in
+ * this map is reused, not re-created. First slug wins on a (rare) source collision.
+ */
+export function indexSourceToSlug(indexRaw: string | null): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!indexRaw) return map;
+  let index: unknown;
+  try {
+    index = JSON.parse(indexRaw);
+  } catch {
+    return map;
+  }
+  if (index && typeof index === "object") {
+    for (const [slug, entry] of Object.entries(index as Record<string, unknown>)) {
+      const src = (entry as Record<string, unknown> | null)?.source;
+      if (typeof src === "string" && src) {
+        const c = canonicalizeUrl(src);
+        if (!map.has(c)) map.set(c, slug);
+      }
+    }
+  }
+  return map;
+}
+
 /** Dedup feed entries against the corpus (`seen`) and within the pool; canonicalize URLs. */
 export function buildCandidates(entries: FeedEntry[], seen: Set<string>): Candidate[] {
   const out: Candidate[] = [];

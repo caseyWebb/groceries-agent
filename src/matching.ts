@@ -16,12 +16,14 @@
 import type { KrogerCandidate } from "./kroger.js";
 import { compareUnitPrice, parseSize, type UnitPriceItem } from "./unit-price.js";
 
-/** A cached SKU mapping from `skus/kroger.toml`. */
+/** A cached SKU mapping from the shared `skus/kroger.toml`. */
 export interface CachedMapping {
   ingredient: string;
   sku: string;
   brand?: string;
   size?: string;
+  /** The Kroger locationId this mapping was resolved at (D7). Absent = legacy/untagged. */
+  locationId?: string;
 }
 
 export interface MatchContext {
@@ -40,8 +42,10 @@ export interface MatchDeps {
   aliases: Record<string, string>;
   /** `preferences.toml` `[brands]` (key → ranked list; `[]` = don't-care). */
   brands: Record<string, string[]>;
-  /** `skus/kroger.toml` mappings. */
+  /** The shared `skus/kroger.toml` mappings (location-tagged, D7). */
   cache: CachedMapping[];
+  /** The caller's resolved preferred locationId — drives same-location cache preference (D7). */
+  locationId: string;
 }
 
 export interface ConfidentMatch {
@@ -289,16 +293,27 @@ export async function matchIngredient(
   const dietary = context.dietary;
   const queryTokens = relevanceTokens(normalized);
 
-  // Step 2 — cache lookup + revalidation (no TTL). A hit short-circuits search
-  // and narrowing, but is revalidated for live price + fulfillment before use.
+  // Step 2 — cache lookup + revalidation (no TTL). The cache is SHARED across the
+  // group (D7), so a hit may have been resolved by another tenant at another store.
+  // Entries tagged with the caller's own location are tried first; every candidate
+  // is still revalidated for live price + fulfillment at the caller's location, so
+  // a cross-location entry that isn't carried at the caller's store falls through to
+  // search. A hit short-circuits search and narrowing.
   if (!bypassCache) {
-    const hit = deps.cache.find((m) => m.ingredient === normalized);
-    if (hit) {
+    const sameLoc = (m: CachedMapping): boolean => !m.locationId || m.locationId === deps.locationId;
+    const hits = deps.cache
+      .filter((m) => m.ingredient === normalized)
+      .sort((a, b) => Number(sameLoc(b)) - Number(sameLoc(a)));
+    for (const hit of hits) {
       const fresh = await deps.productById(hit.sku);
       if (fresh && isFulfillable(fresh)) {
-        return confident(fresh, "cache hit (revalidated)");
+        const reason = sameLoc(hit)
+          ? "cache hit (revalidated)"
+          : "shared cache hit (revalidated at your store)";
+        return confident(fresh, reason);
       }
-      // Unavailable on revalidation → fall through to full re-resolution (self-healing).
+      // Unavailable on revalidation → try the next candidate, then full
+      // re-resolution (self-healing).
     }
   }
 
