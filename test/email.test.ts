@@ -211,8 +211,8 @@ describe("appendInboxEntry", () => {
 describe("addSources", () => {
   it("adds members + senders and dedups by address", () => {
     const first = addSources(null, {
-      members: [{ address: "Alice@Example.com", name: "Alice" }],
-      senders: [{ address: "news@seriouseats.com" }],
+      members: [{ address: "Alice@Example.com" }], // members are address-only — no label
+      senders: [{ address: "news@seriouseats.com", name: "Serious Eats" }],
     });
     expect(first.added).toEqual({ members: 1, senders: 1 });
     const second = addSources(first.text, {
@@ -224,6 +224,9 @@ describe("addSources", () => {
     expect(al.members.has("alice@example.com")).toBe(true);
     expect(al.senders.has("cooking@nytimes.com")).toBe(true);
     expect(al.senders.has("news@seriouseats.com")).toBe(true);
+    // Member rows carry no label; the only `name` written is the newsletter's.
+    expect(second.text).toContain('name = "Serious Eats"');
+    expect((second.text.match(/name = /g) ?? []).length).toBe(1);
   });
 
   it("ignores entries with no @ address", () => {

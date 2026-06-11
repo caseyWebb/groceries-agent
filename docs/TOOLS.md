@@ -437,8 +437,8 @@ Read the **shared email discoveries inbox** (root `discoveries_inbox.toml`) and 
 Add trusted sources to the **shared** inbound-newsletter allowlist (root `discovery_sources.toml`). Use when a member sets up a forward or wants a newsletter indexed. Anyone trusted with this MCP is trusted to widen intake (no extra gate). Deduped by `address` — existing entries untouched.
 
 **Params:**
-- `members` (array, optional): `[{ address, name? }]` — friend-group personal addresses; anything they forward to `groceries-agent@` gets indexed (manual-forward path).
-- `senders` (array, optional): `[{ address, name? }]` — newsletter `From` addresses; auto-forwarded mail from them gets indexed.
+- `members` (array, optional): `[{ address }]` — friend-group personal addresses; anything they forward to `groceries-agent@` gets indexed (manual-forward path). **Address only — no label** (`name` is not stored for members; identity is the address, not an agent-supplied display name).
+- `senders` (array, optional): `[{ address, name? }]` — newsletter `From` addresses; auto-forwarded mail from them gets indexed. `name` is the **newsletter's** name (e.g. "Serious Eats"), never a person's.
 
 **Returns:**
 - `{ added: { members, senders }, commit_sha }` — counts actually added (0 when already present); `commit_sha` is null when nothing changed.
