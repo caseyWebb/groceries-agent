@@ -45,12 +45,12 @@ The data repo is created from the [`groceries-agent-data-template`](https://gith
 Self-host for yourself or a friend group **without running anything locally** — fork
 this repo and drive it from GitHub Actions:
 
-1. **Fork** this repo, enable Actions, set two secrets (`CLOUDFLARE_API_TOKEN`,
-   `GH_APP_PRIVATE_KEY`) and your `wrangler.jsonc` vars (via the web editor).
+1. **Fork** this repo, enable Actions, set the `CLOUDFLARE_API_TOKEN` secret and your
+   `wrangler.jsonc` vars (via the web editor).
 2. **Create a data repo** from the template; register a GitHub App + Kroger app.
 3. **Deploy** the Worker (push, or run the *Deploy Worker* Action).
 4. **Onboard** yourself and friends with the *Onboard member* Action — it mints an
-   invite code and seeds their `users/<username>/` subtree in one run.
+   invite code; their `users/<username>/` subtree is created on first use.
 
 Full step-by-step: **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**.
 

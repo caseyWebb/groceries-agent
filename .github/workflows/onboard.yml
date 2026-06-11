@@ -1,15 +1,13 @@
 name: Onboard member
 
-# Operator-run provisioning (no local tooling). Mints a member's invite code +
-# allowlist entry in KV AND seeds their users/<username>/ subtree in the data repo.
-# Run from this (forked) repo's Actions tab. workflow_dispatch is restricted to
-# users with write access, so only the operator can run it.
+# Operator-run provisioning (no local tooling, no GitHub App key needed). Mints a
+# member's invite code + allowlist entry in KV. Their users/<username>/ subtree is
+# created lazily on their first write (e.g. when they set their Kroger store) — the
+# commit engine creates files at any path. Run from this (forked) repo's Actions
+# tab; workflow_dispatch is restricted to users with write access.
 #
-# One-time setup on the fork:
-#   - Secret  CLOUDFLARE_API_TOKEN   (also used by Deploy Worker)
-#   - Secret  GH_APP_PRIVATE_KEY     (the GitHub App PEM — same key as the Worker)
-#   - Enable Actions on the fork
-# Everything else (App id, data-repo coords, KV binding) is read from wrangler.jsonc.
+# One-time setup on the fork: secret CLOUDFLARE_API_TOKEN (also used by Deploy
+# Worker) + enable Actions. The KV binding is read from wrangler.jsonc.
 
 on:
   workflow_dispatch:
@@ -27,62 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read config from wrangler.jsonc
-        id: cfg
-        run: |
-          node -e '
-            const fs = require("fs");
-            let raw = fs.readFileSync("wrangler.jsonc", "utf8")
-              .replace(/\/\*[\s\S]*?\*\//g, "")                 // block comments
-              .split("\n").map((l) => l.replace(/^\s*\/\/.*$/, "")).join("\n") // line comments
-              .replace(/,(\s*[}\]])/g, "$1");                   // trailing commas
-            const v = JSON.parse(raw).vars;
-            const out = process.env.GITHUB_OUTPUT;
-            fs.appendFileSync(out, `app_id=${v.GITHUB_APP_ID}\n`);
-            fs.appendFileSync(out, `data_owner=${v.DATA_OWNER}\n`);
-            fs.appendFileSync(out, `data_repo=${v.DATA_REPO}\n`);
-          '
-
       - name: Resolve invite code
         id: code
         run: |
           code="${{ inputs.invite_code }}"
           if [ -z "$code" ]; then code="$(openssl rand -hex 8)"; fi
           echo "value=$code" >> "$GITHUB_OUTPUT"
-
-      - name: Mint a data-repo write token (GitHub App)
-        id: apptoken
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ steps.cfg.outputs.app_id }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ steps.cfg.outputs.data_owner }}
-          repositories: ${{ steps.cfg.outputs.data_repo }}
-
-      - name: Seed users/<username>/ in the data repo
-        env:
-          U: ${{ inputs.username }}
-          OWNER: ${{ steps.cfg.outputs.data_owner }}
-          REPO: ${{ steps.cfg.outputs.data_repo }}
-          TOKEN: ${{ steps.apptoken.outputs.token }}
-        run: |
-          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git" data
-          cd data
-          dir="users/${U}"
-          if [ -d "$dir" ]; then
-            echo "$dir already exists — leaving it as-is."
-            exit 0
-          fi
-          mkdir -p "$dir/notes"
-          printf '# pantry.toml — what is physically on hand.\n# [[items]]\n# name = "..."\n' > "$dir/pantry.toml"
-          printf '# preferences.toml — set your Kroger store before ordering.\n# [stores]\n# preferred_location = "<Kroger store name or id>"\n' > "$dir/preferences.toml"
-          printf '# Per-tenant subjective overlay (rating + status), keyed by recipe slug.\n# Written by the agent; absent slug means effective status draft.\n' > "$dir/overlay.toml"
-          printf '# Recipe notes live here as notes/<slug>.md.\n' > "$dir/notes/.gitkeep"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$dir"
-          git commit -m "Onboard ${U}: seed users/${U}/"
-          git push
 
       - name: Allowlist + mint invite (KV)
         env:
@@ -103,7 +51,7 @@ jobs:
             echo "| Invite code | \`${{ steps.code.outputs.value }}\` |"
             echo "| Connector URL | \`https://<your-worker-host>/mcp\` |"
             echo ""
-            echo "Send them the invite code + connector URL, and \`AGENT_INSTRUCTIONS.md\` to paste into their Claude.ai Project. They enter the code at \`/authorize\`, then run their Kroger consent at \`/oauth/init?tenant=${{ inputs.username }}\`."
+            echo "Send them the invite code + connector URL, and \`AGENT_INSTRUCTIONS.md\` to paste into their Claude.ai Project. They enter the code at \`/authorize\`, then run their Kroger consent at \`/oauth/init?tenant=${{ inputs.username }}\`. Their \`users/${{ inputs.username }}/\` subtree is created automatically on their first write (e.g. setting their store)."
             echo ""
             echo "> The invite code is visible in this run to anyone with repo access. For a trusted group that's fine; rotate it by re-running with a new code if needed."
           } >> "$GITHUB_STEP_SUMMARY"

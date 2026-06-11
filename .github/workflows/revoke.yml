@@ -1,9 +1,9 @@
 name: Revoke member
 
-# Operator-run: remove a member's allowlist entry + invite code from KV (so they
-# can no longer authorize), and optionally delete their users/<username>/ subtree.
-# Their issued OAuth token also stops resolving once the allowlist entry is gone.
-# Same one-time fork setup as Onboard (CLOUDFLARE_API_TOKEN + GH_APP_PRIVATE_KEY).
+# Operator-run: remove a member's allowlist entry + invite code from KV, so they
+# can no longer authorize and their issued OAuth token stops resolving. Needs only
+# CLOUDFLARE_API_TOKEN (same fork setup as Onboard). To also delete their data,
+# remove users/<username>/ from the data repo manually (its web UI).
 
 on:
   workflow_dispatch:
@@ -14,32 +14,12 @@ on:
       invite_code:
         description: "Their invite code to delete (optional)"
         required: false
-      delete_data:
-        description: "Also delete their users/<username>/ subtree from the data repo?"
-        type: boolean
-        default: false
 
 jobs:
   revoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read config from wrangler.jsonc
-        id: cfg
-        run: |
-          node -e '
-            const fs = require("fs");
-            let raw = fs.readFileSync("wrangler.jsonc", "utf8")
-              .replace(/\/\*[\s\S]*?\*\//g, "")
-              .split("\n").map((l) => l.replace(/^\s*\/\/.*$/, "")).join("\n")
-              .replace(/,(\s*[}\]])/g, "$1");
-            const v = JSON.parse(raw).vars;
-            const out = process.env.GITHUB_OUTPUT;
-            fs.appendFileSync(out, `data_owner=${v.DATA_OWNER}\n`);
-            fs.appendFileSync(out, `data_repo=${v.DATA_REPO}\n`);
-            fs.appendFileSync(out, `app_id=${v.GITHUB_APP_ID}\n`);
-          '
 
       - name: Remove from KV (allowlist + invite)
         env:
@@ -52,32 +32,5 @@ jobs:
             npx --yes wrangler kv key delete --binding=TENANT_KV --remote "invite:${CODE}" || true
           fi
 
-      - name: Mint a data-repo write token (GitHub App)
-        if: ${{ inputs.delete_data }}
-        id: apptoken
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ steps.cfg.outputs.app_id }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ steps.cfg.outputs.data_owner }}
-          repositories: ${{ steps.cfg.outputs.data_repo }}
-
-      - name: Delete users/<username>/ from the data repo
-        if: ${{ inputs.delete_data }}
-        env:
-          U: ${{ inputs.username }}
-          OWNER: ${{ steps.cfg.outputs.data_owner }}
-          REPO: ${{ steps.cfg.outputs.data_repo }}
-          TOKEN: ${{ steps.apptoken.outputs.token }}
-        run: |
-          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${OWNER}/${REPO}.git" data
-          cd data
-          if [ ! -d "users/${U}" ]; then echo "users/${U} not present — nothing to delete."; exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -r "users/${U}"
-          git commit -m "Revoke ${U}: remove users/${U}/"
-          git push
-
       - name: Summary
-        run: echo "Revoked \`${{ inputs.username }}\` (KV allowlist + invite removed; data ${{ inputs.delete_data && 'deleted' || 'kept' }})." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Revoked \`${{ inputs.username }}\` — KV allowlist + invite removed; their token no longer resolves. Delete \`users/${{ inputs.username }}/\` from the data repo manually if you want their data gone too." >> "$GITHUB_STEP_SUMMARY"

@@ -83,10 +83,9 @@ Edit `wrangler.jsonc` **in your fork** (GitHub's web editor is fine) — all non
 
 (The tenant id and `users/<username>/` prefix are derived per request from the OAuth grant — no env var.)
 
-Then set two **Actions secrets** on the fork (Settings → Secrets and variables → Actions):
+Then set one **Actions secret** on the fork (Settings → Secrets and variables → Actions):
 
-- `CLOUDFLARE_API_TOKEN` — a Cloudflare token with Workers + KV edit; used by *Deploy*, *Onboard*, *Revoke*.
-- `GH_APP_PRIVATE_KEY` — paste the contents of `app-pkcs8.pem`; used by *Onboard*/*Revoke* to write the data repo.
+- `CLOUDFLARE_API_TOKEN` — a Cloudflare token with Workers + KV edit; used by *Deploy*, *Onboard*, and *Revoke*.
 
 ## 7. Deploy + set the Worker's runtime secrets
 
@@ -101,7 +100,7 @@ Once deployed, add the Worker's runtime secrets in the Cloudflare dashboard → 
 
 ## 8. Onboard yourself
 
-Run the **Onboard member** Action with `username: <you>` (leave `invite_code` blank to auto-generate). It allowlists you in KV, mints your invite code (shown in the run summary), and seeds `users/<you>/` in the data repo if absent.
+Run the **Onboard member** Action with `username: <you>` (leave `invite_code` blank to auto-generate). It allowlists you in KV and mints your invite code (shown in the run summary). Your `users/<you>/` subtree is created automatically on your first write (e.g. setting your Kroger store) — the commit engine creates files at any path.
 
 ## 9. Connect Claude.ai + Kroger consent
 
@@ -117,7 +116,7 @@ On the data repo: upgrade to **GitHub Pro** and enable **Pages → Source: GitHu
 
 A friend needs only a Claude.ai account and a Kroger account — no GitHub, no Kroger Developer app, and nothing local on your end.
 
-1. On your fork's **Actions** tab → **Onboard member** → Run, enter their `username`. It allowlists them, mints their invite code (in the run summary), and seeds `users/<username>/` in the data repo — one run.
+1. On your fork's **Actions** tab → **Onboard member** → Run, enter their `username`. It allowlists them and mints their invite code (in the run summary). Their `users/<username>/` subtree is created on their first write.
 2. Send them the connector URL (`https://<worker-host>/mcp`) + the invite code + `AGENT_INSTRUCTIONS.md`.
 3. They connect Claude.ai → enter the code at `/authorize` → run their Kroger consent (`/oauth/init?tenant=<username>`).
 
