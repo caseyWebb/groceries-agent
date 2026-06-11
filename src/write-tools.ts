@@ -22,6 +22,7 @@ import {
   type OverlayRow,
 } from "./overlay.js";
 import { applyPantryOperations, markVerified, type PantryItem } from "./pantry-write.js";
+import { applyKitchenOperations, toInventory } from "./kitchen.js";
 import {
   COOKING_LOG_PATH,
   entriesOf,
@@ -348,6 +349,37 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
         const { file, applied, conflicts } = await buildPantryUpdate(gh, userPath("pantry.toml"), operations, []);
         if (!file) return { applied, conflicts };
         const { commit_sha } = await commitFiles(gh, [file], "update pantry");
+        return { applied, conflicts, commit_sha };
+      }),
+  );
+
+  server.registerTool(
+    "update_kitchen",
+    {
+      description:
+        "Update the caller's kitchen equipment inventory. Operations: { op:'add'|'remove', slug } adds/removes an owned equipment slug — it MUST be a known vocabulary slug (pressure-cooker | sous-vide-circulator | blender | ice-cream-maker); an off-vocab add returns a conflict, never a silent write. { op:'set_note', key, value } sets a freeform [notes] field (oven count, pan sizes — cook-reasoning only, NEVER gates a recipe). Returns applied + conflicts.",
+      inputSchema: {
+        operations: z.array(
+          z.object({
+            op: z.enum(["add", "remove", "set_note"]),
+            slug: z.string().optional(),
+            key: z.string().optional(),
+            value: z.unknown().optional(),
+          }),
+        ),
+      },
+    },
+    ({ operations }) =>
+      runTool(async () => {
+        const path = userPath("kitchen.toml");
+        const text = (await readOptional(gh, path)) ?? "";
+        const inventory = toInventory(text ? parseToml(text, path) : {});
+        const { inventory: next, applied, conflicts } = applyKitchenOperations(inventory, operations);
+        if (applied.length === 0) return { applied, conflicts };
+        const data: Record<string, unknown> = { owned: next.owned };
+        if (Object.keys(next.notes).length) data.notes = next.notes;
+        const content = stringifyTomlWithHeader(text, data);
+        const { commit_sha } = await commitFiles(gh, [{ path, content }], "update kitchen");
         return { applied, conflicts, commit_sha };
       }),
   );

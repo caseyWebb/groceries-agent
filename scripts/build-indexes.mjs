@@ -33,8 +33,17 @@ const PROTEIN_VOCAB = new Set([
 const CUISINE_VOCAB = new Set([
   'american', 'brazilian', 'cajun', 'caribbean', 'chinese', 'cuban', 'filipino',
   'french', 'german', 'greek', 'indian', 'italian', 'japanese', 'korean',
-  'mediterranean', 'mexican', 'moroccan', 'southwestern', 'spanish', 'thai',
-  'vietnamese',
+  'mediterranean', 'mexican', 'moroccan', 'peruvian', 'southwestern', 'spanish',
+  'thai', 'vietnamese',
+]);
+// Equipment a dish is genuinely IMPOSSIBLE without — the "no recipe-preserving
+// workaround exists" test, deliberately small (it doubles as the onboarding
+// checklist). Drives the makeability gate: a recipe whose requires_equipment is
+// not a subset of a member's owned list is hidden from them. Validated only WHEN
+// PRESENT; absence reads as [] (makeable by everyone). Extending this is a
+// deliberate edit here, same ceremony as the cuisine set. See docs/SCHEMAS.md.
+const EQUIPMENT_VOCAB = new Set([
+  'pressure-cooker', 'sous-vide-circulator', 'blender', 'ice-cream-maker',
 ]);
 const COOKING_LOG_TYPES = new Set(['recipe', 'ready_to_eat', 'ad_hoc']);
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -174,6 +183,21 @@ export async function buildRecipeIndexes(recipesDir) {
       errors.push(`${rel}: standalone must be a boolean (got ${JSON.stringify(data.standalone)})`);
     }
 
+    // requires_equipment is objective shared content (drives the makeability
+    // gate). An array of EQUIPMENT_VOCAB slugs; an entry outside the vocab is a
+    // hard failure (like protein/cuisine). Absence reads as [] (makeable by all).
+    if (data.requires_equipment != null) {
+      if (!Array.isArray(data.requires_equipment)) {
+        errors.push(`${rel}: requires_equipment must be an array of equipment slugs (got ${JSON.stringify(data.requires_equipment)})`);
+      } else {
+        for (const slug of data.requires_equipment) {
+          if (!EQUIPMENT_VOCAB.has(slug)) {
+            errors.push(`${rel}: requires_equipment ${JSON.stringify(slug)} is not in the controlled vocabulary`);
+          }
+        }
+      }
+    }
+
     // Emit objective content only — strip the per-tenant subjective fields so the
     // shared index never carries one tenant's rating/status/last_cooked.
     const objective = { ...data };
@@ -184,6 +208,7 @@ export async function buildRecipeIndexes(recipesDir) {
       uses_components: data.uses_components ?? [],
       produces_components: data.produces_components ?? [],
       pairs_with: Array.isArray(data.pairs_with) ? data.pairs_with : [],
+      requires_equipment: Array.isArray(data.requires_equipment) ? data.requires_equipment : [],
     });
   }
 
@@ -238,6 +263,28 @@ export function validateReadyToEatCatalog(parsed, rel) {
     }
     if (it.rating != null && (!Number.isInteger(it.rating) || it.rating < 1 || it.rating > 5)) {
       errors.push(`${rel}: ready-to-eat \`rating\` = ${JSON.stringify(it.rating)} must be an integer 1–5`);
+    }
+  }
+  return errors;
+}
+
+// --- kitchen inventory validation ----------------------------------------
+
+// Kitchen inventory is per-tenant (users/<id>/kitchen.toml) — no aggregate index.
+// `owned` is the gating list: an array of EQUIPMENT_VOCAB slugs (the gate's left
+// operand, kept vocabulary-clean here AND in the Worker write subset). `[notes]`
+// is freeform and only parse-checked. An absent file is valid (unknown inventory).
+export function validateKitchenInventory(parsed, rel) {
+  const errors = [];
+  if (parsed.owned != null) {
+    if (!Array.isArray(parsed.owned)) {
+      errors.push(`${rel}: kitchen \`owned\` must be an array of equipment slugs (got ${JSON.stringify(parsed.owned)})`);
+    } else {
+      for (const slug of parsed.owned) {
+        if (typeof slug !== 'string' || !EQUIPMENT_VOCAB.has(slug)) {
+          errors.push(`${rel}: kitchen \`owned\` slug ${JSON.stringify(slug)} is not in the controlled vocabulary`);
+        }
+      }
     }
   }
   return errors;
@@ -357,6 +404,10 @@ export async function run({ recipesDir, root = REPO_ROOT } = {}) {
   for (const [file, obj] of parsed) {
     if (file === path.join(root, 'ready_to_eat.toml') || file.endsWith(`${path.sep}ready_to_eat.toml`)) {
       rteErr.push(...validateReadyToEatCatalog(obj, path.relative(REPO_ROOT, file)));
+    }
+    // Kitchen inventory is per-tenant (users/<id>/kitchen.toml) — vocab-check owned.
+    if (file === path.join(root, 'kitchen.toml') || file.endsWith(`${path.sep}kitchen.toml`)) {
+      rteErr.push(...validateKitchenInventory(obj, path.relative(REPO_ROOT, file)));
     }
   }
 

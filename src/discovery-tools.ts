@@ -93,7 +93,7 @@ export function registerDiscoveryTools(
     "import_recipe",
     {
       description:
-        "PARSE-ONLY: fetch a recipe page and return its schema.org JSON-LD as structured data ({ title, ingredients[], instructions[], servings, time_total, time_active, source }). Writes nothing and commits nothing — clean up / classify the data, assemble the markdown body (with ## Ingredients and ## Instructions), then call create_recipe. If the source URL is already in the shared corpus, the result carries `existing_slug` — reuse that recipe instead of re-creating it (it's shared, you can rate/note it). Structured errors: unreachable (couldn't fetch), no_jsonld (no JSON-LD on page), not_a_recipe (JSON-LD but no Recipe), incomplete (Recipe missing ingredients/instructions). Bot-walled/paywalled sites (e.g. Serious Eats, NYT) return unreachable — paste the recipe instead.",
+        "PARSE-ONLY: fetch a recipe page and return its schema.org JSON-LD as structured data ({ title, ingredients[], instructions[], servings, time_total, time_active, source, tools_hint? }). Writes nothing and commits nothing — clean up / classify the data, assemble the markdown body (with ## Ingredients and ## Instructions), then call create_recipe. `tools_hint` (present only when the page lists a schema.org `tool`) is a NON-AUTHORITATIVE hint for classifying `requires_equipment` — it lists every utensil, so default to [] and tag only truly-irreplaceable gear; never copy tools_hint into requires_equipment. If the source URL is already in the shared corpus, the result carries `existing_slug` — reuse that recipe instead of re-creating it (it's shared, you can rate/note it). Structured errors: unreachable (couldn't fetch), no_jsonld (no JSON-LD on page), not_a_recipe (JSON-LD but no Recipe), incomplete (Recipe missing ingredients/instructions). Bot-walled/paywalled sites (e.g. Serious Eats, NYT) return unreachable — paste the recipe instead.",
       inputSchema: { url: z.string() },
     },
     ({ url }) =>
@@ -145,7 +145,7 @@ export function registerDiscoveryTools(
     "create_recipe",
     {
       description:
-        "Write a NEW recipe to the SHARED corpus, as one solo commit. Slug derives from the title unless `slug` is given. Discovery imports: pass status 'draft' with discovered_at + discovery_source (status defaults to 'draft' if omitted). The body MUST contain ## Ingredients and ## Instructions. Refuses to overwrite an existing slug (slug_exists), and refuses to duplicate a recipe whose `source` URL is already in the corpus (already_exists, with the existing slug — reuse it).",
+        "Write a NEW recipe to the SHARED corpus, as one solo commit. Slug derives from the title unless `slug` is given. Discovery imports: pass status 'draft' with discovered_at + discovery_source (status defaults to 'draft' if omitted). The body MUST contain ## Ingredients and ## Instructions. Classify `requires_equipment` conservatively: default [] (the common case) and include a vocab slug (pressure-cooker | sous-vide-circulator | blender | ice-cream-maker) ONLY when the dish is genuinely impossible without it — a wrong tag silently hides a makeable recipe. Refuses to overwrite an existing slug (slug_exists), and refuses to duplicate a recipe whose `source` URL is already in the corpus (already_exists, with the existing slug — reuse it).",
       inputSchema: {
         frontmatter: z.record(z.string(), z.unknown()),
         body: z.string(),

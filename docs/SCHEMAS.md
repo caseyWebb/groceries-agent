@@ -7,7 +7,7 @@ Concrete schemas with example values for every data file in the repo. Keep this 
 The data lives in **one private data repo** with two regions (see `docs/PROJECT.md` and the `multi-tenant-friend-group` change). Every file below lives in exactly one:
 
 - **Shared corpus (data-repo root)** — objective, single-source, read by everyone: `recipes/*.md` (objective frontmatter + body), `aliases.toml`, `ingredients.toml`, `substitutions.toml` (the shared default layer), `skus/kroger.toml`, `flyer_terms.toml`, `_indexes/`.
-- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `feeds.toml`, `ready_to_eat.toml` (personal heat-and-eat catalog), `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
+- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `feeds.toml`, `ready_to_eat.toml` (personal heat-and-eat catalog), `kitchen.toml` (owned cooking equipment), `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
 
 **Three-category recipe model (D5):** a recipe's *content* (objective frontmatter + body) is shared; its *overlay* (`rating` + `status`) is per-tenant in `overlay.toml`; its *notes* are per-tenant, attributed, append-mostly. `last_cooked` is **not stored** — it's derived per-tenant from that member's `cooking_log.toml`. Read tools merge shared content + the caller's overlay + cooking-log `last_cooked` at read time.
 
@@ -41,6 +41,7 @@ uses_components: []             # array of slugs; what other recipes' outputs th
 produces_components: []         # array of slugs; what other recipes can build on
 pairs_with: []                  # array of recipe slugs; plate-companion sides (a PLATING edge)
 standalone: true                # optional boolean; OMIT unless the dish is an already-rounded plate
+requires_equipment: []          # array of EQUIPMENT_VOCAB slugs; ONLY truly-irreplaceable gear (defaults empty)
 source: https://www.seriouseats.com/lemon-garlic-roasted-chicken
 ---
 
@@ -53,7 +54,8 @@ source: https://www.seriouseats.com/lemon-garlic-roasted-chicken
 - `uses_components` / `produces_components`: slugs of other recipes, optional. A *production* edge (cook a component once, reuse its output across the week). Used by `suggest_sequencing`.
 - `pairs_with`: slugs of other recipes, optional (defaults to empty). A *plating* edge — recipes eaten together on one plate (a main's companion sides) — distinct from the `uses_components`/`produces_components` production edges. Each slug MUST resolve to a real recipe (a build hard-failure otherwise, like an unresolved component reference); sides are themselves recipes, so they reuse the normal verify/import/grocery-list pipeline. Objective **shared content** (carried in `_indexes/recipes.json`, written by `update_recipe`) — not a per-tenant overlay field. Grown lazily by the meal-plan flow as pairings are confirmed; the bootstrap selects sides by plate fit and does NOT traverse the component graph (bidirectional component sequencing stays with `suggest_sequencing`).
 - `standalone`: optional boolean (defaults **unset**, never backfilled). Marks an already-rounded one-pot/inclusive plate so the planner won't prompt for a side. Must be a boolean when present (a build hard-failure otherwise). When unset, the agent infers at plan time whether the dish stands alone and offers to persist its verdict. Objective **shared content**, written by `update_recipe` — not a per-tenant overlay field.
-- `protein` and `cuisine` are **controlled vocabularies** (coarse buckets — `fish` not `salmon`) so variety reasoning is reliable. A value **present** but outside its set is a hard build failure; **absence** keeps the warn-only treatment. Extending a vocabulary is a deliberate edit to the allowed sets in `scripts/build-indexes.mjs`. Current cuisine set: `american, brazilian, cajun, caribbean, chinese, cuban, filipino, french, german, greek, indian, italian, japanese, korean, mediterranean, mexican, moroccan, southwestern, spanish, thai, vietnamese`.
+- `requires_equipment`: optional array of `EQUIPMENT_VOCAB` slugs naming gear a dish is genuinely **impossible** without — the "no recipe-preserving workaround exists" test. **Default empty** (the overwhelming common case); tag only truly-irreplaceable equipment, since a wrong tag silently hides a makeable recipe. A controlled vocabulary like `protein`/`cuisine` (present-but-off-vocab = hard build failure; absence neither fails nor warns). Objective **shared content** carried in `_indexes/recipes.json`, written by `create_recipe`/`update_recipe`. Drives the `list_recipes` makeability gate against a member's `kitchen.toml` `owned` list. Current set: `pressure-cooker, sous-vide-circulator, blender, ice-cream-maker`.
+- `protein` and `cuisine` are **controlled vocabularies** (coarse buckets — `fish` not `salmon`) so variety reasoning is reliable. A value **present** but outside its set is a hard build failure; **absence** keeps the warn-only treatment. Extending a vocabulary is a deliberate edit to the allowed sets in `scripts/build-indexes.mjs`. Current cuisine set: `american, brazilian, cajun, caribbean, chinese, cuban, filipino, french, german, greek, indian, italian, japanese, korean, mediterranean, mexican, moroccan, peruvian, southwestern, spanish, thai, vietnamese`.
 - `ingredients_key`: top 5–7 ingredients for filtering. Full ingredient list lives in the body.
 
 ### Recipe body structural contract
@@ -153,6 +155,27 @@ prepared_from = null
 - `quantity` is intentionally loose — "full", "partial", "low" plus optional explicit counts. We don't track precise amounts (whiteboard problem).
 - `prepared_from` set for cooked/prepared items — faster perishability profile, identifies which recipe produced it.
 - `last_verified_at` resets when the user confirms the item is still there during a pantry confirmation pass.
+
+## users/&lt;username&gt;/kitchen.toml (per-tenant)
+
+What a member owns to cook **with** (equipment, not ingredients). Agent-writable via `update_kitchen`. Two structurally-separated regions: `owned` (controlled-vocabulary slugs — the **only** region that gates recipe makeability) and `[notes]` (freeform context the `cook` skill reasons over for parallelization — **never** gates). An absent file means the member's equipment is *unknown*, which makes the makeability gate a no-op (every recipe shows) — unknown is not the same as not-owned.
+
+```toml
+# users/alice/kitchen.toml — equipment Alice owns to cook WITH.
+# `owned` GATES (requires_equipment ⊆ owned → makeable); `[notes]` never does.
+
+owned = ["pressure-cooker", "blender"]   # EQUIPMENT_VOCAB slugs only
+
+[notes]                                   # freeform — cook reads, gate ignores
+ovens = 2
+toaster_oven = true
+free_text = "10-inch cast iron, half-sheet trays"
+```
+
+**Notes:**
+- `owned`: array of `EQUIPMENT_VOCAB` slugs (the same set `requires_equipment` validates against: `pressure-cooker, sous-vide-circulator, blender, ice-cream-maker`). An off-vocab slug is a build hard-failure and is rejected by `update_kitchen` at write time (a structured conflict, no commit) — the gate's left operand is kept vocabulary-clean.
+- `[notes]`: freeform table, parse-checked only. Oven count, pan sizes, sheet trays — surfaced to the `cook` flow for parallelization suggestions; **no schema, never gates**. Seeded through normal `cook` use, not at onboarding.
+- The makeability rule: a recipe is makeable for a member when its `requires_equipment` is a subset of `owned`. Empty/absent `owned` ⇒ gate no-op. See `list_recipes` and the kitchen-equipment capability.
 
 ## grocery_list.toml
 

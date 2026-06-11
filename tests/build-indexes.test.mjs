@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildRecipeIndexes,
   validateReadyToEatCatalog,
+  validateKitchenInventory,
   parseCheckToml,
   stableStringify,
   normalizeValue,
@@ -225,6 +226,64 @@ test('absent pairs_with / standalone do not warn', async () => {
   // standalone stays unset (not coerced to false) when absent.
   assert.equal(recipes['plain'].standalone, undefined);
   await rm(dir, { recursive: true, force: true });
+});
+
+// --- requires_equipment (makeability gate input) ------------------------
+
+test('in-vocabulary requires_equipment passes and is carried into the index', async () => {
+  const dir = await tmpRecipes({
+    'sous-vide-steak.md': recipe('title: Sous Vide Steak\nstatus: active\nrequires_equipment: [sous-vide-circulator]'),
+  });
+  const { recipes, errors } = await buildRecipeIndexes(dir);
+  assert.ok(!errors.some((e) => /requires_equipment/.test(e)), errors.join('\n'));
+  assert.deepEqual(recipes['sous-vide-steak'].requires_equipment, ['sous-vide-circulator']);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('hard-fail: off-vocabulary requires_equipment', async () => {
+  const dir = await tmpRecipes({
+    'bad.md': recipe('title: Bad\nstatus: active\nrequires_equipment: [panini-press]'),
+  });
+  const { errors } = await buildRecipeIndexes(dir);
+  assert.ok(errors.some((e) => /requires_equipment "panini-press" is not in the controlled vocabulary/.test(e)), errors.join('\n'));
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('hard-fail: non-array requires_equipment', async () => {
+  const dir = await tmpRecipes({
+    'bad.md': recipe('title: Bad\nstatus: active\nrequires_equipment: blender'),
+  });
+  const { errors } = await buildRecipeIndexes(dir);
+  assert.ok(errors.some((e) => /requires_equipment must be an array/.test(e)), errors.join('\n'));
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('absent requires_equipment defaults to [] and does not warn', async () => {
+  const dir = await tmpRecipes({
+    'plain.md': recipe('title: Plain\nstatus: active\nprotein: chicken\ntime_total: 30\ningredients_key: [chicken]'),
+  });
+  const { recipes, errors, warnings } = await buildRecipeIndexes(dir);
+  assert.deepEqual(errors, []);
+  assert.ok(!warnings.some((w) => /requires_equipment/.test(w)), warnings.join('\n'));
+  assert.deepEqual(recipes['plain'].requires_equipment, []);
+  await rm(dir, { recursive: true, force: true });
+});
+
+// --- kitchen inventory structural validation ----------------------------
+
+test('validateKitchenInventory: clean inventory passes, off-vocab owned reports', () => {
+  assert.deepEqual(
+    validateKitchenInventory({ owned: ['pressure-cooker', 'blender'], notes: { ovens: 2 } }, 'users/alice/kitchen.toml'),
+    [],
+  );
+  // Absent owned is valid (unknown inventory).
+  assert.deepEqual(validateKitchenInventory({ notes: { free_text: 'cast iron' } }, 'u/kitchen.toml'), []);
+  // Empty file is valid.
+  assert.deepEqual(validateKitchenInventory({}, 'u/kitchen.toml'), []);
+  const offVocab = validateKitchenInventory({ owned: ['air-fryer'] }, 'u/kitchen.toml');
+  assert.ok(offVocab.some((e) => /`owned` slug "air-fryer" is not in the controlled vocabulary/.test(e)), offVocab.join('\n'));
+  const nonArray = validateKitchenInventory({ owned: 'blender' }, 'u/kitchen.toml');
+  assert.ok(nonArray.some((e) => /`owned` must be an array/.test(e)), nonArray.join('\n'));
 });
 
 // --- required body sections (structural contract) -----------------------

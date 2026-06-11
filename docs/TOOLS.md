@@ -21,13 +21,14 @@ The complete tool surface exposed by `grocery-mcp` to Claude. Each tool encodes 
 List recipes matching filters. Reads from `_indexes/recipes.json` (single API call).
 
 **Params:**
-- `filters` (object, optional): `{ status?, protein?, cuisine?, query?, season?, dietary?, max_time_total?, not_cooked_since?, exclude_cooked_within_days? }`
+- `filters` (object, optional): `{ status?, protein?, cuisine?, query?, season?, dietary?, max_time_total?, not_cooked_since?, exclude_cooked_within_days?, include_unmakeable? }`
 
 **Returns:**
-- `{ recipes: [{ slug, title, frontmatter }] }` — array of matched recipes with frontmatter
+- `{ recipes: [{ slug, title, frontmatter }] }` — array of matched recipes with frontmatter. Under `include_unmakeable`, a gated-in recipe's `frontmatter` additionally carries `missing_equipment: [slugs]`.
 
 **Notes:**
 - Default `status: active`. Use `status: draft` to see discoveries awaiting disposition, or `status: "all"` to opt out of status filtering entirely.
+- **Makeability gate (default-on):** joins the caller's `kitchen.toml` `owned` and drops recipes whose `requires_equipment` is not a subset of `owned`, so a recipe the caller can't make is never surfaced. An **empty/absent** `owned` (unknown inventory) makes the gate a **no-op** (everything passes) — it never guts the corpus for an un-onboarded member. `include_unmakeable: true` disables the drop and instead returns those recipes annotated with `missing_equipment` — use it when surfacing a specifically **named** dish so it's flagged, never silently dropped. Pure subset test over the index + `owned`; no ranking.
 - Array filters (`dietary`, `season`) match **all** listed values (AND/narrowing). **There is no `tags` filter** — keyword/tag matching is done by `query`.
 - `query` (string): the single name/keyword search over `title` **and** `tags`. Tokenize on whitespace, drop connective stopwords (`and`, `or`, `with`, `the`, `a`, `an`, `of`, `in`, `on`, `for`, `&`), then keep a recipe when **every** remaining token is a case-insensitive substring of its `title` or any `tag` (token-AND). Deterministic membership only — no ranking, scoring, or fuzzy matching. So `"chicken and rice"` ≡ `"chicken rice"` and surfaces a recipe titled "Chicken and Rice" even when its tags omit "rice". ANDed with the other filters; an absent, empty, or all-stopword `query` applies no text narrowing.
 - `exclude_cooked_within_days` (number): drop recipes cooked within the last N days. Caller-supplied window, not a stored default.
@@ -64,7 +65,7 @@ Update recipe frontmatter fields. Use for `last_cooked`, `rating`, `status` tran
 - `url` (string, required)
 
 **Returns:**
-- `{ title, ingredients: [...], instructions: [...], servings, time_total, time_active, source, existing_slug? }` — `ingredients`/`instructions` are string arrays; `servings` is a scalar (number when parseable); `time_total`/`time_active` are minutes or null; `source` is the recipe's canonical URL. **`existing_slug`** is present only when this source URL is **already in the shared corpus** (idempotent import, §6.4) — reuse that recipe (rate it, note it) instead of calling `create_recipe`.
+- `{ title, ingredients: [...], instructions: [...], servings, time_total, time_active, source, tools_hint?, existing_slug? }` — `ingredients`/`instructions` are string arrays; `servings` is a scalar (number when parseable); `time_total`/`time_active` are minutes or null; `source` is the recipe's canonical URL. **`tools_hint`** (present only when the page carries a schema.org `tool`) is the flattened tool-name list — a **non-authoritative hint** for classifying `requires_equipment`, never copied into it (it lists every utensil; default `requires_equipment` to `[]` and tag only truly-irreplaceable gear). **`existing_slug`** is present only when this source URL is **already in the shared corpus** (idempotent import, §6.4) — reuse that recipe (rate it, note it) instead of calling `create_recipe`.
 
 **Errors (structured):**
 - `{ error: "unreachable" }` — the page couldn't be fetched (network error or non-2xx). Bot-walled/paywalled sites (Serious Eats, NYT, Food52) land here — paste the recipe instead.
@@ -91,7 +92,7 @@ Write a **new** recipe to the **shared corpus** (the data-repo root, read by eve
 - `{ error: "already_exists", slug, source }` — a recipe with this `source` URL is already in the shared corpus (idempotent import, §6.4); `slug` is the existing recipe to reuse.
 - `{ error: "validation_failed" }` — no derivable slug (missing title), or the body lacks the required H2 sections.
 
-**Notes:** The everyday discovery write path: `import_recipe` (parse) → agent cleans/classifies → `create_recipe`. Disposition of the resulting draft happens later via `update_recipe` (→ `active` + rating, or `rejected`).
+**Notes:** The everyday discovery write path: `import_recipe` (parse) → agent cleans/classifies → `create_recipe`. Disposition of the resulting draft happens later via `update_recipe` (→ `active` + rating, or `rejected`). The frontmatter is a pass-through record, so objective fields including `requires_equipment` flow straight through; classify it conservatively (default `[]`, vocab slugs only, truly-irreplaceable gear). The Worker validates its *shape* (array of slugs); the **vocabulary** is enforced at build time (`build-indexes.mjs`), matching the `protein`/`cuisine` posture — an off-vocab slug can't reach the gate without the build, which fails first. `update_recipe` is the same pass-through and the path to backfill `requires_equipment` on existing recipes.
 
 ---
 
@@ -149,6 +150,15 @@ Read pantry items, optionally filtered.
 
 **Notes:** `category` and `prepared_only` are deterministic from pantry data. `stale_only` depends on shelf-life thresholds from `ingredients.toml`, which doesn't exist until Change 12 — until then it returns a structured `{ error: "unsupported" }` rather than guessing.
 
+### `read_kitchen()`
+
+Read the caller's kitchen equipment inventory (what they own to cook *with*).
+
+**Params:** none.
+
+**Returns:**
+- `{ owned: [...], notes: {...} }` — `owned` is the array of `EQUIPMENT_VOCAB` slugs that **gate** recipe makeability; `notes` is the freeform cook-reasoning table (oven count, pan sizes) that **never** gates. Returns `{ owned: [], notes: {} }` when no `kitchen.toml` exists — an **absent** inventory means equipment is *unknown*, which makes the `list_recipes` makeability gate a no-op (everything shows).
+
 ### `verify_pantry_for_recipe(slug)`
 
 Parse the named recipe's `## Ingredients` and walk each against the pantry. Returns **facts, not freshness verdicts** — the tool reports what's present and surfaces age metadata; the agent decides which items warrant a "still good?" prompt (resolved via `mark_pantry_verified`). The tool never classifies items as fresh/stale (it has no shelf-life data and freshness depends on storage, not age) and never guesses ambiguous matches.
@@ -199,6 +209,18 @@ Apply pantry updates from conversational messages.
 - `{ applied: [...], conflicts: [...] }`
 
 **Notes:** Conflicts surface when remove targets aren't found. The agent should ask the user how to resolve.
+
+### `update_kitchen(operations)`
+
+Update the caller's kitchen equipment inventory (agent-editable on user direction, the same posture as `update_pantry`). Writes `users/<username>/kitchen.toml`.
+
+**Params:**
+- `operations` (array): `[{ op: "add" | "remove", slug }]` for the gating `owned` list, and `[{ op: "set_note", key, value }]` for a freeform `notes` field.
+
+**Returns:**
+- `{ applied: [...], conflicts: [...] , commit_sha? }`
+
+**Notes:** An `add` of an **off-vocabulary** slug is a **conflict**, never a silent write — `owned` is the gate's left operand and is kept vocabulary-clean (vocab: `pressure-cooker`, `sous-vide-circulator`, `blender`, `ice-cream-maker`). An `add` of an already-owned slug is idempotent (no-op, no conflict); a `remove` of an absent slug is a conflict. `set_note` fields (oven count, pan sizes) inform the `cook` flow only and **never** gate a recipe. No commit (and `commit_sha` omitted) when nothing applied.
 
 ### `mark_pantry_verified(items)`
 

@@ -20,6 +20,7 @@ import { registerNoteTools } from "./notes-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { filterRecipes, type RecipeFilters, type RecipeIndex } from "./recipes.js";
 import { parseOverlay, mergeOverlay, type Overlay } from "./overlay.js";
+import { toInventory } from "./kitchen.js";
 import { entriesOf, deriveLastCooked } from "./cooking-log.js";
 import { createKrogerClient, type KrogerCandidate } from "./kroger.js";
 import {
@@ -62,6 +63,7 @@ const recipeFiltersShape = {
   max_time_total: z.number().optional(),
   not_cooked_since: z.string().optional(),
   exclude_cooked_within_days: z.number().optional(),
+  include_unmakeable: z.boolean().optional(),
 };
 
 const pantryFilterShape = {
@@ -219,6 +221,19 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     return lastCookedPromise;
   }
 
+  // The caller's owned equipment (kitchen.toml `owned`), the makeability gate's
+  // left operand. Empty/absent ⇒ unknown inventory ⇒ the gate is a no-op.
+  let ownedPromise: Promise<string[]> | null = null;
+  function getOwnedEquipment(): Promise<string[]> {
+    if (!ownedPromise) {
+      ownedPromise = (async () => {
+        const text = await readOptional(gh, "kitchen.toml");
+        return text ? toInventory(parseToml(text, "kitchen.toml")).owned : [];
+      })();
+    }
+    return ownedPromise;
+  }
+
   /** Read and parse pantry items; empty/comment-only pantry yields []. */
   async function getPantryItems(): Promise<PantryItem[]> {
     const text = await readFile(gh, "pantry.toml", "not_found", "no pantry is set up");
@@ -288,12 +303,12 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     "list_recipes",
     {
       description:
-        "List recipes from the index, filtered. To find recipes by name or keyword (including a named dish), use `query` — the single text search over title AND tags: it keeps recipes whose title or tags contain EVERY token (case-insensitive substring), after dropping connective stopwords (so \"chicken and rice\" matches the same as \"chicken rice\", including a recipe titled \"Chicken and Rice\" whose tags omit \"rice\"). There is no tag filter. Array filters season/dietary match ALL listed values. status defaults to 'active'; pass 'all' to include every status. exclude_cooked_within_days is a caller-supplied window.",
+        "List recipes from the index, filtered. To find recipes by name or keyword (including a named dish), use `query` — the single text search over title AND tags: it keeps recipes whose title or tags contain EVERY token (case-insensitive substring), after dropping connective stopwords (so \"chicken and rice\" matches the same as \"chicken rice\", including a recipe titled \"Chicken and Rice\" whose tags omit \"rice\"). There is no tag filter. Array filters season/dietary match ALL listed values. status defaults to 'active'; pass 'all' to include every status. exclude_cooked_within_days is a caller-supplied window. A makeability gate is applied by default: recipes needing equipment the caller doesn't own (per kitchen.toml) are hidden — unless the caller has no kitchen inventory recorded, in which case nothing is gated. Pass include_unmakeable:true to instead return those recipes annotated with missing_equipment (use this when surfacing a specifically NAMED dish so it is never silently dropped).",
       inputSchema: { filters: z.object(recipeFiltersShape).optional() },
     },
     ({ filters }) =>
       runTool(async () => {
-        const [raw, overlay, lastCooked] = await Promise.all([
+        const [raw, overlay, lastCooked, owned] = await Promise.all([
           readFile(
             sharedGh,
             "_indexes/recipes.json",
@@ -302,6 +317,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
           ),
           getOverlay(),
           getLastCookedMap(),
+          getOwnedEquipment(),
         ]);
         let index: RecipeIndex;
         try {
@@ -320,7 +336,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
             slug,
           };
         }
-        return { recipes: filterRecipes(effective, (filters ?? {}) as RecipeFilters) };
+        return { recipes: filterRecipes(effective, (filters ?? {}) as RecipeFilters, new Date(), owned) };
       }),
   );
 
@@ -371,6 +387,21 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
           items = items.filter((i) => i.prepared_from != null);
         }
         return { items };
+      }),
+  );
+
+  server.registerTool(
+    "read_kitchen",
+    {
+      description:
+        "Read the caller's kitchen equipment inventory: { owned: [...EQUIPMENT_VOCAB slugs], notes: {...} }. `owned` is what gates recipe makeability; `notes` is freeform cook context (oven count, pan sizes). Returns an empty inventory when none is set up — an absent inventory means equipment is UNKNOWN, which makes the makeability gate a no-op (every recipe shows).",
+      inputSchema: {},
+    },
+    () =>
+      runTool(async () => {
+        const text = await readOptional(gh, "kitchen.toml");
+        if (!text) return { owned: [], notes: {} };
+        return toInventory(parseToml(text, "kitchen.toml"));
       }),
   );
 

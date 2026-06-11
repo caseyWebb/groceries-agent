@@ -11,6 +11,8 @@ export interface RecipeFilters {
   max_time_total?: number;
   not_cooked_since?: string;
   exclude_cooked_within_days?: number;
+  /** Disable the default makeability gate, returning unmakeable recipes annotated with `missing_equipment`. */
+  include_unmakeable?: boolean;
 }
 
 /** A recipe index entry: parsed frontmatter plus the injected slug. */
@@ -42,6 +44,10 @@ function isoDay(d: Date): string {
  *   stopwords (connectives), then match when EVERY remaining token is a
  *   case-insensitive substring of the title or any tag (token-AND; deterministic
  *   membership, no ranking). An all-stopword query applies no text narrowing.
+ * - makeability gate (kitchen-equipment): a recipe whose requires_equipment is not
+ *   a subset of `owned` is dropped by default. Empty `owned` (unknown inventory) is
+ *   a no-op — every recipe passes. `include_unmakeable` returns the unmakeable ones
+ *   annotated with `missing_equipment` instead of dropping (the named-dish path).
  */
 
 /** Connectives dropped from a query so "chicken and rice" ≡ "chicken rice". */
@@ -71,6 +77,7 @@ export function filterRecipes(
   index: RecipeIndex,
   filters: RecipeFilters = {},
   now: Date = new Date(),
+  owned: string[] = [],
 ): RecipeListItem[] {
   const wantStatus = filters.status === "all" ? null : (filters.status ?? "active");
 
@@ -122,7 +129,18 @@ export function filterRecipes(
     // exclude_cooked_within_days: drop if cooked on/after the cutoff. Never-cooked passes.
     if (cutoffWithin !== null && cookedStr !== null && cookedStr >= cutoffWithin) continue;
 
-    out.push({ slug: recipe.slug, title: recipe.title, frontmatter: recipe });
+    // Makeability gate: requires_equipment ⊆ owned. Empty owned ⇒ no-op (unknown
+    // inventory is not "owns nothing"). include_unmakeable surfaces flagged instead.
+    let frontmatter: IndexedRecipe = recipe;
+    if (owned.length > 0) {
+      const missing = asArray(recipe.requires_equipment).filter((e) => !owned.includes(e));
+      if (missing.length) {
+        if (!filters.include_unmakeable) continue; // hidden from browse/suggest
+        frontmatter = { ...recipe, missing_equipment: missing }; // surfaced, flagged
+      }
+    }
+
+    out.push({ slug: recipe.slug, title: recipe.title, frontmatter });
   }
 
   return out;

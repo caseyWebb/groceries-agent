@@ -195,3 +195,59 @@ describe("filterRecipes query", () => {
     expect(out).toEqual(without);
   });
 });
+
+describe("filterRecipes makeability gate", () => {
+  const gateIndex: RecipeIndex = {
+    plain: { slug: "plain", title: "Plain", status: "active", last_cooked: null },
+    needs: {
+      slug: "needs",
+      title: "Sous Vide Steak",
+      status: "active",
+      last_cooked: null,
+      requires_equipment: ["sous-vide-circulator"],
+    },
+    twoNeeds: {
+      slug: "twoNeeds",
+      title: "Fancy",
+      status: "active",
+      last_cooked: null,
+      requires_equipment: ["blender", "ice-cream-maker"],
+    },
+  };
+
+  it("empty owned is a no-op (unknown inventory shows everything)", () => {
+    const out = filterRecipes(gateIndex, {}, NOW, []).map((r) => r.slug).sort();
+    expect(out).toEqual(["needs", "plain", "twoNeeds"]);
+  });
+
+  it("drops recipes whose requires_equipment is not a subset of owned", () => {
+    const out = filterRecipes(gateIndex, {}, NOW, ["blender"]).map((r) => r.slug).sort();
+    // plain (needs nothing) passes; needs (sous-vide) and twoNeeds (needs ice-cream-maker too) are gated out.
+    expect(out).toEqual(["plain"]);
+  });
+
+  it("keeps a recipe when owned is a superset of its requirement", () => {
+    const out = filterRecipes(gateIndex, {}, NOW, ["sous-vide-circulator", "blender"])
+      .map((r) => r.slug)
+      .sort();
+    expect(out).toEqual(["needs", "plain"]);
+  });
+
+  it("include_unmakeable returns gated recipes annotated with missing_equipment", () => {
+    const out = filterRecipes(gateIndex, { include_unmakeable: true }, NOW, ["blender"]);
+    const needs = out.find((r) => r.slug === "needs");
+    const twoNeeds = out.find((r) => r.slug === "twoNeeds");
+    const plain = out.find((r) => r.slug === "plain");
+    expect(needs?.frontmatter.missing_equipment).toEqual(["sous-vide-circulator"]);
+    // twoNeeds owns blender but not ice-cream-maker → only the missing one is flagged.
+    expect(twoNeeds?.frontmatter.missing_equipment).toEqual(["ice-cream-maker"]);
+    // a makeable recipe carries no annotation.
+    expect(plain?.frontmatter.missing_equipment).toBeUndefined();
+  });
+
+  it("gate ANDs with other filters", () => {
+    // A status filter still applies alongside the gate.
+    const out = filterRecipes(gateIndex, { status: "all" }, NOW, ["blender"]).map((r) => r.slug).sort();
+    expect(out).toEqual(["plain"]);
+  });
+});

@@ -18,6 +18,13 @@ export interface NormalizedRecipe {
   time_total: number | null; // minutes
   time_active: number | null; // minutes (prep)
   source: string | null;
+  /**
+   * The schema.org `tool` list, flattened to names. A NON-AUTHORITATIVE HINT for
+   * the classifier deciding `requires_equipment` — it enumerates every utensil
+   * (bowls, whisks) which are mostly not vital. Never written to a recipe directly.
+   * Omitted when the page carries no `tool`.
+   */
+  tools_hint?: string[];
 }
 
 export type NormalizeResult =
@@ -105,6 +112,26 @@ function asStringArray(v: unknown): string[] {
   const push = (x: unknown) => {
     if (typeof x === "string") {
       const t = cleanText(x);
+      if (t) out.push(t);
+    }
+  };
+  if (Array.isArray(v)) v.forEach(push);
+  else push(v);
+  return out;
+}
+
+/**
+ * Flatten schema.org `tool` to names. Handles a plain string, an array of strings,
+ * and `HowToTool` objects (`{ "@type": "HowToTool", "name": "blender" }`).
+ */
+function flattenTools(v: unknown): string[] {
+  const out: string[] = [];
+  const push = (x: unknown) => {
+    if (typeof x === "string") {
+      const t = cleanText(x);
+      if (t) out.push(t);
+    } else if (x && typeof x === "object" && typeof (x as Record<string, unknown>).name === "string") {
+      const t = cleanText((x as Record<string, unknown>).name as string);
       if (t) out.push(t);
     }
   };
@@ -234,6 +261,8 @@ export function normalizeRecipe(recipe: Record<string, unknown>): NormalizeResul
     return (p ?? 0) + (c ?? 0);
   })();
 
+  const toolsHint = flattenTools(recipe.tool);
+
   return {
     ok: true,
     recipe: {
@@ -244,6 +273,7 @@ export function normalizeRecipe(recipe: Record<string, unknown>): NormalizeResul
       time_total: parseDurationMinutes(recipe.totalTime) ?? totalFromParts,
       time_active: parseDurationMinutes(recipe.prepTime),
       source: typeof recipe.url === "string" ? recipe.url : null,
+      ...(toolsHint.length ? { tools_hint: toolsHint } : {}),
     },
   };
 }

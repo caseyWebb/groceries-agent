@@ -8,6 +8,7 @@
 import { load as loadYaml } from "js-yaml";
 import { parse as parseTomlRaw } from "smol-toml";
 import { ToolError } from "./errors.js";
+import { EQUIPMENT_VOCAB } from "./kitchen.js";
 
 const RECIPE_STATUSES = ["active", "draft", "rejected", "archived"];
 const PANTRY_CATEGORIES = ["pantry", "fridge", "freezer", "spices"];
@@ -16,6 +17,10 @@ const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"];
 const GROCERY_STATUSES = ["active", "in_cart", "ordered"];
 const GROCERY_KINDS = ["grocery", "household", "other"];
 const COOKING_LOG_TYPES = ["recipe", "ready_to_eat", "ad_hoc"];
+// EQUIPMENT_VOCAB is the makeability gate's vocabulary (src/kitchen.ts, mirrored in
+// scripts/build-indexes.mjs). recipes/*.md `requires_equipment` is NOT vocab-enforced
+// here (loose write, the build is the gate); kitchen.toml `owned` IS, since it's read
+// at runtime with no build between.
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function fail(path: string, message: string): never {
@@ -79,6 +84,14 @@ export function validateFile(path: string, content: string): void {
     }
     if (fm.standalone != null && typeof fm.standalone !== "boolean") {
       fail(path, `\`standalone\` must be a boolean (got ${JSON.stringify(fm.standalone)})`);
+    }
+    // requires_equipment: shape only (array of slugs). Deliberately NOT
+    // vocab-checked here — the build is the gate for recipe content (D2), so an
+    // off-vocab slug can't reach the index without the build, which fails first.
+    if (fm.requires_equipment != null) {
+      if (!Array.isArray(fm.requires_equipment) || fm.requires_equipment.some((s) => typeof s !== "string")) {
+        fail(path, `\`requires_equipment\` must be an array of equipment slugs (got ${JSON.stringify(fm.requires_equipment)})`);
+      }
     }
     return;
   }
@@ -152,6 +165,24 @@ export function validateFile(path: string, content: string): void {
       checkEnum(path, "status", it.status, READY_TO_EAT_STATUSES, false);
       if (it.rating != null && (typeof it.rating !== "number" || !Number.isInteger(it.rating) || it.rating < 1 || it.rating > 5)) {
         fail(path, `\`rating\` = ${JSON.stringify(it.rating)} must be an integer 1–5`);
+      }
+    }
+    return;
+  }
+
+  // Per-tenant kitchen inventory (users/<id>/kitchen.toml, or bare during the
+  // single-user bootstrap). `owned` is vocab-enforced (it's the gate's left
+  // operand, read at runtime); `[notes]` is freeform (parse-only).
+  if (path === "kitchen.toml" || path.endsWith("/kitchen.toml")) {
+    const parsed = parseTomlOrFail(path, content);
+    if (parsed.owned != null) {
+      if (!Array.isArray(parsed.owned)) {
+        fail(path, `\`owned\` must be an array of equipment slugs (got ${JSON.stringify(parsed.owned)})`);
+      }
+      for (const slug of parsed.owned) {
+        if (typeof slug !== "string" || !(EQUIPMENT_VOCAB as readonly string[]).includes(slug)) {
+          fail(path, `\`owned\` slug ${JSON.stringify(slug)} is not one of ${EQUIPMENT_VOCAB.join(" | ")}`);
+        }
       }
     }
     return;

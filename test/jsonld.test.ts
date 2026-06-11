@@ -201,6 +201,25 @@ describe("normalizeRecipe", () => {
     if (r.ok) expect(r.recipe.instructions).toEqual(["Toast the bread. Spread the butter."]);
   });
 
+  it("surfaces schema.org tool as a non-authoritative tools_hint (HowToTool objects and strings)", () => {
+    const base = { recipeIngredient: ["1 thing"], recipeInstructions: ["do it"] };
+    const objs = normalizeRecipe({
+      ...base,
+      tool: [
+        { "@type": "HowToTool", name: "Blender" },
+        { "@type": "HowToTool", name: "Mixing bowl" },
+      ],
+    });
+    expect(objs.ok && objs.recipe.tools_hint).toEqual(["Blender", "Mixing bowl"]);
+    const strs = normalizeRecipe({ ...base, tool: ["Whisk", "Sauté pan"] });
+    expect(strs.ok && strs.recipe.tools_hint).toEqual(["Whisk", "Sauté pan"]);
+  });
+
+  it("omits tools_hint when the page lists no tool", () => {
+    const r = normalizeRecipe({ recipeIngredient: ["1 thing"], recipeInstructions: ["do it"] });
+    expect(r.ok && "tools_hint" in r.recipe).toBe(false);
+  });
+
   it("falls back to prep+cook when totalTime is absent", () => {
     const r = normalizeRecipe({
       "@type": "Recipe",

@@ -124,4 +124,32 @@ describe("validateFile", () => {
   it("does not constrain freeform markdown", () => {
     expect(() => validateFile("taste.md", "anything goes here")).not.toThrow();
   });
+
+  it("accepts a well-formed requires_equipment array (shape only, not vocab-enforced)", () => {
+    // The build is the vocab gate for recipe content — the Worker enforces shape only,
+    // so even an off-vocab slug passes write-time validation here (it fails the build).
+    expect(() =>
+      validateFile("recipes/x.md", "---\nstatus: active\nrequires_equipment: [blender, panini-press]\n---\nbody\n"),
+    ).not.toThrow();
+  });
+
+  it("rejects a non-array requires_equipment", () => {
+    expect(() =>
+      validateFile("recipes/x.md", "---\nstatus: active\nrequires_equipment: blender\n---\nbody\n"),
+    ).toThrowError(/requires_equipment/);
+  });
+
+  it("accepts a kitchen.toml with vocab-clean owned and freeform notes", () => {
+    expect(() =>
+      validateFile("users/alice/kitchen.toml", 'owned = ["blender", "pressure-cooker"]\n[notes]\novens = 2\n'),
+    ).not.toThrow();
+    // absent owned is valid (unknown inventory)
+    expect(() => validateFile("kitchen.toml", "[notes]\nfree_text = \"cast iron\"\n")).not.toThrow();
+  });
+
+  it("rejects an off-vocabulary owned slug in kitchen.toml", () => {
+    expect(() =>
+      validateFile("users/alice/kitchen.toml", 'owned = ["air-fryer"]\n'),
+    ).toThrowError(/owned.*air-fryer.*is not one of/);
+  });
 });
