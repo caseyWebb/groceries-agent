@@ -6,6 +6,7 @@ import {
   tiebreak,
   relevanceScore,
   isOnSale,
+  isFlyerWorthy,
   type MatchDeps,
 } from "../src/matching.js";
 import type { KrogerCandidate } from "../src/kroger.js";
@@ -45,6 +46,24 @@ describe("isOnSale (real discount only — flyer savings:0 bug)", () => {
   });
   it("is false when promo exceeds regular (bad data — never 'on sale')", () => {
     expect(isOnSale(cand({ productId: "d", price: { regular: 4, promo: 5 } }))).toBe(false);
+  });
+});
+
+describe("isFlyerWorthy (flyer drops near-zero discounts)", () => {
+  it("keeps a meaningful discount (>= 5% off)", () => {
+    expect(isFlyerWorthy(cand({ productId: "a", price: { regular: 5, promo: 4 } }))).toBe(true); // 20% off
+  });
+  it("keeps a discount exactly at the 5% boundary", () => {
+    expect(isFlyerWorthy(cand({ productId: "e", price: { regular: 10, promo: 9.5 } }))).toBe(true);
+  });
+  it("drops a near-zero (penny) discount — the reported noise", () => {
+    expect(isFlyerWorthy(cand({ productId: "b", price: { regular: 2.99, promo: 2.98 } }))).toBe(false);
+  });
+  it("drops a non-sale (promo == regular, savings 0)", () => {
+    expect(isFlyerWorthy(cand({ productId: "c", price: { regular: 2.99, promo: 2.99 } }))).toBe(false);
+  });
+  it("drops a no-promo item", () => {
+    expect(isFlyerWorthy(cand({ productId: "d", price: { regular: 4, promo: 0 } }))).toBe(false);
   });
 });
 

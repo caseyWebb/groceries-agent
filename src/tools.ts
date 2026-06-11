@@ -26,6 +26,7 @@ import {
   matchIngredient,
   isFulfillable,
   isOnSale,
+  isFlyerWorthy,
   type CachedMapping,
   type MatchContext,
   type MatchDeps,
@@ -444,7 +445,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     "kroger_flyer",
     {
       description:
-        "Synthesized sale scan (the public API has no flyer/circular endpoint). Scans precise context terms (passed plus stockup/substitution candidates) and broad curated terms from flyer_terms.toml, keeps only genuine discounts (promo > 0 AND promo < regular, so savings > 0), dedupes by productId. Explicitly non-exhaustive: each term returns a relevance-ranked page, not a discount-sorted one.",
+        "Synthesized sale scan (the public API has no flyer/circular endpoint). Scans precise context terms (passed plus stockup/substitution candidates) and broad curated terms from flyer_terms.toml, keeps only MEANINGFUL discounts (on sale AND at least 5% off — so neither Kroger's promo==regular non-sale echo nor penny/near-zero markdowns leak through), dedupes by productId. Explicitly non-exhaustive: each term returns a relevance-ranked page, not a discount-sorted one.",
       inputSchema: { filter: z.object(flyerFilterShape).optional() },
     },
     ({ filter }) =>
@@ -499,7 +500,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
             });
             if (candidates.length === 0) break;
             for (const c of candidates) {
-              if (isOnSale(c) && isFulfillable(c) && !seen.has(c.productId)) {
+              if (isFlyerWorthy(c) && isFulfillable(c) && !seen.has(c.productId)) {
                 seen.set(c.productId, {
                   sku: c.productId,
                   brand: c.brand,

@@ -101,6 +101,20 @@ export function isOnSale(c: KrogerCandidate): boolean {
   return c.price.promo > 0 && c.price.promo < c.price.regular;
 }
 
+/**
+ * Minimum markdown — as a fraction of the regular price — for the **flyer** to
+ * surface a sale. The matcher still counts ANY real promo (`isOnSale`) in its
+ * tiebreak; this stricter floor is human-facing only, so penny / near-zero
+ * "discounts" (e.g. `regular 2.99 → promo 2.98`, and Kroger's `promo == regular`
+ * non-sale echo) don't clutter the "what's on sale" scan. Tunable.
+ */
+export const MIN_FLYER_DISCOUNT = 0.05;
+
+/** Flyer-worthy: a genuine sale whose markdown clears `MIN_FLYER_DISCOUNT`. */
+export function isFlyerWorthy(c: KrogerCandidate): boolean {
+  return isOnSale(c) && c.price.regular - c.price.promo >= c.price.regular * MIN_FLYER_DISCOUNT;
+}
+
 /** Effective price the shopper pays: promo when on sale, else regular. */
 function effectivePrice(c: KrogerCandidate): number {
   return isOnSale(c) ? c.price.promo : c.price.regular;

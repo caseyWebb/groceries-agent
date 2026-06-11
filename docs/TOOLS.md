@@ -260,7 +260,7 @@ Remove an item by name.
 
 ### `kroger_flyer(filter)`
 
-Synthesized sale scan — the public API has **no** flyer/circular endpoint, so this searches terms and keeps products that are **genuinely discounted** (`promo > 0` **and** `promo < regular`, so `savings > 0`), deduped by `productId`. (Kroger returns `promo == regular` for some non-sale items, so a bare `promo > 0` would leak `savings: 0` noise — those are excluded.) Scans **precise** terms (caller-passed plus stockup/substitution candidates) and **broad** curated terms from `flyer_terms.toml`. Explicitly **non-exhaustive**: each term returns a relevance-ranked page (no sort-by-discount), so it samples the head of each category.
+Synthesized sale scan — the public API has **no** flyer/circular endpoint, so this searches terms and keeps products with a **meaningful discount** — on sale **and** at least **5% off** (`regular − promo ≥ 5% of regular`) — deduped by `productId`. This excludes both Kroger's `promo == regular` non-sale echo (`savings: 0`) and penny / near-zero markdowns (`savings: 0.01`), which were noise. The matcher still counts any real promo in its tiebreak; this stricter floor is flyer-only. Scans **precise** terms (caller-passed plus stockup/substitution candidates) and **broad** curated terms from `flyer_terms.toml`. Explicitly **non-exhaustive**: each term returns a relevance-ranked page (no sort-by-discount), so it samples the head of each category.
 
 **Params:**
 - `filter` (object, optional): `{ terms?, against_stockup?, against_substitutions? }`
