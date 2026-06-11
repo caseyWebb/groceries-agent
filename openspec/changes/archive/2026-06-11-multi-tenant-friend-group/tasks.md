@@ -59,5 +59,5 @@
 
 ## 10. End-to-end verification
 
-- [ ] 10.1 Dogfood as tenant #1 (operator): full menu → order flow against the shared corpus + operator overlay + per-tenant Kroger.
-- [ ] 10.2 Onboard one real friend as the first multi-tenant exercise; verify tenant isolation (no cross-tenant data/token bleed) and cross-pollination (group notes/ratings surface); fold lessons back into `SELF_HOSTING.md`.
+- [x] 10.1 Dogfood as tenant #1 (operator): full menu → order flow against the shared corpus + operator overlay + per-tenant Kroger. *(Operator confirmed the full flow works end-to-end against the deployed Worker + live Kroger.)*
+- [ ] 10.2 Onboard one real friend as the first multi-tenant exercise; verify tenant isolation (no cross-tenant data/token bleed) and cross-pollination (group notes/ratings surface); fold lessons back into `SELF_HOSTING.md`. *(POST-ARCHIVE FOLLOW-UP: the onboarding infra is built + validated e2e by the operator; onboarding a real second person is a live exercise to run when a friend joins.)*

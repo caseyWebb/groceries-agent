@@ -3,9 +3,7 @@
 ## Purpose
 
 Defines the deterministic generation of the `_indexes/*.json` artifacts from `recipes/` and `ready_to_eat/`: the build entry point, the shape of each index, slug derivation, date normalization, and the stability guarantees the Worker and other consumers rely on.
-
 ## Requirements
-
 ### Requirement: Index build entry point
 
 The system SHALL provide `scripts/build-indexes.mjs`, runnable via an npm script, that reads source data and writes the index artifacts. Its core walk SHALL accept an input directory as a parameter defaulting to `recipes/`, so the same logic can be exercised against a fixtures directory.
@@ -22,17 +20,22 @@ The system SHALL provide `scripts/build-indexes.mjs`, runnable via an npm script
 
 ### Requirement: Recipe index shape
 
-The system SHALL emit `_indexes/recipes.json` as a JSON object keyed by recipe slug, where each value is that recipe's parsed frontmatter plus an injected `slug` field. The slug SHALL be derived from the recipe filename with the `.md` extension removed.
+The system SHALL emit `_indexes/recipes.json` (in the shared corpus repository) as a JSON object keyed by recipe slug, where each value is that recipe's **objective** frontmatter plus an injected `slug` field. The shared index SHALL NOT contain the per-tenant subjective fields `rating`, `last_cooked`, or `status` — those live in each tenant's overlay and are merged at read time, not baked into the shared index. The slug SHALL be derived from the recipe filename with the `.md` extension removed.
 
 #### Scenario: Recipe aggregated by slug
 
 - **WHEN** `recipes/lemon-garlic-chicken.md` is indexed
-- **THEN** `recipes.json` contains a key `"lemon-garlic-chicken"` whose value includes that file's frontmatter fields and `"slug": "lemon-garlic-chicken"`
+- **THEN** `recipes.json` contains a key `"lemon-garlic-chicken"` whose value includes that file's objective frontmatter fields and `"slug": "lemon-garlic-chicken"`
 
-#### Scenario: All statuses included
+#### Scenario: Subjective fields excluded from the shared index
 
-- **WHEN** a recipe has `status: draft` or `status: rejected`
-- **THEN** it still appears in `recipes.json` with its `status` field preserved, so consumers can filter per query
+- **WHEN** a shared recipe is indexed
+- **THEN** the indexed value carries no `rating`, `last_cooked`, or `status` field, because those are per-tenant overlay merged at read time
+
+#### Scenario: All recipes included regardless of any tenant's disposition
+
+- **WHEN** the shared corpus is indexed
+- **THEN** every recipe in the shared corpus appears in `recipes.json`, since per-tenant disposition (status) is not part of the shared index
 
 ### Requirement: Components index shape
 
@@ -74,3 +77,4 @@ The system SHALL handle an empty `recipes/` directory without error, emitting em
 
 - **WHEN** the build script runs and `recipes/` contains no `.md` files
 - **THEN** `recipes.json` and `components.json` are written as `{}` and the script exits successfully
+
