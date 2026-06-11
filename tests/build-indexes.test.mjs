@@ -9,6 +9,8 @@ import {
   buildRecipeIndexes,
   validateReadyToEatCatalog,
   validateKitchenInventory,
+  validateDiscoveriesInbox,
+  validateDiscoverySources,
   parseCheckToml,
   stableStringify,
   normalizeValue,
@@ -284,6 +286,37 @@ test('validateKitchenInventory: clean inventory passes, off-vocab owned reports'
   assert.ok(offVocab.some((e) => /`owned` slug "air-fryer" is not in the controlled vocabulary/.test(e)), offVocab.join('\n'));
   const nonArray = validateKitchenInventory({ owned: 'blender' }, 'u/kitchen.toml');
   assert.ok(nonArray.some((e) => /`owned` must be an array/.test(e)), nonArray.join('\n'));
+});
+
+// --- shared discovery-source structural validation ----------------------
+
+test('validateDiscoveriesInbox: clean inbox passes, candidate missing url reports', () => {
+  const ok = {
+    entries: [
+      {
+        from: 'news@seriouseats.com',
+        candidates: [{ title: 'Chili', url: 'https://x.test/chili' }],
+      },
+    ],
+  };
+  assert.deepEqual(validateDiscoveriesInbox(ok, 'discoveries_inbox.toml'), []);
+  // Empty/absent-shaped file is valid.
+  assert.deepEqual(validateDiscoveriesInbox({}, 'discoveries_inbox.toml'), []);
+  const bad = { entries: [{ from: 'x@y.com', candidates: [{ title: 'No URL' }] }] };
+  const errs = validateDiscoveriesInbox(bad, 'discoveries_inbox.toml');
+  assert.ok(errs.some((e) => /missing required `url`/.test(e)), errs.join('\n'));
+});
+
+test('validateDiscoverySources: valid addresses pass, bad ones report', () => {
+  const ok = {
+    members: [{ address: 'alice@example.com' }],
+    senders: [{ address: 'news@seriouseats.com', name: 'SE' }],
+  };
+  assert.deepEqual(validateDiscoverySources(ok, 'discovery_sources.toml'), []);
+  assert.deepEqual(validateDiscoverySources({}, 'discovery_sources.toml'), []);
+  const bad = { senders: [{ address: 'not-an-email' }] };
+  const errs = validateDiscoverySources(bad, 'discovery_sources.toml');
+  assert.ok(errs.some((e) => /`senders` entry needs a valid `address`/.test(e)), errs.join('\n'));
 });
 
 // --- required body sections (structural contract) -----------------------

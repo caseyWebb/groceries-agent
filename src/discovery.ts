@@ -8,6 +8,7 @@ import { readOptional } from "./gh-read.js";
 import { serializeMarkdown } from "./serialize.js";
 import { ToolError } from "./errors.js";
 import { truncate } from "./text.js";
+import { parseToml } from "./parse.js";
 import type { FeedItem } from "./feeds.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -99,6 +100,55 @@ export function buildCandidates(entries: FeedEntry[], seen: Set<string>): Candid
       feed_weight: feedWeight,
       summary: item.summary ? truncate(item.summary, SUMMARY_MAX) : null,
     });
+  }
+  return out;
+}
+
+/** One inbox candidate, flattened from `discoveries_inbox.toml` for surfacing. */
+export interface InboxCandidate {
+  url: string;
+  title: string;
+  summary: string | null;
+  from: string;
+  received_at: string | null;
+}
+
+/**
+ * Flatten the shared `discoveries_inbox.toml` (an array of `[[entries]]`, each
+ * with `from`/`subject`/`received_at` and a `candidates` list) into a single
+ * deduped pool, keyed on the canonical URL. The inbox is written deduped, but the
+ * read path dedups defensively too (first occurrence wins). Absent/malformed →
+ * empty pool. No taste score: selection is the agent's judgment, like the RSS pool.
+ */
+export function flattenInbox(inboxRaw: string | null): InboxCandidate[] {
+  if (!inboxRaw) return [];
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseToml(inboxRaw, "discoveries_inbox.toml");
+  } catch {
+    return [];
+  }
+  const entries = Array.isArray(parsed.entries) ? (parsed.entries as Record<string, unknown>[]) : [];
+  const out: InboxCandidate[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const from = typeof entry.from === "string" ? entry.from : "";
+    const receivedAt = typeof entry.received_at === "string" ? entry.received_at : null;
+    const cands = Array.isArray(entry.candidates) ? (entry.candidates as Record<string, unknown>[]) : [];
+    for (const c of cands) {
+      const rawUrl = typeof c.url === "string" ? c.url : null;
+      if (!rawUrl) continue;
+      const url = canonicalizeUrl(rawUrl);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      out.push({
+        url,
+        title: typeof c.title === "string" ? c.title : url,
+        summary: typeof c.summary === "string" ? truncate(c.summary, SUMMARY_MAX) : null,
+        from,
+        received_at: receivedAt,
+      });
+    }
   }
   return out;
 }

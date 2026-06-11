@@ -4,6 +4,7 @@ import {
   extractRecipeSources,
   indexSourceToSlug,
   buildCandidates,
+  flattenInbox,
   slugify,
   buildNewRecipe,
   type FeedEntry,
@@ -152,5 +153,65 @@ describe("buildNewRecipe", () => {
   it("rejects when no title/slug is derivable", async () => {
     const gh = ghWith({});
     await expect(buildNewRecipe(gh, {}, BODY)).rejects.toMatchObject({ code: "validation_failed" });
+  });
+});
+
+describe("flattenInbox", () => {
+  const inbox = `
+[[entries]]
+from = "newsletter@seriouseats.com"
+subject = "This week's dinners"
+received_at = "2026-06-11"
+  [[entries.candidates]]
+  title = "Weeknight Chili"
+  summary = "A fast chili"
+  url = "https://www.seriouseats.com/weeknight-chili?utm_source=newsletter"
+  [[entries.candidates]]
+  title = "Sheet-Pan Salmon"
+  url = "https://www.seriouseats.com/sheet-pan-salmon"
+
+[[entries]]
+from = "alice@example.com"
+subject = "Fwd: This week's dinners"
+received_at = "2026-06-11"
+  [[entries.candidates]]
+  title = "Weeknight Chili (dup)"
+  url = "https://www.seriouseats.com/weeknight-chili"
+`;
+
+  it("flattens entries into a pool with from/received_at and no score", () => {
+    const pool = flattenInbox(inbox);
+    expect(pool).toHaveLength(2);
+    expect(pool[0]).toMatchObject({
+      url: "https://www.seriouseats.com/weeknight-chili",
+      title: "Weeknight Chili",
+      summary: "A fast chili",
+      from: "newsletter@seriouseats.com",
+      received_at: "2026-06-11",
+    });
+    expect(pool[0]).not.toHaveProperty("score");
+  });
+
+  it("dedups across entries by canonical URL (first wins)", () => {
+    const pool = flattenInbox(inbox);
+    const chili = pool.filter((c) => c.url === "https://www.seriouseats.com/weeknight-chili");
+    expect(chili).toHaveLength(1);
+    expect(chili[0].from).toBe("newsletter@seriouseats.com");
+  });
+
+  it("returns an empty pool for absent or malformed input", () => {
+    expect(flattenInbox(null)).toEqual([]);
+    expect(flattenInbox("")).toEqual([]);
+    expect(flattenInbox("this is = not valid = toml [[[")).toEqual([]);
+  });
+
+  it("skips candidates with no url", () => {
+    const pool = flattenInbox(`
+[[entries]]
+from = "x@y.com"
+  [[entries.candidates]]
+  title = "No URL here"
+`);
+    expect(pool).toEqual([]);
   });
 });

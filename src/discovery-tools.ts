@@ -24,9 +24,11 @@ import {
   buildNewRecipe,
   canonicalizeUrl,
   extractRecipeSources,
+  flattenInbox,
   indexSourceToSlug,
   type FeedEntry,
 } from "./discovery.js";
+import { addSources, INBOX_PATH, SOURCES_PATH } from "./email.js";
 
 const MAX_PER_FEED = 8;
 const RECIPE_INDEX = "_indexes/recipes.json";
@@ -36,27 +38,24 @@ function errMessage(e: unknown): string {
 }
 
 /**
- * Discovery tools (recipe-discovery capability). Recipes are SHARED content, so
- * the corpus index + draft writes go through `sharedGh` (the data-repo root);
- * only `feeds.toml` is this tenant's personal config, read through `personalGh`
- * (their `users/<id>/` subtree). Imports dedupe by source URL against the shared
- * corpus so a recipe already present is reused, never duplicated (§6.4).
+ * Discovery tools (recipe-discovery capability). Discovery is a SHARED, top-level
+ * concern: feeds, the email discoveries inbox, the corpus index, and draft writes
+ * all go through `sharedGh` (the data-repo root) — any member's configured feeds
+ * feed one group pool, and the candidates are judged against the caller's taste at
+ * menu time. Imports dedupe by source URL against the shared corpus so a recipe
+ * already present is reused, never duplicated (§6.4).
  */
-export function registerDiscoveryTools(
-  server: McpServer,
-  sharedGh: GitHubClient,
-  personalGh: GitHubClient,
-): void {
+export function registerDiscoveryTools(server: McpServer, sharedGh: GitHubClient): void {
   server.registerTool(
     "fetch_rss_discoveries",
     {
       description:
-        "Pull the user's configured discovery feeds and return a deduped POOL of candidate recipes ({ url, title, source, feed_weight, summary }) — deduped against recipes already in the corpus (by source URL) and canonicalized (tracking query strings stripped). No taste score: YOU judge taste fit against the user's taste profile (read_taste) and pick the 1–2 worth importing, then import_recipe + create_recipe each. No configured feeds returns an empty pool. Unreachable feeds are skipped (reported in `skipped`), not fatal.",
+        "Pull the SHARED, group-wide discovery feeds (root feeds.toml) and return a deduped POOL of candidate recipes ({ url, title, source, feed_weight, summary }) — deduped against recipes already in the corpus (by source URL) and canonicalized (tracking query strings stripped). No taste score: YOU judge taste fit against the user's taste profile (read_taste) and pick the 1–2 worth importing, then import_recipe + create_recipe each. No configured feeds returns an empty pool. Unreachable feeds are skipped (reported in `skipped`), not fatal.",
       inputSchema: {},
     },
     () =>
       runTool(async () => {
-        const feedsText = await readOptional(personalGh, "feeds.toml");
+        const feedsText = await readOptional(sharedGh, "feeds.toml");
         if (!feedsText) return { candidates: [] };
         const parsed = parseToml(feedsText, "feeds.toml");
         const feeds = Array.isArray(parsed.feeds) ? (parsed.feeds as Record<string, unknown>[]) : [];
@@ -173,6 +172,44 @@ export function registerDiscoveryTools(
         const { slug: finalSlug, file } = await buildNewRecipe(sharedGh, frontmatter, body, slug);
         const { commit_sha } = await commitFiles(sharedGh, [file], `add draft recipe ${finalSlug}`);
         return { slug: finalSlug, commit_sha };
+      }),
+  );
+
+  server.registerTool(
+    "read_discovery_inbox",
+    {
+      description:
+        "Read the SHARED email discoveries inbox (root discoveries_inbox.toml) and return a deduped POOL of candidate recipes ({ url, title, summary, from, received_at }) gathered from forwarded recipe newsletters. URLs are already unwrapped to their clean canonical form. No taste score: YOU judge fit (read_taste) and pick what to import — surface these alongside fetch_rss_discoveries at menu time. Walled/paywalled sources can't be auto-fetched: present the clean link and have the user paste the recipe text, then create_recipe. An absent or empty inbox returns an empty pool.",
+      inputSchema: {},
+    },
+    () =>
+      runTool(async () => {
+        const inboxText = await readOptional(sharedGh, INBOX_PATH);
+        return { candidates: flattenInbox(inboxText) };
+      }),
+  );
+
+  server.registerTool(
+    "update_discovery_sources",
+    {
+      description:
+        "Add trusted sources to the SHARED inbound-newsletter allowlist (root discovery_sources.toml). `members` = friend-group personal addresses (anything they forward to groceries-agent@ gets indexed); `senders` = newsletter From addresses (auto-forwarded mail from them gets indexed). Use when a member sets up a forward or wants a newsletter indexed. Dedups by address — existing entries are untouched. Anyone trusted with this MCP is trusted to widen intake.",
+      inputSchema: {
+        members: z.array(z.object({ address: z.string(), name: z.string().optional() })).optional(),
+        senders: z.array(z.object({ address: z.string(), name: z.string().optional() })).optional(),
+      },
+    },
+    ({ members, senders }) =>
+      runTool(async () => {
+        const existing = await readOptional(sharedGh, SOURCES_PATH);
+        const { text, added } = addSources(existing, { members, senders });
+        if (added.members === 0 && added.senders === 0) return { added, commit_sha: null };
+        const { commit_sha } = await commitFiles(
+          sharedGh,
+          [{ path: SOURCES_PATH, content: text }],
+          `discovery: add ${added.members} member(s), ${added.senders} sender(s)`,
+        );
+        return { added, commit_sha };
       }),
   );
 }

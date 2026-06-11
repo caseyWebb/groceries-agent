@@ -13,6 +13,7 @@ import { buildServer } from "./tools.js";
 import { resolveTenant, directoryFromEnv } from "./tenant.js";
 import { handleOAuth } from "./oauth.js";
 import { handleAuthorize } from "./authorize.js";
+import { handleInboundEmail, type InboundMessage } from "./email.js";
 
 /**
  * The gated MCP API. Only reached for `/mcp` requests the provider has already
@@ -53,7 +54,7 @@ const defaultHandler = {
   },
 };
 
-export default new OAuthProvider({
+const oauthProvider = new OAuthProvider({
   apiRoute: "/mcp",
   apiHandler,
   defaultHandler,
@@ -62,3 +63,24 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "/register",
   scopesSupported: ["mcp"],
 });
+
+/**
+ * The OAuth provider owns `fetch` (the gated MCP API + OAuth endpoints). We add an
+ * `email()` handler in the SAME Worker for inbound newsletter discovery — Cloudflare
+ * Email Routing delivers forwarded recipe newsletters here. It runs without an OAuth
+ * session (mail carries no token): discovery sources are shared, so the handler reads
+ * the shared allowlist and writes the shared inbox directly. Failures are swallowed —
+ * a thrown email handler would bounce mail; the posture is "drop silently".
+ */
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return oauthProvider.fetch(request, env, ctx);
+  },
+  async email(message: InboundMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      handleInboundEmail(message, env).catch((e) => {
+        console.error("inbound email handler failed:", e instanceof Error ? e.message : String(e));
+      }),
+    );
+  },
+};

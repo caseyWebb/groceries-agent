@@ -699,7 +699,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   // are SHARED content (root client); only feeds.toml is this tenant's personal
   // config (prefixed client). Imports dedupe by source URL against the shared
   // corpus so a recipe is reused, not duplicated (§6.4).
-  registerDiscoveryTools(server, sharedGh, gh);
+  registerDiscoveryTools(server, sharedGh);
 
   // Recipe notes (§8): attributed annotations authored in this tenant's subtree,
   // aggregated across the group at read time (KV tenant directory → each subtree).

@@ -290,6 +290,40 @@ export function validateKitchenInventory(parsed, rel) {
   return errors;
 }
 
+// --- shared discovery-source validation ----------------------------------
+
+// The email discoveries inbox (root discoveries_inbox.toml) is shared and
+// agent/email-written: each [[entries]] holds candidates, every candidate needs a
+// `url`. Absent file is valid (no discoveries yet).
+export function validateDiscoveriesInbox(parsed, rel) {
+  const errors = [];
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  for (const e of entries) {
+    const cands = Array.isArray(e.candidates) ? e.candidates : [];
+    for (const c of cands) {
+      if (typeof c.url !== 'string' || !c.url) {
+        errors.push(`${rel}: inbox candidate is missing required \`url\``);
+      }
+    }
+  }
+  return errors;
+}
+
+// The inbound-newsletter allowlist (root discovery_sources.toml) is shared config:
+// every [[members]]/[[senders]] entry needs a valid `address`. Absent file is valid.
+export function validateDiscoverySources(parsed, rel) {
+  const errors = [];
+  for (const key of ['members', 'senders']) {
+    const rows = Array.isArray(parsed[key]) ? parsed[key] : [];
+    for (const r of rows) {
+      if (typeof r.address !== 'string' || !r.address.includes('@')) {
+        errors.push(`${rel}: \`${key}\` entry needs a valid \`address\` (got ${JSON.stringify(r.address)})`);
+      }
+    }
+  }
+  return errors;
+}
+
 // --- cooking-log + meal-plan validation ---------------------------------
 
 // Validate cooking_log.toml + meal_plan.toml against the recipe set, and
@@ -411,13 +445,20 @@ export async function run({ recipesDir, root = REPO_ROOT } = {}) {
     }
   }
 
+  // Shared discovery sources (root-only, single files): inbox + sender allowlist.
+  const discErr = [];
+  const inbox = parsed.get(path.join(root, 'discoveries_inbox.toml'));
+  if (inbox) discErr.push(...validateDiscoveriesInbox(inbox, 'discoveries_inbox.toml'));
+  const sources = parsed.get(path.join(root, 'discovery_sources.toml'));
+  if (sources) discErr.push(...validateDiscoverySources(sources, 'discovery_sources.toml'));
+
   const cookingLog = parsed.get(path.join(root, 'cooking_log.toml')) ?? null;
   const mealPlan = parsed.get(path.join(root, 'meal_plan.toml')) ?? null;
   const { errors: cErr, warnings: cWarn } = validateCookingArtifacts({ recipes, cookingLog, mealPlan });
 
   return {
     indexes: { recipes, components },
-    errors: [...rErr, ...tErr, ...rteErr, ...cErr],
+    errors: [...rErr, ...tErr, ...rteErr, ...discErr, ...cErr],
     warnings: [...warnings, ...cWarn],
   };
 }

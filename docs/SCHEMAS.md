@@ -6,8 +6,8 @@ Concrete schemas with example values for every data file in the repo. Keep this 
 
 The data lives in **one private data repo** with two regions (see `docs/PROJECT.md` and the `multi-tenant-friend-group` change). Every file below lives in exactly one:
 
-- **Shared corpus (data-repo root)** — objective, single-source, read by everyone: `recipes/*.md` (objective frontmatter + body), `aliases.toml`, `ingredients.toml`, `substitutions.toml` (the shared default layer), `skus/kroger.toml`, `flyer_terms.toml`, `_indexes/`.
-- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `feeds.toml`, `ready_to_eat.toml` (personal heat-and-eat catalog), `kitchen.toml` (owned cooking equipment), `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
+- **Shared corpus (data-repo root)** — objective, single-source, read by everyone: `recipes/*.md` (objective frontmatter + body), `aliases.toml`, `ingredients.toml`, `substitutions.toml` (the shared default layer), `skus/kroger.toml`, `flyer_terms.toml`, **`feeds.toml`** (RSS discovery feeds), **`discoveries_inbox.toml`** (forwarded-newsletter candidates), **`discovery_sources.toml`** (inbound-email allowlist), `_indexes/`. Discovery is a shared, top-level concern — feeds and the newsletter inbox feed one group pool, judged against each caller's taste at read time.
+- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `ready_to_eat.toml` (personal heat-and-eat catalog), `kitchen.toml` (owned cooking equipment), `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
 
 **Three-category recipe model (D5):** a recipe's *content* (objective frontmatter + body) is shared; its *overlay* (`rating` + `status`) is per-tenant in `overlay.toml`; its *notes* are per-tenant, attributed, append-mostly. `last_cooked` is **not stored** — it's derived per-tenant from that member's `cooking_log.toml`. Read tools merge shared content + the caller's overlay + cooking-log `last_cooked` at read time.
 
@@ -54,8 +54,8 @@ source: https://www.seriouseats.com/lemon-garlic-roasted-chicken
 - `uses_components` / `produces_components`: slugs of other recipes, optional. A *production* edge (cook a component once, reuse its output across the week). Used by `suggest_sequencing`.
 - `pairs_with`: slugs of other recipes, optional (defaults to empty). A *plating* edge — recipes eaten together on one plate (a main's companion sides) — distinct from the `uses_components`/`produces_components` production edges. Each slug MUST resolve to a real recipe (a build hard-failure otherwise, like an unresolved component reference); sides are themselves recipes, so they reuse the normal verify/import/grocery-list pipeline. Objective **shared content** (carried in `_indexes/recipes.json`, written by `update_recipe`) — not a per-tenant overlay field. Grown lazily by the meal-plan flow as pairings are confirmed; the bootstrap selects sides by plate fit and does NOT traverse the component graph (bidirectional component sequencing stays with `suggest_sequencing`).
 - `standalone`: optional boolean (defaults **unset**, never backfilled). Marks an already-rounded one-pot/inclusive plate so the planner won't prompt for a side. Must be a boolean when present (a build hard-failure otherwise). When unset, the agent infers at plan time whether the dish stands alone and offers to persist its verdict. Objective **shared content**, written by `update_recipe` — not a per-tenant overlay field.
-- `requires_equipment`: optional array of `EQUIPMENT_VOCAB` slugs naming gear a dish is genuinely **impossible** without — the "no recipe-preserving workaround exists" test. **Default empty** (the overwhelming common case); tag only truly-irreplaceable equipment, since a wrong tag silently hides a makeable recipe. A controlled vocabulary like `protein`/`cuisine` (present-but-off-vocab = hard build failure; absence neither fails nor warns). Objective **shared content** carried in `_indexes/recipes.json`, written by `create_recipe`/`update_recipe`. Drives the `list_recipes` makeability gate against a member's `kitchen.toml` `owned` list. Current set: `pressure-cooker, sous-vide-circulator, blender, ice-cream-maker`.
 - `protein` and `cuisine` are **controlled vocabularies** (coarse buckets — `fish` not `salmon`) so variety reasoning is reliable. A value **present** but outside its set is a hard build failure; **absence** keeps the warn-only treatment. Extending a vocabulary is a deliberate edit to the allowed sets in `scripts/build-indexes.mjs`. Current cuisine set: `american, brazilian, cajun, caribbean, chinese, cuban, filipino, french, german, greek, indian, italian, japanese, korean, mediterranean, mexican, moroccan, peruvian, southwestern, spanish, thai, vietnamese`.
+- `requires_equipment`: optional array of `EQUIPMENT_VOCAB` slugs naming gear a dish is genuinely **impossible** without — the "no recipe-preserving workaround exists" test. **Default empty** (the overwhelming common case); tag only truly-irreplaceable equipment, since a wrong tag silently hides a makeable recipe. A controlled vocabulary like `protein`/`cuisine` (present-but-off-vocab = hard build failure; absence neither fails nor warns). Objective **shared content** carried in `_indexes/recipes.json`, written by `create_recipe`/`update_recipe`. Drives the `list_recipes` makeability gate against a member's `kitchen.toml` `owned` list. Current set: `pressure-cooker, sous-vide-circulator, blender, ice-cream-maker`.
 - `ingredients_key`: top 5–7 ingredients for filtering. Full ingredient list lives in the body.
 
 ### Recipe body structural contract
@@ -363,10 +363,10 @@ terms = [
 
 ## feeds.toml
 
-User-curated. RSS feed URLs and tags.
+**Shared** (data-repo root), user-curated. RSS feed URLs and tags. Discovery sources are a group-wide concern: any member's feeds contribute to one shared candidate pool (`fetch_rss_discoveries`), judged against the caller's taste at read time.
 
 ```toml
-# feeds.toml — RSS feeds for recipe discovery
+# feeds.toml — shared RSS feeds for recipe discovery
 
 [[feeds]]
 url = "https://www.seriouseats.com/recipes/atom.xml"
@@ -386,6 +386,47 @@ name = "Bon Appétit"
 tags = [aspirational, trend-aware]
 weight = 0.7
 ```
+
+## discoveries_inbox.toml
+
+**Shared** (data-repo root). Agent-writable side-effect file (NOT user-curated). Written by the Worker's inbound-email handler (`email()`), which receives newsletters forwarded to `groceries-agent@<domain>`, and read by the agent via `read_discovery_inbox`. Each `[[entries]]` is one received message; candidate `url`s are already **unwrapped** from their tracker wrappers to clean canonical form. This is the *push* complement to RSS pull — it reaches bot-walled/paywalled sources (Serious Eats, NYT) the Worker can't fetch.
+
+```toml
+# discoveries_inbox.toml — recipe candidates from forwarded newsletters
+
+[[entries]]
+from = "news@seriouseats.com"
+subject = "This week's best dinners"
+received_at = "2026-06-11"            # YYYY-MM-DD from the message Date header (or "")
+  [[entries.candidates]]
+  title = "Weeknight Chili"
+  summary = ""                        # reserved; v0 leaves null/empty
+  url = "https://www.seriouseats.com/weeknight-chili"   # required, unwrapped + canonical
+```
+
+**Notes:**
+- `url` is **required** on every candidate (build + write-time validation). Candidates are deduped at write-time by canonical URL against the corpus `source:` set and the existing inbox; the same key dedups against the RSS pool at surfacing/import.
+- Absent file is valid (no discoveries yet) — `read_discovery_inbox` returns `{ candidates: [] }`.
+
+## discovery_sources.toml
+
+**Shared** (data-repo root), allowlist config. The trust gate for inbound-email discovery: only mail from a listed source is processed. Two entry kinds — `[[members]]` (friend-group personal addresses: anything they forward gets indexed) and `[[senders]]` (newsletter `From` addresses: auto-forwarded mail from them gets indexed). Editable by `update_discovery_sources` (anyone trusted with the MCP can widen intake), deduped by `address`.
+
+```toml
+# discovery_sources.toml — inbound-newsletter allowlist (members + senders)
+
+[[members]]
+address = "casey@example.com"        # required, must contain @
+name = "Casey"                       # optional label
+
+[[senders]]
+address = "cooking@nytimes.com"
+name = "NYT Cooking"
+```
+
+**Notes:**
+- Every entry needs a valid `address` (contains `@`) — enforced at build + write time.
+- Auth posture: a message is accepted only when authenticated (Cloudflare DKIM/SPF/DMARC) AND from a listed source — `sender ∧ aligned-DKIM` (auto-forward) or `member ∧ aligned-DKIM` (manual forward). The SPF-via-member-relay fallback is deferred. Everything else is dropped silently.
 
 ## ingredients.toml (Phase 7)
 

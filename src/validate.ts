@@ -188,6 +188,37 @@ export function validateFile(path: string, content: string): void {
     return;
   }
 
+  // Shared email-discovery inbox (root discoveries_inbox.toml): each [[entries]]
+  // carries candidates, and every candidate needs a `url`.
+  if (path === "discoveries_inbox.toml") {
+    const parsed = parseTomlOrFail(path, content);
+    const entries = Array.isArray(parsed.entries) ? (parsed.entries as Record<string, unknown>[]) : [];
+    for (const e of entries) {
+      const cands = Array.isArray(e.candidates) ? (e.candidates as Record<string, unknown>[]) : [];
+      for (const c of cands) {
+        if (typeof c.url !== "string" || c.url.length === 0) {
+          fail(path, "inbox candidate is missing required field `url`");
+        }
+      }
+    }
+    return;
+  }
+
+  // Shared inbound-newsletter allowlist (root discovery_sources.toml): every
+  // member/sender entry needs an `address`.
+  if (path === "discovery_sources.toml") {
+    const parsed = parseTomlOrFail(path, content);
+    for (const key of ["members", "senders"] as const) {
+      const rows = Array.isArray(parsed[key]) ? (parsed[key] as Record<string, unknown>[]) : [];
+      for (const r of rows) {
+        if (typeof r.address !== "string" || !r.address.includes("@")) {
+          fail(path, `\`${key}\` entry needs a valid \`address\` (got ${JSON.stringify(r.address)})`);
+        }
+      }
+    }
+    return;
+  }
+
   // Other TOML (preferences, substitutions, aliases, stockup, flyer_terms, …):
   // parse-only — confirm it isn't syntactic garbage before committing.
   if (path.endsWith(".toml")) {

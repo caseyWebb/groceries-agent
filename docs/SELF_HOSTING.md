@@ -123,7 +123,18 @@ Run the **Onboard member** Action (your data repo → Actions) with `username: <
 - **Claude.ai**: add your marketplace (`/plugin marketplace add <you>/groceries-agent`) and install the **grocery-agent** plugin — it bundles the connector (with your baked-in URL) *and* all the skills, so there's **nothing to paste**. Claude.ai discovers the connector's OAuth endpoints and sends you to `/authorize` — **enter your invite code**. The token then carries your tenant on every request. (Note: adding a marketplace in claude.ai clones the repo locally and needs GitHub access to sync — so plugin **auto-updates** effectively require a GitHub account. Members without one install the bundle and re-pull manually on changes — no worse than the old paste-the-doc flow.)
 - **Kroger consent** (one-time): visit `https://<worker-host>/oauth/init?tenant=<you>` and approve at Kroger. Re-run if a cart write ever returns `reauth_required`.
 
-## 9. Cookbook site (optional)
+## 9. Newsletter discovery via email (optional)
+
+A *push* discovery source that reaches the bot-walled/paywalled sites RSS can't (Serious Eats, Food52, NYT). The Worker already exports an `email()` handler — you just point Cloudflare Email Routing at it.
+
+1. **Add a dedicated spare domain to Cloudflare** (Email Routing manages the zone's MX records, so don't use a domain whose mail you rely on — e.g. not your ProtonMail domain). Cloudflare dashboard → **Email** → **Email Routing** → enable.
+2. **Route to the Worker.** Add a custom address (or catch-all) for `groceries-agent@<your-spare-domain>` with action **Send to a Worker** → your `grocery-mcp` Worker. (No `wrangler.jsonc` change — Email Routing binds the address to the Worker in the dashboard.)
+3. **Seed the allowlist.** In the data repo, add yourself to `discovery_sources.toml` `[[members]]` (and any newsletter senders to `[[senders]]`), or just say "add me as a discovery source" to the agent (`update_discovery_sources`).
+4. **Feed it — forwarder-only.** Never subscribe `groceries-agent@` directly (confirm-links + paywalls). Instead, from your own inbox set an **auto-forward rule** to `groceries-agent@<domain>` for newsletters you want indexed (your inbox handles the signup/confirm/paywall), or just hit **Forward** on a one-off. Both work: auto-forward keeps the newsletter `From` (allowlist it as a `sender`); manual forward arrives as you (you're a trusted `member`). The handler authenticates (DKIM) before processing and drops everything else silently.
+
+Candidates land in the shared `discoveries_inbox.toml` with clean, **unwrapped** URLs and surface at menu time via `read_discovery_inbox`. Full-recipe import still hits the walls — the agent presents the clean link and you paste the recipe to import.
+
+## 10. Cookbook site (optional)
 
 On the data repo: upgrade to **GitHub Pro** and enable **Pages → Source: GitHub Actions**. The template's `build-site.yml` builds the public cookbook from `recipes/` (never `users/`) and deploys it. Runs are billed to your account.
 

@@ -416,12 +416,34 @@ Walk `produces_components` / `uses_components` references to find recipe pairing
 
 ### `fetch_rss_discoveries()`
 
-Fetch the user's configured discovery feeds and return a **deduped candidate pool** — deduped against recipes already in the corpus (by canonicalized `source:` URL) and with tracking query strings stripped. **No taste score and no ranking**: the agent judges taste fit against the taste profile and picks the 1–2 worth importing (then `import_recipe` + `create_recipe` each).
+Fetch the **shared, group-wide** discovery feeds and return a **deduped candidate pool** — deduped against recipes already in the corpus (by canonicalized `source:` URL) and with tracking query strings stripped. **No taste score and no ranking**: the agent judges taste fit against the taste profile and picks the 1–2 worth importing (then `import_recipe` + `create_recipe` each).
 
 **Returns:**
 - `{ candidates: [{ url, title, source, feed_weight, summary }], skipped?: [{ feed, reason }] }` — `source` is the feed name; `feed_weight` is the feed's configured trust hint (passed through, not used to rank); unreachable feeds are reported in `skipped`, not fatal.
 
-**Notes:** Empty or absent `feeds.toml` returns `{ candidates: [] }`. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against the caller's `users/<id>/ready_to_eat.toml` and `add_draft_ready_to_eat`.
+**Notes:** Feeds are read from the **shared root `feeds.toml`** (not a per-tenant `users/<id>/` path) — discovery sources are a shared concern, so any member's feeds contribute to one group pool. Empty or absent `feeds.toml` returns `{ candidates: [] }`. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against the caller's `users/<id>/ready_to_eat.toml` and `add_draft_ready_to_eat`.
+
+### `read_discovery_inbox()`
+
+Read the **shared email discoveries inbox** (root `discoveries_inbox.toml`) and return a **deduped candidate pool** of recipes gathered from forwarded recipe newsletters. URLs are already unwrapped from their tracker wrappers to clean canonical form. **No taste score**: like `fetch_rss_discoveries`, the agent judges fit and selects — surface these alongside the RSS pool at menu time. The push complement to RSS pull: it reaches bot-walled/paywalled sources (Serious Eats, NYT) that the Worker cannot fetch.
+
+**Returns:**
+- `{ candidates: [{ url, title, summary, from, received_at }] }` — `from` is the source identity (newsletter sender or forwarding member); `received_at` is the message date (or null). Deduped within the inbox by canonical URL.
+
+**Notes:** Absent or empty inbox returns `{ candidates: [] }`. Full-recipe import still hits the same walls — present the clean link and have the user paste the recipe text, then `create_recipe`. The inbox is populated by the Worker's inbound-email handler (forwarded newsletters → `groceries-agent@<domain>`), not by any agent tool.
+
+### `update_discovery_sources(members?, senders?)`
+
+Add trusted sources to the **shared** inbound-newsletter allowlist (root `discovery_sources.toml`). Use when a member sets up a forward or wants a newsletter indexed. Anyone trusted with this MCP is trusted to widen intake (no extra gate). Deduped by `address` — existing entries untouched.
+
+**Params:**
+- `members` (array, optional): `[{ address, name? }]` — friend-group personal addresses; anything they forward to `groceries-agent@` gets indexed (manual-forward path).
+- `senders` (array, optional): `[{ address, name? }]` — newsletter `From` addresses; auto-forwarded mail from them gets indexed.
+
+**Returns:**
+- `{ added: { members, senders }, commit_sha }` — counts actually added (0 when already present); `commit_sha` is null when nothing changed.
+
+**Notes:** Pairs with the inbound-email handler's auth gate — a listed `sender`/`member` is accepted only when the message also passes aligned DKIM (see `docs/SCHEMAS.md` → `discovery_sources.toml`). The `/follow-source` skill (RSS-autodiscovery-then-forwarder-fallback) and `update_feeds` are a follow-on; for now feeds are edited directly.
 
 ### `add_draft_ready_to_eat(items)`
 
