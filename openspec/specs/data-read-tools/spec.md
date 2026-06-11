@@ -119,7 +119,7 @@ The system SHALL provide `read_recipe(slug)` returning `{ slug, frontmatter, bod
 
 ### Requirement: read_pantry with partial filter support
 
-The system SHALL provide `read_pantry(filter)` returning `{ items: [...] }`, supporting the `category` and `prepared_only` filters deterministically. The `stale_only` filter SHALL return a structured `unsupported` error until shelf-life data (`ingredients.toml`) exists, rather than approximating staleness.
+The system SHALL provide `read_pantry(filter)` returning `{ items: [...] }`, supporting the `category` and `prepared_only` filters deterministically. The `stale_only` filter SHALL return a structured `unsupported` error, because freshness is an LLM-judged, prompt-resolved concern (it depends on storage, whether a package was opened, and visual inspection — none of which is in the repo) rather than a function the tool can compute. There is no shelf-life table backing it: the previously-reserved `ingredients.toml` has been removed, superseded by the curated `storage_guidance/` tree, which informs put-away advice rather than gating staleness.
 
 #### Scenario: Filter by category
 
@@ -131,10 +131,10 @@ The system SHALL provide `read_pantry(filter)` returning `{ items: [...] }`, sup
 - **WHEN** `read_pantry({ prepared_only: true })` is invoked
 - **THEN** only items with a non-null `prepared_from` are returned
 
-#### Scenario: Staleness not yet supported
+#### Scenario: Staleness not supported by the tool
 
 - **WHEN** `read_pantry({ stale_only: true })` is invoked
-- **THEN** the tool returns a structured `unsupported` error explaining that staleness requires `ingredients.toml` (a later change)
+- **THEN** the tool returns a structured `unsupported` error explaining that freshness is judged conversationally, not computed by the tool
 
 ### Requirement: Config and narrative read tools
 
