@@ -348,10 +348,10 @@ Deterministic price-per-unit comparison, used by the matching tiebreaker and whe
 
 ### `ready_to_eat_available()`
 
-Cross-reference `ready_to_eat/*.toml` catalogs against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`fulfillment.curbside || fulfillment.delivery`) — the public Products API exposes no live in-store stock level. Each available item carries the **full list of fulfillable matching products** (relevance-ranked) so the agent can pick the right/cheapest one.
+Cross-reference the **caller's own** `users/<id>/ready_to_eat.toml` catalog against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`fulfillment.curbside || fulfillment.delivery`) — the public Products API exposes no live in-store stock level. Each available item carries the **full list of fulfillable matching products** (relevance-ranked) so the agent can pick the right/cheapest one. An empty or absent catalog returns empty lists.
 
 **Returns:**
-- `{ available: { breakfast: [...{ name, meal, products: [{ sku, brand, description, size, price, on_sale, available }] }], lunch: [...], dinner: [...] }, unavailable: [...{ name, meal, catalog_sku }] }`
+- `{ available: { breakfast: [...{ name, slug, meal, products: [{ sku, brand, description, size, price, on_sale, available }] }], lunch: [...], dinner: [...] }, unavailable: [...{ name, slug, meal, catalog_sku }] }`
 
 ---
 
@@ -399,25 +399,28 @@ Fetch all feeds in `feeds.toml` and return a **deduped candidate pool** — dedu
 **Returns:**
 - `{ candidates: [{ url, title, source, feed_weight, summary }], skipped?: [{ feed, reason }] }` — `source` is the feed name; `feed_weight` is the feed's configured trust hint (passed through, not used to rank); unreachable feeds are reported in `skipped`, not fatal.
 
-**Notes:** Empty or absent `feeds.toml` returns `{ candidates: [] }`. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against `ready_to_eat/*.toml` and `add_draft_ready_to_eat`.
+**Notes:** Empty or absent `feeds.toml` returns `{ candidates: [] }`. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against the caller's `users/<id>/ready_to_eat.toml` and `add_draft_ready_to_eat`.
 
 ### `add_draft_ready_to_eat(items)`
 
-Append new ready-to-eat items to the appropriate catalog in `draft` status.
+Append ready-to-eat items to the **caller's own** `users/<id>/ready_to_eat.toml`. Each item is given a generated `slug` (unique within the file). Defaults to `draft`; pass `status: "active"` for an item the member explicitly accepts (the onboarding path).
 
 **Params:**
-- `items` (array): `[{ name, category, source, ... }]`
+- `items` (array): `[{ meal, name, status?, category?, source?, brand?, notes? }]` — `meal` is `breakfast | lunch | dinner`; `status` is `draft` (default) | `active`
 
 **Returns:**
-- `{ added: [...] }`
+- `{ added: [{ meal, name, slug }], commit_sha }`
 
 ### `update_ready_to_eat(slug, updates)`
 
-Disposition or otherwise update a ready-to-eat item.
+Disposition or otherwise update a ready-to-eat item in the caller's catalog, addressed by `slug`. Unknown slug returns a structured `not_found`.
 
 **Params:**
-- `slug` (string, required) — or `name` if no slug yet
-- `updates` (object): `{ status?, rating?, notes? }`
+- `slug` (string, required) — the item's stable key (from `add_draft_ready_to_eat`'s return or `ready_to_eat_available`)
+- `updates` (object): `{ status?, rating?, notes? }` — `status` is `active | draft | rejected`; `rating` is an integer 1–5
+
+**Returns:**
+- `{ slug, updated_fields, commit_sha }`
 
 **Returns:**
 - `{ updated_fields }`
@@ -514,8 +517,8 @@ Persist a batch of repo updates as **one** atomic git commit — no cart. The ev
   recipe_updates:       [{ slug, updates }],          // frontmatter merges (rating, status, ...; do NOT set last_cooked by hand)
   pantry_operations:    [{ op, item?, name? }],       // op: add | remove | verify
   pantry_verified:      [name, name, ...],            // reset last_verified_at
-  ready_to_eat_drafts:  [{ meal, name, category?, source?, brand?, notes? }],
-  ready_to_eat_updates: [{ name, updates }],          // matched by name across meal catalogs
+  ready_to_eat_drafts:  [{ meal, name, status?, category?, source?, brand?, notes? }],  // → caller's ready_to_eat.toml; status draft (default) | active
+  ready_to_eat_updates: [{ slug, updates }],          // addressed by slug in the caller's catalog
   config_updates:       [{ file, content }],          // file: preferences|taste|diet_principles|substitutions|aliases
   cooking_log_entries:  [{ type, date?, recipe?, name?, protein?, cuisine? }],  // append cooked meals; date defaults to today
   meal_plan_ops:        [{ op, recipe, planned_for? }],   // op: add | remove  (committed cook intent)

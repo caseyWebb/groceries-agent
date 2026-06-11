@@ -526,7 +526,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     "ready_to_eat_available",
     {
       description:
-        "Cross-reference ready_to_eat/*.toml catalogs against Kroger availability. Each available catalog item carries the FULL list of fulfillable matching products (relevance-ranked, with price + on-sale + curbside/delivery) so you can pick the right/cheapest one. 'Available' means fulfillable via curbside or delivery — the public API exposes no live in-store stock.",
+        "Cross-reference the caller's personal ready_to_eat.toml catalog against Kroger availability. Each available catalog item carries the FULL list of fulfillable matching products (relevance-ranked, with price + on-sale + curbside/delivery) so you can pick the right/cheapest one. 'Available' means fulfillable via curbside or delivery — the public API exposes no live in-store stock. An empty or absent catalog returns empty lists.",
       inputSchema: {},
     },
     () =>
@@ -535,24 +535,25 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
         const available: Record<string, unknown[]> = { breakfast: [], lunch: [], dinner: [] };
         const unavailable: unknown[] = [];
 
-        for (const meal of READY_TO_EAT_MEALS) {
-          const text = await readOptional(sharedGh, `ready_to_eat/${meal}.toml`);
-          if (!text) continue;
-          const items = (parseToml(text, `ready_to_eat/${meal}.toml`).items as Record<string, unknown>[]) ?? [];
-          for (const item of items) {
-            if (typeof item.name !== "string") continue;
-            if (item.status === "rejected") continue;
-            const candidates = await kroger.search(item.name, { locationId, limit: 50 });
-            const products = candidates.filter(isFulfillable).map(productRow);
-            if (products.length > 0) {
-              available[meal].push({ name: item.name, meal, products });
-            } else {
-              unavailable.push({
-                name: item.name,
-                meal,
-                catalog_sku: typeof item.sku === "string" ? item.sku : null,
-              });
-            }
+        const text = await readOptional(gh, "ready_to_eat.toml");
+        const items = text ? ((parseToml(text, "ready_to_eat.toml").items as Record<string, unknown>[]) ?? []) : [];
+        for (const item of items) {
+          if (typeof item.name !== "string") continue;
+          if (item.status === "rejected") continue;
+          const meal = READY_TO_EAT_MEALS.includes(item.meal as (typeof READY_TO_EAT_MEALS)[number])
+            ? (item.meal as string)
+            : "dinner";
+          const candidates = await kroger.search(item.name, { locationId, limit: 50 });
+          const products = candidates.filter(isFulfillable).map(productRow);
+          if (products.length > 0) {
+            available[meal].push({ name: item.name, slug: item.slug ?? null, meal, products });
+          } else {
+            unavailable.push({
+              name: item.name,
+              slug: item.slug ?? null,
+              meal,
+              catalog_sku: typeof item.sku === "string" ? item.sku : null,
+            });
           }
         }
         return { available, unavailable };

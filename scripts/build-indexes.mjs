@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// build-indexes.mjs — walk recipes/ + ready_to_eat/, validate, emit _indexes/*.json.
+// build-indexes.mjs — walk recipes/, validate (incl. per-tenant ready_to_eat.toml), emit _indexes/*.json.
 //
 // Content-agnostic: handles an empty corpus cleanly. Output is deterministic
 // (sorted keys, dates normalized to YYYY-MM-DD strings) so an unchanged corpus
@@ -41,7 +41,8 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Recommended-but-optional fields whose absence signals an incomplete migration.
 // last_cooked / rating / discovered_at are legitimately null by design and are NOT warned.
 const RECOMMENDED_FIELDS = ['protein', 'time_total', 'ingredients_key'];
-const MEALS = ['breakfast', 'lunch', 'dinner'];
+const READY_TO_EAT_MEALS = new Set(['breakfast', 'lunch', 'dinner']);
+const READY_TO_EAT_STATUSES = new Set(['active', 'draft', 'rejected']);
 // Recipe bodies must carry these H2 sections so site generation can reliably
 // locate the ingredient list (for checkboxes) and the step list (for read-aloud).
 // Extra H2 sections (e.g. a future `## Notes`) are permitted and render generically.
@@ -191,20 +192,33 @@ export async function buildRecipeIndexes(recipesDir) {
   return { recipes, components, errors, warnings };
 }
 
-// --- ready-to-eat index --------------------------------------------------
+// --- ready-to-eat catalog validation -------------------------------------
 
-// Takes a map of meal -> parsed TOML (already parse-checked). Returns { ready_to_eat }.
-export function buildReadyToEatIndex(parsedByMeal) {
-  const ready_to_eat = {};
-  for (const meal of MEALS) {
-    const parsed = parsedByMeal[meal];
-    if (!parsed) continue;
-    ready_to_eat[meal] = normalizeValue({
-      items: parsed.items ?? [],
-      variety_rules: parsed.variety_rules ?? {},
-    });
+// Ready-to-eat is per-tenant (users/<id>/ready_to_eat.toml) — no aggregate index.
+// Structural-validate one already-parsed catalog; returns an array of errors.
+export function validateReadyToEatCatalog(parsed, rel) {
+  const errors = [];
+  const items = Array.isArray(parsed.items) ? parsed.items : [];
+  const slugs = new Set();
+  for (const it of items) {
+    if (typeof it.name !== 'string' || !it.name) errors.push(`${rel}: ready-to-eat item missing required \`name\``);
+    if (typeof it.slug !== 'string' || !it.slug) {
+      errors.push(`${rel}: ready-to-eat item missing required \`slug\``);
+      continue;
+    }
+    if (slugs.has(it.slug)) errors.push(`${rel}: duplicate ready-to-eat slug \`${it.slug}\``);
+    slugs.add(it.slug);
+    if (!READY_TO_EAT_MEALS.has(it.meal)) {
+      errors.push(`${rel}: \`meal\` = ${JSON.stringify(it.meal)} is not one of breakfast | lunch | dinner`);
+    }
+    if (it.status != null && !READY_TO_EAT_STATUSES.has(it.status)) {
+      errors.push(`${rel}: \`status\` = ${JSON.stringify(it.status)} is not one of active | draft | rejected`);
+    }
+    if (it.rating != null && (!Number.isInteger(it.rating) || it.rating < 1 || it.rating > 5)) {
+      errors.push(`${rel}: ready-to-eat \`rating\` = ${JSON.stringify(it.rating)} must be an integer 1–5`);
+    }
   }
-  return { ready_to_eat };
+  return errors;
 }
 
 // --- cooking-log + meal-plan validation ---------------------------------
@@ -309,27 +323,28 @@ export async function parseCheckToml(root) {
 
 // --- orchestration -------------------------------------------------------
 
-export async function run({ recipesDir, readyToEatDir, root = REPO_ROOT } = {}) {
+export async function run({ recipesDir, root = REPO_ROOT } = {}) {
   recipesDir ??= path.join(root, 'recipes');
-  readyToEatDir ??= path.join(root, 'ready_to_eat');
 
   const { recipes, components, errors: rErr, warnings } = await buildRecipeIndexes(recipesDir);
   const { parsed, errors: tErr } = await parseCheckToml(root);
 
-  const parsedByMeal = {};
-  for (const meal of MEALS) {
-    const p = parsed.get(path.join(readyToEatDir, `${meal}.toml`));
-    if (p) parsedByMeal[meal] = p;
+  // Ready-to-eat is per-tenant — structural-validate every ready_to_eat.toml the
+  // walk found (root during single-user bootstrap, users/<id>/ once migrated). No index.
+  const rteErr = [];
+  for (const [file, obj] of parsed) {
+    if (file === path.join(root, 'ready_to_eat.toml') || file.endsWith(`${path.sep}ready_to_eat.toml`)) {
+      rteErr.push(...validateReadyToEatCatalog(obj, path.relative(REPO_ROOT, file)));
+    }
   }
-  const { ready_to_eat } = buildReadyToEatIndex(parsedByMeal);
 
   const cookingLog = parsed.get(path.join(root, 'cooking_log.toml')) ?? null;
   const mealPlan = parsed.get(path.join(root, 'meal_plan.toml')) ?? null;
   const { errors: cErr, warnings: cWarn } = validateCookingArtifacts({ recipes, cookingLog, mealPlan });
 
   return {
-    indexes: { recipes, components, ready_to_eat },
-    errors: [...rErr, ...tErr, ...cErr],
+    indexes: { recipes, components },
+    errors: [...rErr, ...tErr, ...rteErr, ...cErr],
     warnings: [...warnings, ...cWarn],
   };
 }
@@ -337,7 +352,6 @@ export async function run({ recipesDir, readyToEatDir, root = REPO_ROOT } = {}) 
 async function writeIndexes(indexes, outDir) {
   await writeFile(path.join(outDir, 'recipes.json'), stableStringify(indexes.recipes));
   await writeFile(path.join(outDir, 'components.json'), stableStringify(indexes.components));
-  await writeFile(path.join(outDir, 'ready_to_eat.json'), stableStringify(indexes.ready_to_eat));
 }
 
 async function main() {

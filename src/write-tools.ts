@@ -31,10 +31,13 @@ import {
   type CookingLogEntry,
 } from "./cooking-log.js";
 import { MEAL_PLAN_PATH, plannedOf, applyMealPlanOps, type MealPlanOp } from "./meal-plan.js";
+import { slugify } from "./discovery.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MEALS = ["breakfast", "lunch", "dinner"] as const;
 type Meal = (typeof MEALS)[number];
+/** The caller's per-tenant ready-to-eat catalog (under their users/<id>/ subtree). */
+const READY_TO_EAT_PATH = "ready_to_eat.toml";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -207,62 +210,69 @@ export async function buildMealPlanUpdate(
   };
 }
 
-/** In-memory manager for the per-meal ready_to_eat catalogs, loading each file once. */
-function readyToEatManager(gh: GitHubClient) {
-  const loaded = new Map<Meal, { text: string; parsed: Record<string, unknown>; items: Record<string, unknown>[] }>();
-  const touched = new Set<Meal>();
+/**
+ * In-memory manager for the caller's single per-tenant `ready_to_eat.toml`
+ * catalog (loaded once). Items carry a `meal` field and a generated `slug` as
+ * their stable key — `addDraft` mints a slug (unique within the file) from the
+ * name and accepts a status so an onboarding-asserted item lands `active` rather
+ * than as a draft; `update` addresses items by that slug.
+ */
+export function readyToEatManager(gh: GitHubClient, path: string) {
+  let state: { text: string; parsed: Record<string, unknown>; items: Record<string, unknown>[] } | null = null;
+  let touched = false;
 
-  async function load(meal: Meal) {
-    if (!loaded.has(meal)) {
-      const path = `ready_to_eat/${meal}.toml`;
+  async function load() {
+    if (!state) {
       const text = (await readOptional(gh, path)) ?? "";
       const parsed = text ? parseToml(text, path) : {};
-      loaded.set(meal, { text, parsed, items: itemsOf(parsed) });
+      state = { text, parsed, items: itemsOf(parsed) };
     }
-    return loaded.get(meal)!;
+    return state;
+  }
+
+  /** A slug from `name`, de-duped within the file with a numeric suffix (recipe-style). */
+  function uniqueSlug(name: string, items: Record<string, unknown>[]): string {
+    const taken = new Set(items.map((it) => it.slug).filter((s): s is string => typeof s === "string"));
+    const base = slugify(name) || "item";
+    if (!taken.has(base)) return base;
+    let n = 2;
+    while (taken.has(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
   }
 
   return {
-    async addDraft(meal: Meal, item: Record<string, unknown>) {
-      const f = await load(meal);
+    /** Append a new item; returns its generated slug. Default status is "draft". */
+    async addDraft(item: Record<string, unknown>, status: "draft" | "active" = "draft"): Promise<string> {
+      const f = await load();
+      const slug = uniqueSlug(String(item.name ?? ""), f.items);
       f.items.push({
         name: item.name,
+        slug,
+        meal: item.meal,
         sku: null,
         category: item.category ?? null,
-        status: "draft",
+        status,
+        rating: null,
         added_at: today(),
-        discovered_at: today(),
+        discovered_at: status === "draft" ? today() : null,
         discovery_source: item.source ?? null,
         brand: item.brand ?? null,
         notes: item.notes ?? null,
       });
-      touched.add(meal);
+      touched = true;
+      return slug;
     },
-    /** Find an item by name across all meals, apply updates. Throws not_found if absent. */
-    async update(name: string, updates: Record<string, unknown>) {
-      for (const meal of MEALS) {
-        const f = await load(meal);
-        const idx = f.items.findIndex(
-          (it) => typeof it.name === "string" && it.name.toLowerCase() === name.toLowerCase(),
-        );
-        if (idx >= 0) {
-          f.items[idx] = { ...f.items[idx], ...updates };
-          touched.add(meal);
-          return;
-        }
-      }
-      throw new ToolError("not_found", `No ready-to-eat item named: ${name}`, { name });
+    /** Find an item by slug, apply updates. Throws not_found if absent. */
+    async update(slug: string, updates: Record<string, unknown>) {
+      const f = await load();
+      const idx = f.items.findIndex((it) => it.slug === slug);
+      if (idx < 0) throw new ToolError("not_found", `No ready-to-eat item with slug: ${slug}`, { slug });
+      f.items[idx] = { ...f.items[idx], ...updates };
+      touched = true;
     },
     files(): TreeFile[] {
-      const out: TreeFile[] = [];
-      for (const meal of touched) {
-        const f = loaded.get(meal)!;
-        out.push({
-          path: `ready_to_eat/${meal}.toml`,
-          content: stringifyTomlWithHeader(f.text, { ...f.parsed, items: f.items }),
-        });
-      }
-      return out;
+      if (!touched || !state) return [];
+      return [{ path, content: stringifyTomlWithHeader(state.text, { ...state.parsed, items: state.items }) }];
     },
   };
 }
@@ -361,12 +371,13 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
     "add_draft_ready_to_eat",
     {
       description:
-        "Append ready-to-eat items in draft state. Each item needs a meal (breakfast|lunch|dinner).",
+        "Append ready-to-eat items to the caller's personal catalog (users/<id>/ready_to_eat.toml). Each item needs a meal (breakfast|lunch|dinner). Defaults to draft; pass status:'active' for an item the user explicitly accepts (e.g. during onboarding). Returns the generated slug for each.",
       inputSchema: {
         items: z.array(
           z.object({
             meal: z.enum(MEALS),
             name: z.string(),
+            status: z.enum(["draft", "active"]).optional(),
             category: z.string().optional(),
             source: z.string().optional(),
             brand: z.string().optional(),
@@ -377,26 +388,30 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
     },
     ({ items }) =>
       runTool(async () => {
-        const mgr = readyToEatManager(gh);
-        for (const it of items) await mgr.addDraft(it.meal, it);
-        const files = mgr.files();
-        const { commit_sha } = await commitFiles(gh, files, "add ready-to-eat drafts");
-        return { added: items.map((it) => ({ meal: it.meal, name: it.name })), commit_sha };
+        const mgr = readyToEatManager(gh, userPath(READY_TO_EAT_PATH));
+        const added: { meal: Meal; name: string; slug: string }[] = [];
+        for (const it of items) {
+          const slug = await mgr.addDraft(it, it.status ?? "draft");
+          added.push({ meal: it.meal, name: it.name, slug });
+        }
+        const { commit_sha } = await commitFiles(gh, mgr.files(), "add ready-to-eat items");
+        return { added, commit_sha };
       }),
   );
 
   server.registerTool(
     "update_ready_to_eat",
     {
-      description: "Disposition or update a ready-to-eat item, matched by name across meal catalogs.",
-      inputSchema: { name: z.string(), updates: z.record(z.string(), z.unknown()) },
+      description:
+        "Disposition or update a ready-to-eat item in the caller's catalog, addressed by slug. Set status (active|draft|rejected) and/or rating.",
+      inputSchema: { slug: z.string(), updates: z.record(z.string(), z.unknown()) },
     },
-    ({ name, updates }) =>
+    ({ slug, updates }) =>
       runTool(async () => {
-        const mgr = readyToEatManager(gh);
-        await mgr.update(name, updates);
-        const { commit_sha } = await commitFiles(gh, mgr.files(), `update ready-to-eat ${name}`);
-        return { name, updated_fields: Object.keys(updates), commit_sha };
+        const mgr = readyToEatManager(gh, userPath(READY_TO_EAT_PATH));
+        await mgr.update(slug, updates);
+        const { commit_sha } = await commitFiles(gh, mgr.files(), `update ready-to-eat ${slug}`);
+        return { slug, updated_fields: Object.keys(updates), commit_sha };
       }),
   );
 
@@ -443,6 +458,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
             z.object({
               meal: z.enum(MEALS),
               name: z.string(),
+              status: z.enum(["draft", "active"]).optional(),
               category: z.string().optional(),
               source: z.string().optional(),
               brand: z.string().optional(),
@@ -451,7 +467,7 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
           )
           .optional(),
         ready_to_eat_updates: z
-          .array(z.object({ name: z.string(), updates: z.record(z.string(), z.unknown()) }))
+          .array(z.object({ slug: z.string(), updates: z.record(z.string(), z.unknown()) }))
           .optional(),
         config_updates: z
           .array(z.object({ file: z.enum(["preferences", "taste", "diet_principles", "substitutions", "aliases"]), content: z.string() }))
@@ -546,13 +562,14 @@ export function registerWriteTools(server: McpServer, gh: GitHubClient, userPref
         }
 
         if ((payload.ready_to_eat_drafts?.length ?? 0) > 0 || (payload.ready_to_eat_updates?.length ?? 0) > 0) {
-          const mgr = readyToEatManager(gh);
-          for (const d of payload.ready_to_eat_drafts ?? []) await mgr.addDraft(d.meal, d);
-          for (const u of payload.ready_to_eat_updates ?? []) await mgr.update(u.name, u.updates);
+          const mgr = readyToEatManager(gh, userPath(READY_TO_EAT_PATH));
+          const draftSlugs: string[] = [];
+          for (const d of payload.ready_to_eat_drafts ?? []) draftSlugs.push(await mgr.addDraft(d, d.status ?? "draft"));
+          for (const u of payload.ready_to_eat_updates ?? []) await mgr.update(u.slug, u.updates);
           files.push(...mgr.files());
           summary.ready_to_eat = {
-            drafts: (payload.ready_to_eat_drafts ?? []).map((d) => d.name),
-            updated: (payload.ready_to_eat_updates ?? []).map((u) => u.name),
+            drafts: draftSlugs,
+            updated: (payload.ready_to_eat_updates ?? []).map((u) => u.slug),
           };
         }
 

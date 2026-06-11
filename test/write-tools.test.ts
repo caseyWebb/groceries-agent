@@ -5,6 +5,7 @@ import {
   buildMealPlanUpdate,
   buildOverlayUpdate,
   splitRecipeUpdate,
+  readyToEatManager,
 } from "../src/write-tools.js";
 import { parseOverlay } from "../src/overlay.js";
 import { applyPantryOperations, markVerified, type PantryItem } from "../src/pantry-write.js";
@@ -59,6 +60,52 @@ describe("buildRecipeUpdate", () => {
   it("maps a missing recipe to not_found", async () => {
     const gh = ghWith({});
     await expect(buildRecipeUpdate(gh, "ghost", {})).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("readyToEatManager", () => {
+  const PATH = "users/alice/ready_to_eat.toml";
+
+  it("addDraft generates a slug, tags the meal, defaults to draft", async () => {
+    const mgr = readyToEatManager(ghWith({}), PATH);
+    const slug = await mgr.addDraft({ meal: "dinner", name: "Kroger Frozen Lasagna" });
+    expect(slug).toBe("kroger-frozen-lasagna");
+    const files = mgr.files();
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe(PATH);
+    const item = (parseToml(files[0].content).items as Record<string, unknown>[])[0];
+    // null fields (rating/sku) are omitted by TOML serialization — assert the present ones.
+    expect(item).toMatchObject({ name: "Kroger Frozen Lasagna", slug, meal: "dinner", status: "draft" });
+    expect(typeof item.discovered_at).toBe("string"); // drafts carry a discovered_at date
+  });
+
+  it("addDraft status:active lands active with no discovered_at (onboarding path)", async () => {
+    const mgr = readyToEatManager(ghWith({}), PATH);
+    await mgr.addDraft({ meal: "breakfast", name: "Overnight Oats" }, "active");
+    const item = (parseToml(mgr.files()[0].content).items as Record<string, unknown>[])[0];
+    expect(item).toMatchObject({ slug: "overnight-oats", status: "active" });
+    expect(item.discovered_at).toBeUndefined(); // null → omitted in TOML
+  });
+
+  it("de-dupes slugs within the file with a numeric suffix", async () => {
+    const existing = '[[items]]\nname = "Burrito"\nslug = "burrito"\nmeal = "lunch"\nstatus = "active"\n';
+    const mgr = readyToEatManager(ghWith({ [PATH]: existing }), PATH);
+    const slug = await mgr.addDraft({ meal: "lunch", name: "Burrito" });
+    expect(slug).toBe("burrito-2");
+  });
+
+  it("update addresses items by slug; unknown slug is not_found", async () => {
+    const existing = '[[items]]\nname = "Lasagna"\nslug = "lasagna"\nmeal = "dinner"\nstatus = "draft"\n';
+    const mgr = readyToEatManager(ghWith({ [PATH]: existing }), PATH);
+    await mgr.update("lasagna", { status: "active", rating: 4 });
+    const item = (parseToml(mgr.files()[0].content).items as Record<string, unknown>[])[0];
+    expect(item).toMatchObject({ slug: "lasagna", status: "active", rating: 4 });
+    await expect(mgr.update("ghost", { status: "rejected" })).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("files() is empty when nothing was touched", async () => {
+    const mgr = readyToEatManager(ghWith({ [PATH]: "" }), PATH);
+    expect(mgr.files()).toHaveLength(0);
   });
 });
 

@@ -69,7 +69,7 @@ Two starting points: **open-ended** (you pick recipes) or **recipe-seeded** (I n
    - **Ready-to-eat restock suggestions.** Cross-reference `retrospective`'s `ready_to_eat_favorites` against `pantry.toml` on-hand — for a favorite that's low/out, *suggest* a restock ("you've reached for the frozen lasagna a lot and you're out — add it?"). On a yes, add to `grocery_list.toml` (or `stockup.toml` for a conditional bulk buy).
    - **Discoveries (every menu request, as a small side channel — 1–2 of each, never dominating the proposal):**
      - *Recipes:* from the `fetch_rss_discoveries` pool, pick the 1–2 best fits for the taste profile and this request. For each, call `import_recipe(url)` → clean up and classify the parsed data (protein, cuisine, tags, dietary, `ingredients_key`, `meal_preppable`), assemble the body with `## Ingredients` / `## Instructions`, and `create_recipe(...)` with `status: draft`, `discovered_at`, `discovery_source`. Import immediately — don't wait for me to express interest. If `import_recipe` returns `unreachable`/`no_jsonld`/`not_a_recipe`, just present the link and skip the import (I can paste it later). The pool already excludes recipes I have. Drafts don't clutter later proposals — they sit until I disposition them.
-     - *Ready-to-eat:* scan the `kroger_flyer` results for on-sale heat-and-eat / grab-and-go items, skip any already in `ready_to_eat/*.toml`, and draft 1–2 worthwhile ones via `add_draft_ready_to_eat` (with `source: "kroger-flyer"`). This is the on-sale-RTE discovery path (there's no dedicated tool).
+     - *Ready-to-eat:* scan the `kroger_flyer` results for on-sale heat-and-eat / grab-and-go items, skip any already in your own `ready_to_eat.toml` (the per-tenant catalog `ready_to_eat_available` reads), and draft 1–2 worthwhile ones via `add_draft_ready_to_eat` (with `source: "kroger-flyer"`) — they land in your catalog as drafts, affecting no one else. This is the on-sale-RTE discovery path (there's no dedicated tool).
 
 6. Send the proposal in chat. Iterate based on my revisions — rerun affected tool calls as needed.
 
@@ -120,7 +120,7 @@ description: Capture a meal that was actually cooked or eaten, and update invent
 This is the **only** flow that writes `cooking_log.toml` and moves `last_cooked`. Capture it honestly — log only what I tell you I cooked, never what was merely planned.
 
 1. **Identify what was cooked.** A corpus recipe (resolve the slug with `list_recipes({ query })` if unsure), a ready-to-eat item, or something ad-hoc (not in the corpus). If you're arriving here from a guided `cook`, you already know the dish — carry it over.
-2. **Update inventory.** Cooking consumes pantry items — walk the recipe's ingredients (or just ask for an ad-hoc/RTE meal) and ask whether I **used the last of** anything ("did that finish the ginger?"). For each yes, a `pantry_operations` `remove`. For a ready-to-eat item, removing it from the pantry is how its on-hand stock decrements (the `ready_to_eat/*.toml` catalog is options, not stock).
+2. **Update inventory.** Cooking consumes pantry items — walk the recipe's ingredients (or just ask for an ad-hoc/RTE meal) and ask whether I **used the last of** anything ("did that finish the ginger?"). For each yes, a `pantry_operations` `remove`. For a ready-to-eat item, removing it from the pantry is how its on-hand stock decrements (the `ready_to_eat.toml` catalog is options, not stock).
 3. **Log it**, in one `commit_changes`:
    - `cooking_log_entries`: `{ type: "recipe", recipe: <slug> }` for a corpus cook; `{ type: "ready_to_eat", name }` for an RTE meal; `{ type: "ad_hoc", name, protein?, cuisine? }` for something off-corpus (add the inline dims so it still counts in retrospective). `date` defaults to today — pass an explicit `date` if I said "last night" / a past day.
    - the pantry `remove`s from step 2.
@@ -153,7 +153,7 @@ description: Capture a personal tweak or observation on a recipe as an attribute
 needs: corpus
 description: Rate or disposition a ready-to-eat / heat-and-eat item — the convenience-meal analog of recipe feedback. Use for "rate the frozen lasagna", "stop suggesting those taquitos", or dispositioning a draft RTE discovery (activate or reject). -->
 
-Rate or change the status of a ready-to-eat item: call `update_ready_to_eat(slug, updates)` with the appropriate fields (drafts go to active with a rating, or rejected).
+Rate or change the status of a ready-to-eat item in the user's personal catalog: call `update_ready_to_eat(slug, updates)` — a draft goes `active` (optionally with a `rating`, an integer 1–5), or `rejected` to stop suggesting it. Address the item by its `slug` (from `ready_to_eat_available` or the `add_draft_ready_to_eat` that created it); resolve it by name if you don't have it yet. Edits the caller's own `ready_to_eat.toml` — never anyone else's view.
 
 ### Recipe import
 
@@ -216,19 +216,20 @@ This is the **flush** — distinct from the menu request's capture. It may happe
 
 <!-- skill: configure-grocery-profile
 needs: corpus
-description: Review and set up the user's grocery profile — taste, cooking preferences, diet principles, and starting pantry. Idempotent: on a brand-new user it walks first-time setup; on a returning user it reads back what it already knows and asks what to change. Use for "get started", "set me up", "onboard me", "update my profile", "what do you know about me", "change my preferences/diet/taste", or when the read tools show an empty profile. -->
+description: Review and set up the user's grocery profile — taste, cooking preferences, diet principles, starting pantry, and heat-and-eat acceptance. Idempotent: on a brand-new user it walks first-time setup; on a returning user it reads back what it already knows and asks what to change. Use for "get started", "set me up", "onboard me", "update my profile", "what do you know about me", "change my preferences/diet/taste", or when the read tools show an empty profile. -->
 
 This skill is **idempotent** — it both sets up a new profile and reviews/edits an existing one. Always start by reading the current state: `read_preferences()`, `read_taste()`, `read_diet_principles()`, `read_pantry()`. Then branch:
 
-- **Empty profile (first run):** a new member shouldn't have to type a wall of config before you're useful. Walk them through it **conversationally, a few things at a time, persisting each piece as it's gathered** — a half-finished setup still leaves real data saved. Gather the four areas below in order, one short exchange each.
-- **Existing profile:** **tell them what you already know** — a short readback ("You cook 3 nights/week, leftovers for lunch; you lean Thai and Filipino and skip cilantro; fish weekly, no pork; pantry has rice, soy, ginger, …") — then **ask if they want to change anything.** Edit only what they name; leave the rest, and don't re-interrogate fields that are already set.
+- **Empty profile (first run):** a new member shouldn't have to type a wall of config before you're useful. Walk them through it **conversationally, a few things at a time, persisting each piece as it's gathered** — a half-finished setup still leaves real data saved. Gather the five areas below in order, one short exchange each.
+- **Existing profile:** **tell them what you already know** — a short readback ("You cook 3 nights/week, leftovers for lunch; you lean Thai and Filipino and skip cilantro; fish weekly, no pork; you keep frozen lasagna and breakfast burritos around; pantry has rice, soy, ginger, …") — then **ask if they want to change anything.** Edit only what they name; leave the rest, and don't re-interrogate fields that are already set.
 
-The four areas:
+The five areas:
 
 1. **Taste** — favorite cuisines and proteins, and any hard dislikes ("I don't do cilantro"). A short narrative to `taste.md` via `update_taste`. A couple of sentences is plenty; don't interrogate.
 2. **Cooking preferences** — `default_cooking_nights` (nights a week they cook) and `lunch_strategy` (e.g. leftovers), plus any standing brand defaults. Via `update_preferences`. Skip anything they have no opinion on — defaults are fine.
 3. **Diet principles** — variety targets or rules with reasoning ("fish at least once a week", "no pork"). To `diet_principles.md` via `update_diet_principles`. Distinguish hard restrictions (gates) from soft variety targets.
 4. **Starting pantry** — staples and proteins on hand; this seeds the drift-catching pantry walk. Adds via `update_pantry`. Keep it light — the pantry self-corrects through normal use.
+5. **Heat-and-eat acceptance** — which convenience meals they're fine with and for which meals ("frozen burritos for breakfast, Amy's frozen dinners for lazy nights"), plus any variety tolerance. For each item they name, `add_draft_ready_to_eat({ meal, name, status: "active" })` — items the member explicitly accepts land `active`, not as drafts. Purely optional: someone with no opinion skips it and the catalog stays empty, filling later through discovery.
 
 Persist each change as you go (the granular write tools each commit on their own — appropriate here, since this is a sequence of standalone config writes, not one batched planning session). On a fresh setup, when the basics are in, offer the natural next step — "want me to put together a first menu?" — which hands off to the meal-plan flow. Don't block on completeness; the profile fills in through normal use.
 

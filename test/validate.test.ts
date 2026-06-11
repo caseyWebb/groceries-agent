@@ -72,6 +72,32 @@ describe("validateFile", () => {
     ).toThrowError(/planned_for/);
   });
 
+  it("validates the per-tenant ready_to_eat catalog: name, slug, meal, status, rating", () => {
+    const ok =
+      '[[items]]\nname = "Frozen Lasagna"\nslug = "frozen-lasagna"\nmeal = "dinner"\nstatus = "active"\nrating = 4\n';
+    expect(() => validateFile("ready_to_eat.toml", ok)).not.toThrow();
+    expect(() => validateFile("users/alice/ready_to_eat.toml", ok)).not.toThrow(); // prefixed too
+    // bad meal
+    expect(() =>
+      validateFile("ready_to_eat.toml", '[[items]]\nname = "x"\nslug = "x"\nmeal = "brunch"\n'),
+    ).toThrowError(/meal/);
+    // missing slug
+    expect(() =>
+      validateFile("ready_to_eat.toml", '[[items]]\nname = "x"\nmeal = "dinner"\n'),
+    ).toThrowError(/slug/);
+    // duplicate slug
+    expect(() =>
+      validateFile(
+        "ready_to_eat.toml",
+        '[[items]]\nname = "a"\nslug = "dup"\nmeal = "dinner"\n[[items]]\nname = "b"\nslug = "dup"\nmeal = "lunch"\n',
+      ),
+    ).toThrowError(/duplicate slug/);
+    // bad rating
+    expect(() =>
+      validateFile("ready_to_eat.toml", '[[items]]\nname = "x"\nslug = "x"\nmeal = "dinner"\nrating = 9\n'),
+    ).toThrowError(/rating/);
+  });
+
   it("parse-only validates other config TOML", () => {
     expect(() => validateFile("preferences.toml", "default_cooking_nights = 3\n")).not.toThrow();
     expect(() => validateFile("preferences.toml", "= = broken")).toThrowError(/does not parse/);

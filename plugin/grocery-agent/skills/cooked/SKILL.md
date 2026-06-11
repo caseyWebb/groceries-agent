@@ -10,7 +10,7 @@ description: "Capture a meal that was actually cooked or eaten, and update inven
 This is the **only** flow that writes `cooking_log.toml` and moves `last_cooked`. Capture it honestly — log only what I tell you I cooked, never what was merely planned.
 
 1. **Identify what was cooked.** A corpus recipe (resolve the slug with `list_recipes({ query })` if unsure), a ready-to-eat item, or something ad-hoc (not in the corpus). If you're arriving here from a guided `cook`, you already know the dish — carry it over.
-2. **Update inventory.** Cooking consumes pantry items — walk the recipe's ingredients (or just ask for an ad-hoc/RTE meal) and ask whether I **used the last of** anything ("did that finish the ginger?"). For each yes, a `pantry_operations` `remove`. For a ready-to-eat item, removing it from the pantry is how its on-hand stock decrements (the `ready_to_eat/*.toml` catalog is options, not stock).
+2. **Update inventory.** Cooking consumes pantry items — walk the recipe's ingredients (or just ask for an ad-hoc/RTE meal) and ask whether I **used the last of** anything ("did that finish the ginger?"). For each yes, a `pantry_operations` `remove`. For a ready-to-eat item, removing it from the pantry is how its on-hand stock decrements (the `ready_to_eat.toml` catalog is options, not stock).
 3. **Log it**, in one `commit_changes`:
    - `cooking_log_entries`: `{ type: "recipe", recipe: <slug> }` for a corpus cook; `{ type: "ready_to_eat", name }` for an RTE meal; `{ type: "ad_hoc", name, protein?, cuisine? }` for something off-corpus (add the inline dims so it still counts in retrospective). `date` defaults to today — pass an explicit `date` if I said "last night" / a past day.
    - the pantry `remove`s from step 2.

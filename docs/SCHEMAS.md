@@ -6,8 +6,8 @@ Concrete schemas with example values for every data file in the repo. Keep this 
 
 The data lives in **one private data repo** with two regions (see `docs/PROJECT.md` and the `multi-tenant-friend-group` change). Every file below lives in exactly one:
 
-- **Shared corpus (data-repo root)** — objective, single-source, read by everyone: `recipes/*.md` (objective frontmatter + body), `aliases.toml`, `ingredients.toml`, `substitutions.toml` (the shared default layer), `skus/kroger.toml`, `flyer_terms.toml`, `ready_to_eat/*.toml`, `_indexes/`.
-- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `feeds.toml`, `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
+- **Shared corpus (data-repo root)** — objective, single-source, read by everyone: `recipes/*.md` (objective frontmatter + body), `aliases.toml`, `ingredients.toml`, `substitutions.toml` (the shared default layer), `skus/kroger.toml`, `flyer_terms.toml`, `_indexes/`.
+- **Per-tenant subtree (`users/<username>/`)** — each member's own state: `pantry.toml`, `preferences.toml`, `stockup.toml`, `grocery_list.toml`, `meal_plan.toml`, `cooking_log.toml`, `feeds.toml`, `ready_to_eat.toml` (personal heat-and-eat catalog), `taste.md`, `diet_principles.md`, **`overlay.toml`** (subjective recipe view), **`notes/<slug>.toml`** (attributed notes), an optional **`substitutions.toml`** override layer, and any personal (unshared) recipes.
 
 **Three-category recipe model (D5):** a recipe's *content* (objective frontmatter + body) is shared; its *overlay* (`rating` + `status`) is per-tenant in `overlay.toml`; its *notes* are per-tenant, attributed, append-mostly. `last_cooked` is **not stored** — it's derived per-tenant from that member's `cooking_log.toml`. Read tools merge shared content + the caller's overlay + cooking-log `last_cooked` at read time.
 
@@ -212,7 +212,7 @@ cuisine = "chinese"          # they still count in retrospective mixes
 
 **Notes:**
 - `type = recipe` entries are slug-only — protein/cuisine are looked up from the recipe index, never duplicated, so recategorizing a recipe retroactively corrects its history.
-- `ready_to_eat` consumption also decrements the item's on-hand stock in `pantry.toml` (the RTE catalogs under `ready_to_eat/*.toml` stay pure options lists with no stock field) and its accumulating frequency is the favored-item signal for re-order suggestions.
+- `ready_to_eat` consumption also decrements the item's on-hand stock in `pantry.toml` (the member's `ready_to_eat.toml` catalog stays a pure options list with no stock field) and its accumulating frequency (by `name`) is the favored-item signal for re-order suggestions.
 - Cadence ("cooks/week") counts `recipe` + `ad_hoc` only; `ready_to_eat` is the convenience side of the cook-vs-convenience split.
 - Append-only by tool. Removing an entry is a manual edit; a `type = recipe` entry whose slug no recipe resolves to is a **hard** build failure (archival keeps the file, so history resolves; deletion-with-history is intentionally blocked).
 
@@ -382,18 +382,21 @@ typical_unit = "bottle"
 perishability_class = "shelf_stable"
 ```
 
-## ready_to_eat/breakfast.toml (and lunch.toml, dinner.toml)
+## users/<username>/ready_to_eat.toml
 
-Catalogs of acceptable ready-to-eat options per meal. Agent adds drafts as discovery surfaces them; user dispositions.
+**Per-tenant** (a facet of the personal profile, not shared corpus — a ready-to-eat item is a Kroger SKU + "I'll eat this," pure personal taste with no shared content). One file per member; each item is tagged with a `meal` and keyed by a generated `slug`. The agent seeds it at onboarding (items the member names land `active`) and adds drafts as discovery surfaces them; the member dispositions drafts. `variety_rules` are expressed per meal.
 
 ```toml
-# ready_to_eat/breakfast.toml
+# users/alice/ready_to_eat.toml
 
 [[items]]
 name = "Kroger breakfast burrito (frozen)"
+slug = "kroger-breakfast-burrito-frozen"   # generated from name, stable key, unique in-file
+meal = "breakfast"               # breakfast | lunch | dinner
 sku = null                       # populated after first cart write
 category = "frozen"
 status = "active"                # active | draft | rejected
+rating = 4                       # optional integer 1–5
 added_at = "2025-04-01"
 discovered_at = null             # set only for drafts
 discovery_source = null
@@ -402,19 +405,23 @@ notes = "Heat 90s in microwave"
 
 [[items]]
 name = "Murray's overnight oats"
+slug = "murrays-overnight-oats"
+meal = "breakfast"
 sku = null
 category = "refrigerated"
 status = "draft"
 added_at = "2025-05-15"
 discovered_at = "2025-05-15"
-discovery_source = "kroger-flyer-featured"
+discovery_source = "kroger-flyer"
 brand = "Murray's"
 notes = null
 
-[variety_rules]
+[variety_rules.breakfast]
 max_per_category_per_week = 2
 preferred_rotation_days = 3      # don't suggest the same item within N days
 ```
+
+Addressed by `slug`: `update_ready_to_eat(slug, …)` dispositions or rates an item; `add_draft_ready_to_eat` appends (default `draft`, or `status: "active"` for an onboarding-named item) and returns the generated slug. `ready_to_eat_available()` reads the caller's own catalog. There is **no** `_indexes/ready_to_eat.json` — the per-member list is small and read directly. `null` fields are omitted on write (TOML has no null) and treated as absent on read.
 
 ## stockup.toml
 

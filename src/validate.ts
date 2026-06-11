@@ -12,6 +12,7 @@ import { ToolError } from "./errors.js";
 const RECIPE_STATUSES = ["active", "draft", "rejected", "archived"];
 const PANTRY_CATEGORIES = ["pantry", "fridge", "freezer", "spices"];
 const READY_TO_EAT_STATUSES = ["active", "draft", "rejected"];
+const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"];
 const GROCERY_STATUSES = ["active", "in_cart", "ordered"];
 const GROCERY_KINDS = ["grocery", "household", "other"];
 const COOKING_LOG_TYPES = ["recipe", "ready_to_eat", "ad_hoc"];
@@ -122,9 +123,26 @@ export function validateFile(path: string, content: string): void {
     return;
   }
 
-  if (path.startsWith("ready_to_eat/") && path.endsWith(".toml")) {
+  // Per-tenant ready-to-eat catalog (users/<id>/ready_to_eat.toml, or bare during
+  // the single-user bootstrap). Items are slug-keyed and meal-tagged.
+  if (path === "ready_to_eat.toml" || path.endsWith("/ready_to_eat.toml")) {
     const parsed = parseTomlOrFail(path, content);
-    for (const it of items(parsed)) checkEnum(path, "status", it.status, READY_TO_EAT_STATUSES, false);
+    const slugs = new Set<string>();
+    for (const it of items(parsed)) {
+      if (typeof it.name !== "string" || it.name.length === 0) {
+        fail(path, "item is missing required field `name`");
+      }
+      if (typeof it.slug !== "string" || it.slug.length === 0) {
+        fail(path, "item is missing required field `slug`");
+      }
+      if (slugs.has(it.slug)) fail(path, `duplicate slug \`${it.slug}\``);
+      slugs.add(it.slug);
+      checkEnum(path, "meal", it.meal, READY_TO_EAT_MEALS, true);
+      checkEnum(path, "status", it.status, READY_TO_EAT_STATUSES, false);
+      if (it.rating != null && (typeof it.rating !== "number" || !Number.isInteger(it.rating) || it.rating < 1 || it.rating > 5)) {
+        fail(path, `\`rating\` = ${JSON.stringify(it.rating)} must be an integer 1–5`);
+      }
+    }
     return;
   }
 

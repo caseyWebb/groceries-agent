@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildRecipeIndexes,
-  buildReadyToEatIndex,
+  validateReadyToEatCatalog,
   parseCheckToml,
   stableStringify,
   normalizeValue,
@@ -64,12 +64,28 @@ test('builds recipe + component indexes from fixtures', async () => {
   });
 });
 
-test('ready_to_eat index has stable meal-keyed shape', () => {
-  const { ready_to_eat } = buildReadyToEatIndex({
-    dinner: { items: [{ name: 'x', status: 'active' }], variety_rules: { max_per_category_per_week: 2 } },
-  });
-  assert.deepEqual(ready_to_eat.dinner.items, [{ name: 'x', status: 'active' }]);
-  assert.equal(ready_to_eat.dinner.variety_rules.max_per_category_per_week, 2);
+test('validateReadyToEatCatalog: clean catalog passes, malformed ones report', () => {
+  const ok = {
+    items: [
+      { name: 'Frozen Lasagna', slug: 'frozen-lasagna', meal: 'dinner', status: 'active', rating: 4 },
+      { name: 'Overnight Oats', slug: 'overnight-oats', meal: 'breakfast', status: 'draft' },
+    ],
+  };
+  assert.deepEqual(validateReadyToEatCatalog(ok, 'users/alice/ready_to_eat.toml'), []);
+
+  const bad = {
+    items: [
+      { name: 'a', slug: 'dup', meal: 'brunch' }, // bad meal
+      { name: 'b', slug: 'dup', meal: 'lunch' }, // duplicate slug
+      { name: 'c', meal: 'dinner' }, // missing slug
+      { name: 'd', slug: 'd', meal: 'dinner', rating: 9 }, // bad rating
+    ],
+  };
+  const errs = validateReadyToEatCatalog(bad, 'u/ready_to_eat.toml');
+  assert.ok(errs.some((e) => /meal/.test(e)));
+  assert.ok(errs.some((e) => /duplicate ready-to-eat slug/.test(e)));
+  assert.ok(errs.some((e) => /missing required `slug`/.test(e)));
+  assert.ok(errs.some((e) => /rating/.test(e)));
 });
 
 // --- 4.3 determinism + date normalization -------------------------------
