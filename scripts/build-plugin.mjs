@@ -41,7 +41,7 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const PLUGIN_NAME = 'grocery-agent';
-export const PLUGIN_VERSION = '0.1.0';
+export const PLUGIN_VERSION = '0.1.1';
 export const PLUGIN_DESCRIPTION =
   'Personal grocery agent — meal planning, pantry, recipes, and Kroger cart. Bundles the workflow skills and the grocery-mcp connector.';
 // Depth tiers a flow may opt into via `needs:`. `core` is implicit (always loaded).
