@@ -182,7 +182,7 @@ Rate or change the status of a ready-to-eat item in the user's personal catalog:
 
 <!-- skill: import-recipe
 needs: corpus
-description: Save a recipe from a URL or pasted text into the shared corpus as a draft. Use for "save this recipe: <URL>", "import this one", "here's a recipe: <pasted text>", "check this article for recipes". Parse-then-classify-then-create; handles paywalled / bot-walled sites by asking the user to paste the text. -->
+description: Save a recipe from a URL or pasted text into the shared corpus as a draft. Use for "save this recipe" with a link, "import this one", "here's a recipe" with pasted text, "check this article for recipes". Parse-then-classify-then-create; handles paywalled / bot-walled sites by asking the user to paste the text. -->
 
 `import_recipe(url)` is **parse-only** — it fetches the page and returns the JSON-LD `Recipe` data; it does **not** write. Then *you* assemble the recipe and persist it:
 1. Call `import_recipe(url)`. On success you get `{ title, ingredients, instructions, servings, time_total, time_active, source, tools_hint?, existing_slug? }`. **If `existing_slug` is present**, this recipe is already in the shared corpus — don't re-import. Tell me it's already there and reuse that slug (I can rate it, note it, put it on the menu); skip to whatever I actually wanted.

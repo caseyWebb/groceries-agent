@@ -163,6 +163,18 @@ test('validateParsed flags duplicate skill names', () => {
   assert.ok(errors.some((e) => /duplicate skill name "menu-request"/.test(e)), errors.join('; '));
 });
 
+test('validateParsed rejects angle brackets in a description (claude.ai upload guard)', () => {
+  const bad = DOC.replace('Plan meals.', 'Plan meals for <you>.');
+  const { errors } = validateParsed(parseInstructions(bad));
+  assert.ok(errors.some((e) => /angle bracket/.test(e)), errors.join('; '));
+});
+
+test('validateParsed rejects an over-1024-char description', () => {
+  const bad = DOC.replace('Plan meals.', 'x'.repeat(1100));
+  const { errors } = validateParsed(parseInstructions(bad));
+  assert.ok(errors.some((e) => /1024/.test(e)), errors.join('; '));
+});
+
 test('parseInstructions throws without a Common flows section', () => {
   assert.throws(() => parseInstructions('# Doc\n\n<!-- persona: core -->\n\n## Tone\n\ntext\n'), /Common flows/);
 });

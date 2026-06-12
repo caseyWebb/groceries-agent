@@ -1,6 +1,6 @@
 ---
 name: import-recipe
-description: "Save a recipe from a URL or pasted text into the shared corpus as a draft. Use for \"save this recipe: <URL>\", \"import this one\", \"here's a recipe: <pasted text>\", \"check this article for recipes\". Parse-then-classify-then-create; handles paywalled / bot-walled sites by asking the user to paste the text."
+description: "Save a recipe from a URL or pasted text into the shared corpus as a draft. Use for \"save this recipe\" with a link, \"import this one\", \"here's a recipe\" with pasted text, \"check this article for recipes\". Parse-then-classify-then-create; handles paywalled / bot-walled sites by asking the user to paste the text."
 ---
 
 > **Prerequisite** — if you haven't already this session, read the `grocery-core` and `grocery-corpus` skills before continuing.

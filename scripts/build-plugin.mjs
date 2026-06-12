@@ -179,6 +179,13 @@ export function validateParsed(parsed) {
     }
     if (!/^[a-z0-9-]+$/.test(f.name || '')) errors.push(`flow "${f.heading}" has an invalid skill name "${f.name}"`);
     if (!f.description) errors.push(`flow "${f.name}" has an empty description`);
+    // claude.ai's plugin-upload validator rejects skill descriptions containing
+    // angle brackets (read as HTML/XML) or longer than 1024 chars. Guard at build
+    // time so a bundle can't ship that fails to upload (claude-code#63081/#56376).
+    if (f.description && /[<>]/.test(f.description))
+      errors.push(`flow "${f.name}" description contains angle brackets (< or >), which claude.ai's plugin-upload validator rejects — rephrase without them`);
+    if (f.description && f.description.length > 1024)
+      errors.push(`flow "${f.name}" description is ${f.description.length} chars; claude.ai caps skill descriptions at 1024`);
     if (!f.body) errors.push(`flow "${f.name}" has an empty body`);
     if (seen.has(f.name)) errors.push(`duplicate skill name "${f.name}"`);
     seen.add(f.name);
