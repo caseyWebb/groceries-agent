@@ -46,6 +46,6 @@
 
 ## 8. Deploy (operator)
 
-- [ ] 8.1 Push Worker changes (`src/**`, `scripts/**`, `wrangler.jsonc`, lockfile) to `main`
+- [x] 8.1 Push Worker changes (`src/**`, `scripts/**`, `wrangler.jsonc`, lockfile) to `main`
 - [ ] 8.2 Operator kicks the deploy from the private data repo (`gh workflow run deploy.yml --repo <data-repo>`)
 - [ ] 8.3 (Out of scope here — note for the operator) backfill `course` across the existing corpus as a separate data-repo pass; until then un-coursed recipes are simply un-bucketed

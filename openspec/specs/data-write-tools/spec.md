@@ -70,6 +70,20 @@ Ready-to-eat is **per-tenant personal state**: `add_draft_ready_to_eat` and `upd
 - **WHEN** `grocery_list_ops` contains a `remove` (or `update`) for a name absent from the list
 - **THEN** that op is reported as a conflict in the result and the remaining ops (and the rest of the batch) are still committed
 
+### Requirement: meal_plan_ops carries open-world sides
+
+`commit_changes` `meal_plan_ops` SHALL accept an optional `sides` array of free-text open-world side names on an `add` operation, persisting it onto the upserted `[[planned]]` row alongside `recipe` and `planned_for`. An `add` for a recipe already present in the plan SHALL merge `sides` onto the existing row (consistent with the upsert-by-slug semantics for `planned_for`). The `sides` value SHALL be written verbatim (free text, not slug-resolved); a `remove` op SHALL drop the row and its `sides` together. No other domain or external service is touched by this field.
+
+#### Scenario: Add op persists open-world sides on the planned row
+
+- **WHEN** `commit_changes` is called with a `meal_plan_ops` `add` of `{ recipe: "miso-salmon", planned_for: "2026-06-14", sides: ["roasted broccoli"] }`
+- **THEN** the written `[[planned]]` row carries `recipe = "miso-salmon"`, `planned_for = "2026-06-14"`, and `sides = ["roasted broccoli"]`, in the same commit as the rest of the batch
+
+#### Scenario: Re-add merges sides onto the existing row
+
+- **WHEN** a `[[planned]]` row for `miso-salmon` already exists and a later `add` supplies `sides`
+- **THEN** the `sides` are merged onto that existing row rather than creating a duplicate row
+
 ### Requirement: Structural pre-commit validation
 
 The system SHALL validate every staged change structurally before committing — TOML and YAML/frontmatter parse cleanly and enumerated fields (e.g. recipe `status`, pantry `category`) hold legal values — using a Workers-runtime-safe (`workerd`) implementation, since the Node index-build validator cannot run in the Worker. A change that fails structural validation SHALL be rejected with a structured error and SHALL NOT be committed. Cross-reference and index validation remain the responsibility of the post-push build Action.
