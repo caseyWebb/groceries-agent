@@ -1,6 +1,6 @@
 # Architecture
 
-How the grocery agent works under the hood. This is the durable technical reference — the system as it *is*, not a roadmap. For the agent's conversational behavior see [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md); for file formats see [`docs/SCHEMAS.md`](docs/SCHEMAS.md); for the tool contract see [`docs/TOOLS.md`](docs/TOOLS.md); for working in the repo see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+How the grocery agent works under the hood. This is the durable technical reference — the system as it *is*, not a roadmap. For the agent's conversational behavior see [`AGENT_INSTRUCTIONS.md`](../AGENT_INSTRUCTIONS.md); for file formats see [`SCHEMAS.md`](SCHEMAS.md); for the tool contract see [`TOOLS.md`](TOOLS.md); for working in the repo see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Three components
 
@@ -42,7 +42,7 @@ The system is three pieces with one clean split: **the LLM does the fuzzy work; 
 
 - **Claude.ai** is the conversational surface and the reasoning. Each chat starts fresh; state lives in the data repo, not in chat history. The agent reads what it needs through MCP tools at the start of a conversation.
 - **The Worker** (this repo, root `src/`) is a Cloudflare Worker hosting the `grocery-mcp` MCP server — the domain tool surface (pantry, recipes, Kroger, substitutions, cart) — plus an OAuth 2.1 provider members connect their Claude.ai to. It is the locus of determinism and the multi-tenant gate.
-- **The data repo** (`<operator>/groceries-agent-data`, private) is the substrate: flat files (TOML + markdown) in git, with git history as the audit log. Created from [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template); see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+- **The data repo** (`<operator>/groceries-agent-data`, private) is the substrate: flat files (TOML + markdown) in git, with git history as the audit log. Created from [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template); see [`SELF_HOSTING.md`](SELF_HOSTING.md).
 
 There is no database, no scheduler, no agent framework, no CLI. Everything else is glue.
 
@@ -58,7 +58,7 @@ The whole design turns on putting the LLM only where genuinely-fuzzy judgment is
 
 **Everything else is deterministic code with no LLM in the loop:** file I/O, frontmatter parsing, recipe filtering and scoring, Kroger API calls, RSS/JSON-LD parsing, cart writes, git commits, index generation, validation.
 
-The MCP tool boundary is where this is enforced. Tools are **coarse and opinionated** — they wrap multi-step pipelines so the LLM can't bypass them. Raw building blocks (`kroger_raw_search`, `github_raw_write`, `cart_add_by_name`) are deliberately **not** exposed, because they would let the LLM skip the cache, the validation, or the SKU-matching pipeline. See [`docs/TOOLS.md`](docs/TOOLS.md) for the design philosophy and the full inventory.
+The MCP tool boundary is where this is enforced. Tools are **coarse and opinionated** — they wrap multi-step pipelines so the LLM can't bypass them. Raw building blocks (`kroger_raw_search`, `github_raw_write`, `cart_add_by_name`) are deliberately **not** exposed, because they would let the LLM skip the cache, the validation, or the SKU-matching pipeline. See [`TOOLS.md`](TOOLS.md) for the design philosophy and the full inventory.
 
 ## Multi-tenant identity
 
@@ -74,7 +74,7 @@ A **solo operator** is simply the degenerate case: one `users/<id>/` subtree.
 
 ## The data model
 
-The data repo is the system's memory. It splits two ways — shared vs per-tenant — and within a tenant, into a small set of intent files that must not be conflated. Field-level schemas live in [`docs/SCHEMAS.md`](docs/SCHEMAS.md); this is the conceptual map.
+The data repo is the system's memory. It splits two ways — shared vs per-tenant — and within a tenant, into a small set of intent files that must not be conflated. Field-level schemas live in [`SCHEMAS.md`](SCHEMAS.md); this is the conceptual map.
 
 ### Shared vs per-tenant
 
@@ -135,7 +135,7 @@ The hardest deterministic problem: turning a recipe ingredient string ("extra vi
 Every menu request surfaces a small number of new items the user hasn't taken a position on, drawn from three sources:
 
 - **RSS** (`fetch_rss_discoveries`) — recipe candidates from trusted blogs in `feeds.toml`, scored against the taste profile.
-- **Newsletter email** (optional) — a *push* source that reaches the bot-walled/paywalled sites RSS can't. The Worker exports an `email()` handler; Cloudflare Email Routing points a forwarder address at it. Candidates land in the shared `discoveries_inbox.toml` with unwrapped URLs and surface via `read_discovery_inbox`. See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) step 9.
+- **Newsletter email** (optional) — a *push* source that reaches the bot-walled/paywalled sites RSS can't. The Worker exports an `email()` handler; Cloudflare Email Routing points a forwarder address at it. Candidates land in the shared `discoveries_inbox.toml` with unwrapped URLs and surface via `read_discovery_inbox`. See [`SELF_HOSTING.md`](SELF_HOSTING.md) step 9.
 - **Kroger flyer** (`kroger_flyer`) — ready-to-eat candidates ride the flyer scan.
 
 New items persist in **`draft` state immediately**, not gated on the user expressing interest at proposal time — they often won't have an opinion then but might later ("actually, add that Serious Eats one"). Drafts are de-prioritized in later menu generation but remain available. Disposition is conversational: a rating/like → `active`; an explicit no → `rejected` (kept for de-dup); silence → stays draft. Items in draft past ~6 months auto-archive to avoid corpus bloat.
@@ -156,7 +156,7 @@ A useful side effect: the indexes are a public-ish artifact any tool can consume
 
 The same Worker, data, and indexes back two surfaces. What differs is which instruction file each consumes:
 
-1. **Claude.ai (the agent).** [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md) is the canonical source from which the **grocery-agent plugin** is generated (`scripts/build-plugin.mjs` → `npm run build:plugin`). The persona ships as small **library skills** (`grocery-core`, plus `grocery-cart`/`grocery-corpus` depth); each `### ` flow becomes a workflow skill prefixed with a prerequisite line that loads `grocery-core` once per session. The `grocery-mcp` connector is bundled, its URL baked into `.mcp.json` at build time (claude.ai doesn't honor a configurable plugin variable). The version auto-increments as `0.1.<commit-count>`, so claude.ai pulls each new build. Members install from a marketplace — nothing pasted. **Edit `AGENT_INSTRUCTIONS.md` and rebuild; never hand-edit the generated bundle under `plugin/`.**
+1. **Claude.ai (the agent).** [`AGENT_INSTRUCTIONS.md`](../AGENT_INSTRUCTIONS.md) is the canonical source from which the **grocery-agent plugin** is generated (`scripts/build-plugin.mjs` → `npm run build:plugin`). The persona ships as small **library skills** (`grocery-core`, plus `grocery-cart`/`grocery-corpus` depth); each `### ` flow becomes a workflow skill prefixed with a prerequisite line that loads `grocery-core` once per session. The `grocery-mcp` connector is bundled, its URL baked into `.mcp.json` at build time (claude.ai doesn't honor a configurable plugin variable). The version auto-increments as `0.1.<commit-count>`, so claude.ai pulls each new build. Members install from a marketplace — nothing pasted. **Edit `AGENT_INSTRUCTIONS.md` and rebuild; never hand-edit the generated bundle under `plugin/`.**
 2. **Claude Code (development).** `CLAUDE.md` is read natively as repo-development context. It does **not** auto-load `AGENT_INSTRUCTIONS.md` — that's the plugin build source, not dev context — but points to it for anyone who needs the persona.
 
 They are deliberately split so the agent persona isn't auto-loaded into a development session and vice versa.

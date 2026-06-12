@@ -1,18 +1,18 @@
 # Contributing
 
-How to work **on** the grocery-agent backend. For how the system is *built* (the technical model), read [`ARCHITECTURE.md`](ARCHITECTURE.md) first — this guide assumes it.
+How to work **on** the grocery-agent backend. For how the system is *built* (the technical model), read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first — this guide assumes it.
 
 > **One thing to get right up front.** This repo holds the agent's **backend**, not its persona. The agent's operational instructions — persona, conversational flows, behavior rules — live in [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md), which is the canonical source the **grocery-agent plugin** is generated from (`scripts/build-plugin.mjs`). Edit `AGENT_INSTRUCTIONS.md` and rebuild — **never hand-edit the generated bundle under `plugin/`**. Edit *this* repo's code/docs when changing how the *repo* is built; edit `AGENT_INSTRUCTIONS.md` when changing how the *agent* behaves. Different audiences.
 
 ## Repo map
 
-There is **no data at the root of this repo** — the data lives in a separate private data repo (see [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)). This repo is code + tooling:
+There is **no data at the root of this repo** — the data lives in a separate private data repo (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)). This repo is code + tooling:
 
 | Path | What it is |
 | --- | --- |
 | `src/`, `test/`, `wrangler.jsonc` | the repo root **is** the Cloudflare Worker (TypeScript) hosting the `grocery-mcp` MCP server + OAuth provider |
 | `scripts/` | index + static-site build tooling (`build-indexes.mjs`, `build-site.mjs`, `build-plugin.mjs`, `site-assets/`), run by data repos via reusable CI |
-| `docs/` | [`SCHEMAS.md`](docs/SCHEMAS.md) (file formats) · [`TOOLS.md`](docs/TOOLS.md) (the tool contract) · [`SELF_HOSTING.md`](docs/SELF_HOSTING.md) (operator setup) · `data-template/` (submodule) |
+| `docs/` | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the technical model) · [`SCHEMAS.md`](docs/SCHEMAS.md) (file formats) · [`TOOLS.md`](docs/TOOLS.md) (the tool contract) · [`SELF_HOSTING.md`](docs/SELF_HOSTING.md) (operator setup) · `data-template/` (submodule) |
 | `AGENT_INSTRUCTIONS.md` | the agent persona; build source for the `plugin/` bundle |
 | `openspec/` | the change/spec workflow — `changes/archive/` is the build history, `specs/` is the living contract |
 | `.github/workflows/` | `ci.yml` (the only push-triggered workflow) + reusable `data-*` workflows operators call |
@@ -100,4 +100,4 @@ openspec validate "<name>"          # validate artifacts
 - Match the surrounding code's idiom, naming, and comment density.
 - Config/structured files use **TOML**; prose files (recipes, taste, diet_principles, the instruction docs) stay **markdown**; recipe frontmatter is **YAML** (Obsidian renders it).
 - **Don't commit secrets.** The repo is public — anything needed to run that's gitignored gets documented in `README.md` / `.dev.vars.example`.
-- Keep the docs honest: a tool change updates `docs/TOOLS.md`; a schema change updates `docs/SCHEMAS.md`; an architectural shift updates `ARCHITECTURE.md`. The contract is the docs *and* the code — don't let them drift.
+- Keep the docs honest: a tool change updates `docs/TOOLS.md`; a schema change updates `docs/SCHEMAS.md`; an architectural shift updates `docs/ARCHITECTURE.md`. The contract is the docs *and* the code — don't let them drift.

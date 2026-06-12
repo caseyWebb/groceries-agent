@@ -45,7 +45,7 @@ Three components, one clean split: **the LLM does the fuzzy work; everything det
 - **The Worker** (this repo, `src/`) — a Cloudflare Worker hosting the MCP server: opinionated domain tools (Kroger matching, pantry verification, substitutions, atomic git commits) plus an **OAuth 2.1 provider** members connect their Claude.ai to via an operator-issued invite code.
 - **The data repo** (`<you>/groceries-agent-data`, private) — shared `recipes/` + reference data at the root, one `users/<username>/` subtree per member (pantry, preferences, ratings, notes). Git history is the audit log.
 
-The full technical picture — the determinism boundary, multi-tenant identity, the data model, the Kroger matching pipeline — is in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+The full technical picture — the determinism boundary, multi-tenant identity, the data model, the Kroger matching pipeline — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## This repo
 
@@ -55,8 +55,7 @@ The full technical picture — the determinism boundary, multi-tenant identity, 
 | `scripts/` | index + static-site + plugin build tooling, run by data repos via reusable CI |
 | `.github/workflows/` | `ci` (typecheck + tests) + reusable `data-*` workflows operators call |
 | `AGENT_INSTRUCTIONS.md` | the agent persona; source for the `plugin/` bundle installed in Claude.ai |
-| `docs/` | [SCHEMAS](docs/SCHEMAS.md) (file formats) · [TOOLS](docs/TOOLS.md) (tool contract) · [SELF_HOSTING](docs/SELF_HOSTING.md) (operator setup) |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | how the system is built |
+| `docs/` | [ARCHITECTURE](docs/ARCHITECTURE.md) (how it's built) · [SCHEMAS](docs/SCHEMAS.md) (file formats) · [TOOLS](docs/TOOLS.md) (tool contract) · [SELF_HOSTING](docs/SELF_HOSTING.md) (operator setup) |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to work in this repo |
 
 The data repo is created from the [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template), also vendored here as a submodule at `docs/data-template/` for reference.
