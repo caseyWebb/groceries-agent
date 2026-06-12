@@ -39,10 +39,11 @@ on:
         description: "Optional: Kroger client secret; set alongside KROGER_CLIENT_ID."
         required: false
 
-# contents: write so the deploy can pin auto-provisioned KV ids back into the data
-# repo's wrangler.jsonc. The caller must grant the same.
-permissions:
-  contents: write
+# No `permissions:` block here on purpose: a reusable workflow that REQUESTS more
+# than the caller grants fails at startup. The pin-back step needs `contents: write`,
+# which the CALLER grants (the template deploy.yml does); if it doesn't, the pin-back
+# degrades gracefully (warns, doesn't fail the deploy). So existing callers without a
+# permissions block keep working — their explicit-id configs make the pin-back a no-op.
 
 jobs:
   deploy:
@@ -137,5 +138,7 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add "$CONFIG"
             git commit -m "chore(deploy): pin auto-provisioned KV namespace ids"
-            git push
+            if ! git push; then
+              echo "::warning::Could not push pinned KV ids (the deploy caller needs 'permissions: contents: write'). The deploy succeeded; paste the ids from wrangler.jsonc manually, or grant the permission so it auto-pins next time."
+            fi
           fi
