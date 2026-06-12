@@ -1,6 +1,7 @@
 ---
 name: grocery-cart
 description: "Internal shared rules for the grocery agent, loaded by reference from the workflow skills (via their prerequisite line). Not invoked on its own."
+user-invocable: false
 ---
 
 ## The grocery list and the cart

@@ -114,12 +114,16 @@ test('renderWorkflowSkill prepends the loader and does NOT inline tier content',
   // tier content lives in the library skills, not inlined here.
   assert.doesNotMatch(md, /Capture vs flush/);
   assert.doesNotMatch(md, /Shared recipes/);
+  // workflow skills stay user-invocable (no flag) — only library skills are hidden.
+  assert.doesNotMatch(md, /user-invocable/);
 });
 
 test('renderLibrarySkill emits a grocery-<tier> skill with a near-empty description', () => {
   const md = renderLibrarySkill('cart', parseInstructions(DOC).persona.cart);
   assert.match(md, /^---\nname: grocery-cart\ndescription: "/);
   assert.match(md, /Not invoked on its own/);
+  // hidden from user slash-command discovery, still model-loadable by reference.
+  assert.match(md, /\nuser-invocable: false\n/);
   assert.match(md, /Capture vs flush/);
 });
 

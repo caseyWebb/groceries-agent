@@ -1,6 +1,7 @@
 ---
 name: grocery-corpus
 description: "Internal shared rules for the grocery agent, loaded by reference from the workflow skills (via their prerequisite line). Not invoked on its own."
+user-invocable: false
 ---
 
 ## Shared recipes, my own kitchen

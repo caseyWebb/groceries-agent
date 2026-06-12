@@ -153,7 +153,7 @@ export function registerGroceryListTools(server: McpServer, gh: GitHubClient): v
     "add_to_grocery_list",
     {
       description:
-        "Add an item to the grocery list (ingredient/product level, no SKU). Re-adding an existing name merges into it (union for_recipes, reconcile quantity) rather than duplicating. New items start status=active. `domain` (default 'grocery') is the kind of store it's bought at (grocery | home-improvement | garden | pharmacy | …) — set it for a non-grocery item (e.g. '2x4 lumber' → 'home-improvement') so the in-store walk for that store-type includes it and a grocery walk excludes it.",
+        "Add an item to the grocery list (ingredient/product level, no SKU). Re-adding an existing name merges into it (union for_recipes, reconcile quantity) rather than duplicating. New items start status=active. `domain` (default 'grocery') is the kind of store it's bought at (grocery | home-improvement | garden | pharmacy | …) — set it for a non-grocery item (e.g. '2x4 lumber' → 'home-improvement').",
       inputSchema: {
         name: z.string(),
         quantity: z.string().optional(),

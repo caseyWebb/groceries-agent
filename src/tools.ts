@@ -368,7 +368,8 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   server.registerTool(
     "read_recipe",
     {
-      description: "Read a single recipe's parsed frontmatter and markdown body by slug.",
+      description:
+        "Read a single recipe's parsed frontmatter and markdown body by slug. Frontmatter includes `standalone` (true = a complete one-pot plate that needs no side) and `pairs_with` (slugs of sides remembered for this main).",
       inputSchema: { slug: z.string() },
     },
     ({ slug }) =>
@@ -433,7 +434,8 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   server.registerTool(
     "read_preferences",
     {
-      description: "Return the user's parsed preferences.",
+      description:
+        "Return the user's parsed preferences. Throws `not_found` when none are set up yet — the empty signal for a new member, not an error.",
       inputSchema: {},
     },
     () =>
@@ -451,7 +453,8 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   server.registerTool(
     "read_taste",
     {
-      description: "Return the user's taste profile narrative (markdown).",
+      description:
+        "Return the user's taste profile narrative (markdown). Throws `not_found` when none is set up yet — the empty signal for a new member, not an error.",
       inputSchema: {},
     },
     () =>
@@ -464,7 +467,8 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   server.registerTool(
     "read_diet_principles",
     {
-      description: "Return the user's diet-principles narrative (variety rules, markdown).",
+      description:
+        "Return the user's diet-principles narrative (variety rules, markdown). Throws `not_found` when none are set up yet — the empty signal for a new member, not an error.",
       inputSchema: {},
     },
     () =>

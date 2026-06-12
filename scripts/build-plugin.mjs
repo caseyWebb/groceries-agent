@@ -190,9 +190,11 @@ export function validateParsed(parsed) {
   return { errors };
 }
 
-// A library skill = one persona tier's content, loaded by reference.
+// A library skill = one persona tier's content, loaded by reference. `user-invocable:
+// false` hides it from the user's slash-command discovery while keeping it
+// model-loadable by a workflow's prerequisite line (the only way it's ever loaded).
 export function renderLibrarySkill(tier, content) {
-  const fm = `---\nname: ${librarySkillName(tier)}\ndescription: ${yamlQuote(LIBRARY_DESCRIPTION)}\n---\n`;
+  const fm = `---\nname: ${librarySkillName(tier)}\ndescription: ${yamlQuote(LIBRARY_DESCRIPTION)}\nuser-invocable: false\n---\n`;
   return `${fm}\n${content.trim()}\n`;
 }
 
