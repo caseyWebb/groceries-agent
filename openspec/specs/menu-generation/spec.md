@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Defines the agent-side orchestration of a menu request end-to-end: the parallel context pre-pass (all choice-independent context — pantry, preferences, taste, diet history, real cook history, and both discovery pools — loaded before recipe selection; Kroger flyer conditional on fulfillment mode), holistic reasoning over that loaded context to select mains and sides, recipe notes surfaced alongside recipe content, proposal assembly (perishable callouts, meal-prep, Kroger-gated sale features, recipe discoveries, sized to `default_cooking_nights`), capture of the plan and grocery list, a post-save ready-to-eat no-cook-night offer (Kroger only), and an order handoff prompt. **No full-cart pricing happens in this flow** — costing the cart is the place-grocery-order skill's job; the only `kroger_prices` use here is a targeted deal-check to verify specific sale claims during selection. Behavioral requirements are realized in `AGENT_INSTRUCTIONS.md` and validated conversationally.
+Defines the agent-side orchestration of a menu request end-to-end: the parallel context pre-pass (all choice-independent context — pantry, preferences, taste, diet history, real cook history, and both discovery pools — loaded before recipe selection; Kroger flyer conditional on fulfillment mode), holistic reasoning over that loaded context to select mains and sides, recipe notes surfaced alongside recipe content, proposal assembly (perishable callouts, meal-prep, Kroger-gated sale features, recipe discoveries, sized to `default_cooking_nights`), capture of the plan and grocery list, and an order handoff prompt. **No full-cart pricing happens in this flow** — costing the cart is the place-grocery-order skill's job; the only `kroger_prices` use here is a targeted deal-check to verify specific sale claims during selection. Behavioral requirements are realized in `AGENT_INSTRUCTIONS.md` and validated conversationally.
 ## Requirements
 ### Requirement: Menu-request context pre-pass
 
-On a menu request, the agent SHALL gather all choice-independent context in a single parallel batch **before** settling on recipes. The batch SHALL always include: `read_pantry()`, `read_preferences()`, `read_taste()`, `read_diet_principles()`, `retrospective("month")`, `fetch_rss_discoveries()`, `read_discovery_inbox()`, and `list_recipes({ status: "active" })`. When the user's fulfillment mode is Kroger (`preferences [stores].primary == "kroger"`), the batch SHALL additionally include `kroger_flyer()`; for a non-Kroger store it SHALL be omitted and sale signals SHALL NOT influence recipe selection for that session. `ready_to_eat_available` is NOT part of this batch — it is called after the plan is saved (see "Ready-to-eat no-cook night offer"). `kroger_prices` is NOT issued in this batch; it is used only as a targeted deal-check for a handful of comparable items when verifying a specific sale claim during selection (see "Sale-steering as a soft selection pull"), and SHALL NOT be a full pre-pass over the proposed ingredient set — that costing belongs to the place-grocery-order flow. The `list_recipes` call is the **single faceted load**: because `course` rides every entry's frontmatter, one call returns active mains and sides with full metadata and the agent buckets them by `course` — there SHALL NOT be a separate later call to source sides. The **raw pantry** SHALL be loaded as a *selection* input — before recipes are chosen — so that what the member already has informs which recipes are proposed (and so the agent can spot inventory stand-ins by reasoning over it), not merely the post-selection buy list. There SHALL be no `verify_pantry_*` call: pantry matching, freshness, and inventory substitutions are the agent reasoning over the loaded pantry. The fulfillment mode SHALL be determined from the loaded preferences before the batch fires; if genuinely unknown, that is the one thing to confirm first.
+On a menu request, the agent SHALL gather all choice-independent context in a single parallel batch **before** settling on recipes. The batch SHALL always include: `read_pantry()`, `read_preferences()`, `read_taste()`, `read_diet_principles()`, `retrospective("month")`, `fetch_rss_discoveries()`, `read_discovery_inbox()`, and `list_recipes({ status: "active" })`. When the user's fulfillment mode is Kroger (`preferences [stores].primary == "kroger"`), the batch SHALL additionally include `kroger_flyer()`; for a non-Kroger store it SHALL be omitted and sale signals SHALL NOT influence recipe selection for that session. `ready_to_eat_available` is NOT called during the meal-plan flow — it is a buy-time tool used by the flush skills. `kroger_prices` is NOT issued in this batch; it is used only as a targeted deal-check for a handful of comparable items when verifying a specific sale claim during selection (see "Sale-steering as a soft selection pull"), and SHALL NOT be a full pre-pass over the proposed ingredient set — that costing belongs to the place-grocery-order flow. The `list_recipes` call is the **single faceted load**: because `course` rides every entry's frontmatter, one call returns active mains and sides with full metadata and the agent buckets them by `course` — there SHALL NOT be a separate later call to source sides. The **raw pantry** SHALL be loaded as a *selection* input — before recipes are chosen — so that what the member already has informs which recipes are proposed (and so the agent can spot inventory stand-ins by reasoning over it), not merely the post-selection buy list. There SHALL be no `verify_pantry_*` call: pantry matching, freshness, and inventory substitutions are the agent reasoning over the loaded pantry. The fulfillment mode SHALL be determined from the loaded preferences before the batch fires; if genuinely unknown, that is the one thing to confirm first.
 
 #### Scenario: Open-ended request gathers all choice-independent context before proposing
 
@@ -152,25 +152,6 @@ On agreement, the agent SHALL persist the menu's to-buy items to `grocery_list.t
 
 - **WHEN** the pantry already covers everything the agreed menu needs
 - **THEN** the agent says so explicitly, commits any pantry verifications, writes the agreed recipes to `meal_plan.toml`, and adds nothing to `grocery_list.toml`
-
-### Requirement: Ready-to-eat no-cook night offer (Kroger only)
-
-After the meal plan and grocery list are saved, if the user's fulfillment mode is Kroger and they have a configured ready-to-eat catalog, the agent SHALL call `ready_to_eat_available()` and offer **1–2** currently-fulfillable (curbside/delivery) heat-and-eat options for an easy or eat-out-adjacent night. The offer SHALL come after the plan is committed — it is a post-save add-on, never a gate or part of the proposal itself. On the user's agreement, the agent SHALL add the chosen items to the grocery list. The agent SHALL skip this step entirely for non-Kroger sessions or when the catalog is empty. On-sale RTE discovery and restock-of-RTE-favorites are **not** part of this step — those are buy-time concerns handled by the flush skills.
-
-#### Scenario: Post-save RTE offer is Kroger-only and post-save
-
-- **WHEN** the user's fulfillment mode is Kroger and the meal plan was just saved
-- **THEN** the agent calls `ready_to_eat_available()` and offers 1–2 currently-fulfillable heat-and-eat options, after the commit
-
-#### Scenario: Non-Kroger session skips the RTE offer
-
-- **WHEN** the user's fulfillment mode is not Kroger
-- **THEN** `ready_to_eat_available` is not called and no RTE no-cook-night offer is made
-
-#### Scenario: RTE items added to the list only on agreement
-
-- **WHEN** the agent makes the RTE offer
-- **THEN** nothing is added to the grocery list until the user says yes
 
 ### Requirement: Order handoff offer
 
