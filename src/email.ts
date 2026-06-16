@@ -310,8 +310,8 @@ export function appendInboxEntry(
       parsed = {};
     }
   }
-  let entries = Array.isArray(parsed.entries)
-    ? (parsed.entries as Record<string, unknown>[])
+  let entries: InboxEntry[] = Array.isArray(parsed.entries)
+    ? (parsed.entries as InboxEntry[])
     : [];
 
   // Skip if the same email was already indexed (same sender + subject + date).
@@ -323,10 +323,7 @@ export function appendInboxEntry(
 
   // Prune entries older than INBOX_MAX_AGE_DAYS before appending.
   const cutoff = cutoffDate(INBOX_MAX_AGE_DAYS);
-  entries = entries.filter((e) => {
-    const d = typeof e.received_at === "string" ? e.received_at : "";
-    return !d || d >= cutoff;
-  });
+  entries = entries.filter((e) => !e.received_at || e.received_at >= cutoff);
 
   entries.push(entry);
   const text = stringifyTomlWithHeader(existingRaw ?? INBOX_HEADER, { ...parsed, entries });
