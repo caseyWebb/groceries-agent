@@ -8,7 +8,6 @@ import {
   extractEmailBody,
   appendInboxEntry,
   addSources,
-  INBOX_MAX_AGE_DAYS,
   type Allowlist,
 } from "../src/email.js";
 import { parseToml } from "../src/parse.js";
