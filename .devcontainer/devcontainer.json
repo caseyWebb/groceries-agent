@@ -1,0 +1,8 @@
+{
+  "name": "grocery-agent",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers-contrib/features/mise:latest": {}
+  },
+  "postCreateCommand": "mise install && npm install"
+}
