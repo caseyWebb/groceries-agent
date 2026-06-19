@@ -14,6 +14,7 @@ import { resolveTenant, directoryFromEnv } from "./tenant.js";
 import { handleOAuth } from "./oauth.js";
 import { handleAuthorize } from "./authorize.js";
 import { handleInboundEmail, rejectReasonFor, type InboundMessage } from "./email.js";
+import { buildWarmDeps, runWarmTick } from "./flyer-warm.js";
 
 /**
  * The gated MCP API. Only reached for `/mcp` requests the provider has already
@@ -91,5 +92,19 @@ export default {
       reason = "A processing error occurred while indexing the message.";
     }
     if (reason) message.setReject(reason);
+  },
+  /**
+   * Cron-driven flyer warm (flyer-cache-warming). One trigger fires on a short
+   * cadence; each tick advances the cursor sweep (`flyer-warm.ts`) — building the
+   * plan, scanning the next batch, or no-opping when the sweep is complete. Thin by
+   * design: all logic + the free-tier per-tick budgeting live in `runWarmTick`. A
+   * failed tick is logged and retried next tick (the cursor only advances on success).
+   */
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      await runWarmTick(buildWarmDeps(env));
+    } catch (e) {
+      console.error("[flyer-warm] tick failed:", e instanceof Error ? e.message : String(e));
+    }
   },
 };

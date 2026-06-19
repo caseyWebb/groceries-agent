@@ -33,7 +33,8 @@
 		"DATA_REF": "main"
 	},
 	// KV. KROGER_KV: per-tenant Kroger refresh tokens (`kroger:refresh:<tenant>`) +
-	// PKCE verifiers (`kroger:pkce:<state>`). TENANT_KV: the tenant directory /
+	// PKCE verifiers (`kroger:pkce:<state>`) + the warmed flyer cache (`flyer:{locationId}`
+	// rollups, the sweep `flyer:cursor`, and the persisted `flyer:plan`). TENANT_KV: the tenant directory /
 	// allowlist (`tenant:<id>`) + invite codes (`invite:<code>`). OAUTH_KV: the OAuth
 	// provider's clients/codes/grants/tokens (binding name is required by the lib).
 	// Create each namespace and paste its id:  npx wrangler kv namespace create <BINDING>
@@ -51,6 +52,18 @@
 			"id": "fad701614c5a4a7e950207fd6772e225"
 		}
 	],
+	// Flyer warm (flyer-cache-warming). ONE trigger on a short cadence drives a
+	// cursor-based sweep (src/flyer-warm.ts): each tick builds the plan, scans the
+	// next ≤12-unit batch (kept under the free-tier 50-external-subrequest + ~10ms-CPU
+	// per-invocation caps), or no-ops once the sweep is complete. The sweep itself only
+	// re-runs ~daily — that cadence lives in code (DEFAULT_REFRESH_MS), not here; the
+	// frequent cron just gives the sweep ticks to make progress on. Idle ticks are a
+	// single cheap KV read. Test locally with `wrangler dev --test-scheduled`.
+	"triggers": {
+		"crons": [
+			"*/5 * * * *"
+		]
+	},
 	"observability": {
 		"enabled": true
 	}

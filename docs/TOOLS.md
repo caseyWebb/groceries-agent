@@ -251,7 +251,7 @@ Add items to or remove items from the caller's staples list. Writes `users/<user
 Add items to the caller's bulk-buy watchlist. Writes `users/<username>/stockup.toml`. **Add-only**, deduped by normalized item `name` (re-adding a name is a no-op; existing rows untouched), mirroring `update_discovery_sources`.
 
 **Params:**
-- `items` (array, optional): `[{ name, unit?, typical_purchase?, notes?, baseline_price?, buy_at_or_below? }]`. Only `name` is required. The price fields are **advisory** — nothing in the Worker gates on them (`kroger_flyer` scans stockup item *names* only; "is this a good price?" is the agent's judgment over the live flyer), so omit them when unknown.
+- `items` (array, optional): `[{ name, unit?, typical_purchase?, notes?, baseline_price?, buy_at_or_below? }]`. Only `name` is required. The price fields are **advisory** — nothing in the Worker gates on them ("is this a good price?" is the agent's judgment over the flyer and live prices), so omit them when unknown.
 - `freezer_capacity_estimate` (string, optional): `tight | moderate | spacious` — the top-level capacity hint.
 
 **Returns:**
@@ -414,19 +414,18 @@ Read the **group's** attributed notes for a store, aggregated across everyone at
 
 ### `kroger_flyer(filter)`
 
-Synthesized sale scan — the public API has **no** flyer/circular endpoint, so this searches terms and keeps products with a **meaningful discount** — on sale **and** at least `min_savings_pct`% off (default **5%**) — deduped by `productId`. This excludes both Kroger's `promo == regular` non-sale echo and penny / near-zero markdowns. Scans **precise** terms (caller-passed — current menu ingredients, stockup item names, and any substitute candidates the caller enumerates from world knowledge) and **broad** curated category terms. Explicitly **non-exhaustive**: each term returns a relevance-ranked page (no sort-by-discount), so it samples the head of each category.
+Synthesized sale scan for the caller's store, served from a **cache warmed in the background** — the public API has **no** flyer/circular endpoint, and a live per-call fan-out (one search per term) would exceed the Worker's per-request subrequest limit, so a single cron sweep materializes a per-location flyer into KV and this tool reads it (see ARCHITECTURE → *the flyer warm*). Returns fulfillable products with a **meaningful discount** — on sale **and** at least `min_savings_pct`% off (default **5%**), deduped by `productId`. The noise floor (a real sale — `promo > 0 && promo < regular` — and fulfillable) is applied at *warm* time; the `min_savings_pct` deal floor is applied at *read*, so it stays caller-tunable without re-fetching. Explicitly **non-exhaustive** (each broad term sampled a relevance-ranked head, no sort-by-discount) and may be a few hours stale.
 
 **Params:**
-- `filter` (object, optional): `{ terms?, against_stockup?, min_savings_pct? }`
-  - `terms` (array of strings): precise context terms (current menu ingredients, enumerated substitute candidates, etc.).
-  - `against_stockup` (boolean): also scan `stockup.toml` item names.
-  - `min_savings_pct` (number, default 5): minimum percentage markdown required to keep a product. Pass lower (e.g. 3) to widen for bulk stockup items; pass higher to tighten. The `promo == regular` noise filter and fake-sale detection are unconditional regardless of this value.
+- `filter` (object, optional): `{ min_savings_pct? }`
+  - `min_savings_pct` (number, default 5): minimum percentage markdown to keep. Applied at read over the warmed rollup — pass lower (e.g. 3) to widen, higher to tighten.
 
 **Returns:**
-- `{ items: [{ sku, brand, description, size, price: { regular, promo }, savings, categories, matched_terms }] }`
-  - `matched_terms` (array of strings): every scanned term that surfaced this product — use it to distinguish a precise stockup/menu match (`"chicken thighs"`) from a broad category match (`"meat"`).
+- `{ items: [{ sku, brand, description, size, price: { regular, promo }, savings, categories, matched_terms }], as_of }`
+  - `matched_terms` (array of strings): every broad term that surfaced this product during the sweep.
+  - `as_of` (string | null): ISO 8601 timestamp of this store's last warm, or `null` when the store has not been swept yet.
 
-**Notes:** Degrades gracefully when `flyer_terms.toml` is absent/empty — still scans the precise terms and returns a smaller list. Each term is paginated a couple of pages deep.
+**Notes:** Pure cache read — issues **no** external Kroger subrequest. Cold/absent cache returns `{ items: [], as_of: null }` (never an error), the same graceful degradation as an absent/empty `flyer_terms.toml` (which now feeds the **warm job**, not this tool). The flyer may be a few hours stale; for a specific purchase the order path re-prices live. There are **no** ad-hoc `terms` / `against_stockup` params — checking whether a specific stockup item or substitute candidate is on sale lives in the place-groceries flow, not here.
 
 ### `kroger_prices(ingredients)`
 
