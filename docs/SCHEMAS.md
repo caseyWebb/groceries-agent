@@ -353,9 +353,17 @@ terms = [
 ```
 
 **Notes:**
-- The public Kroger API has no flyer/circular endpoint. `kroger_flyer` synthesizes a sale list by searching terms and keeping products where `promo > 0`. These **broad** terms supplement the **precise** terms from caller context (current menu ingredients, `stockup.toml`, and any substitute candidates the caller enumerates from world knowledge and passes as `terms`), widening the net past the known-items list.
-- A flat top-level `terms` array of strings. **Absent or empty degrades gracefully**: `kroger_flyer` still scans the precise context terms and returns a (smaller) sale list rather than erroring.
+- The public Kroger API has no flyer/circular endpoint. The sale list is synthesized by searching these terms and keeping fulfillable, genuinely-discounted products. As of the flyer-warm change these broad terms are consumed by the **background warm** (`src/flyer-warm.ts`, a scheduled cron) that materializes a per-store cache, **not** by a live `kroger_flyer` call — the tool reads the cache. (Precise, per-tenant checks — a specific stockup item or substitute candidate on sale — moved to the place-groceries flow.)
+- A flat top-level `terms` array of strings. **Absent or empty degrades gracefully**: the sweep has no broad terms, the per-store rollup is empty, and `kroger_flyer` returns an empty list rather than erroring. Terms are trimmed, lowercased, and deduped by the warm, so case-variant duplicates ("Olive Oil" / "olive oil") are never scanned twice.
 - Each term is scanned a few pages deep, but the scan is **relevance**-ranked (no sort-by-discount), so it samples the head of each category — deep sales on low-relevance items can be missed. This limitation is documented, not hidden.
+
+## Warmed flyer cache (KV, not a repo file)
+
+Derived, time-bound state written by the flyer warm into the `KROGER_KV` namespace (not the data repo — it's an ephemeral cache, regenerated each sweep). Documented here for completeness; nothing edits it by hand.
+
+- `flyer:{locationId}` → `{ sweep_id, as_of, items }` — the per-store rollup. `items` are noise-floor `FlyerItem`s (`{ sku, brand, description, size, price: { regular, promo }, savings, categories, matched_terms }`); `as_of` is epoch ms of the last contribution (surfaced to `kroger_flyer` readers as an ISO 8601 string). Shared across all tenants at that store.
+- `flyer:cursor` → `{ sweep_id, index, total, last_refresh_at, done }` — tiny per-tick progress record; the idle-tick read.
+- `flyer:plan` → `{ sweep_id, units }` — the ordered `(locationId, term)` unit list, built once per sweep so later ticks don't re-enumerate over GitHub.
 
 ## feeds.toml
 

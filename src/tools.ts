@@ -34,8 +34,6 @@ import {
   matchIngredient,
   isFulfillable,
   isOnSale,
-  isFlyerWorthy,
-  dedupeFlyerHits,
   MIN_FLYER_DISCOUNT,
   type CachedMapping,
   type MatchContext,
@@ -43,6 +41,8 @@ import {
   type MatchResult,
 } from "./matching.js";
 import { compareUnitPrice } from "./unit-price.js";
+import { readFlyerRollup, filterByMinSavings } from "./flyer-warm.js";
+import type { KvStore } from "./kroger-user.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -67,8 +67,6 @@ const pantryFilterShape = {
 };
 
 const flyerFilterShape = {
-  terms: z.array(z.string()).optional(),
-  against_stockup: z.boolean().optional(),
   /** Minimum markdown to keep, as a percent of regular price (default 5). */
   min_savings_pct: z.number().optional(),
 };
@@ -509,62 +507,20 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     "kroger_flyer",
     {
       description:
-        "Synthesized sale scan (the public API has no flyer/circular endpoint). Scans precise context terms (passed `terms` plus, with `against_stockup`, the caller's stockup item names — including any substitute candidates the caller enumerates from world knowledge and passes in `terms`) and broad curated category terms, keeps only MEANINGFUL discounts (on sale AND at least `min_savings_pct` off — default 5%, so neither Kroger's promo==regular non-sale echo nor penny/near-zero markdowns leak through; pass a lower `min_savings_pct` to widen, e.g. for a bulk stockup item), dedupes by productId. Each kept item carries `matched_terms` — every scanned term that surfaced it — so you can tell a stockup/menu match from a broad-category one. Explicitly non-exhaustive: each term returns a relevance-ranked page, not a discount-sorted one.",
+        "Synthesized sale scan for the caller's store, served from a cache warmed in the background (the public API has no flyer/circular endpoint, and a live per-call fan-out would exceed the Worker's per-request subrequest limit). Returns `{ items, as_of }`: `items` are fulfillable products genuinely on sale (deduped by productId, each carrying every broad term that surfaced it in `matched_terms`), kept only when marked down at least `min_savings_pct` of the regular price — default 5%, applied at read so you can widen with a lower value. `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when the store has not been swept yet — in which case `items` is empty, NOT an error. Explicitly non-exhaustive and may be a few hours stale; for a specific purchase the order path re-prices live. This tool takes no ad-hoc terms — checking whether a specific stockup item or substitute candidate is on sale is handled in the place-groceries flow, not here.",
       inputSchema: { filter: z.object(flyerFilterShape).optional() },
     },
     ({ filter }) =>
       runTool(async () => {
         const locationId = await getLocationId();
-        const f = filter ?? {};
-
-        const precise = [...(f.terms ?? [])];
-        if (f.against_stockup) {
-          const text = await readOptional(gh, "stockup.toml");
-          if (text) {
-            const items = (parseToml(text, "stockup.toml").items as Record<string, unknown>[]) ?? [];
-            for (const it of items) if (typeof it.name === "string") precise.push(it.name);
-          }
-        }
-        // Broad terms: degrade gracefully when flyer_terms.toml is absent or empty.
-        const broad: string[] = [];
-        const flyerText = await readOptional(sharedGh, "flyer_terms.toml");
-        if (flyerText) {
-          const parsed = parseToml(flyerText, "flyer_terms.toml");
-          if (Array.isArray(parsed.terms)) {
-            for (const t of parsed.terms) if (typeof t === "string") broad.push(t);
-          }
-        }
-
-        const terms = [...new Set([...precise, ...broad].map((t) => t.trim()).filter(Boolean))];
-
-        // min_savings_pct is a percent (5 = 5%); convert to the fraction isFlyerWorthy wants.
+        // min_savings_pct is a percent (5 = 5%); convert to a fraction of regular price.
         const minDiscount =
-          typeof f.min_savings_pct === "number" ? f.min_savings_pct / 100 : MIN_FLYER_DISCOUNT;
-
-        const PAGES = 2;
-        const LIMIT = 20;
-        // Scan terms concurrently (bounded by the Kroger client cap); within a term
-        // keep the ≤2-page sequential walk + break-on-empty. dedupeFlyerHits then
-        // merges by productId in term order, so each product carries every surfacing
-        // term in matched_terms — no order-dependent first-wins to preserve.
-        const perTerm = await Promise.all(
-          terms.map(async (term) => {
-            const found: KrogerCandidate[] = [];
-            for (let page = 0; page < PAGES; page++) {
-              const candidates = await kroger.search(term, {
-                locationId,
-                limit: LIMIT,
-                start: page * LIMIT,
-              });
-              if (candidates.length === 0) break;
-              for (const c of candidates) {
-                if (isFlyerWorthy(c, minDiscount) && isFulfillable(c)) found.push(c);
-              }
-            }
-            return { term, candidates: found };
-          }),
-        );
-        return { items: dedupeFlyerHits(perTerm) };
+          typeof filter?.min_savings_pct === "number" ? filter.min_savings_pct / 100 : MIN_FLYER_DISCOUNT;
+        // Pure cache read: the warm (flyer-warm.ts) stores noise-floor candidates per
+        // location; the 5% deal floor is applied HERE so it stays caller-tunable.
+        const rollup = await readFlyerRollup(env.KROGER_KV as unknown as KvStore, locationId);
+        if (!rollup) return { items: [], as_of: null };
+        return { items: filterByMinSavings(rollup.items, minDiscount), as_of: rollup.as_of };
       }),
   );
 

@@ -101,6 +101,8 @@ Then add the **GitHub App private key** as a Worker secret in the Cloudflare das
 
 *(CLI alternative: `npx wrangler secret put GITHUB_APP_PRIVATE_KEY < app-pkcs8.pem`.)* Delete `app-pkcs8.pem` when done.
 
+**A background flyer warm starts running automatically.** Your `wrangler.jsonc` ships one **cron trigger**; once deployed, a scheduled sweep periodically pre-computes the Kroger sale flyer for each member's store into the existing `KROGER_KV` namespace, so `kroger_flyer` is a fast cache read instead of a live scan. No extra setup — it reuses your Kroger credentials (step 3) and is **comfortably within the Cloudflare free tier** (a single trigger; each tick does a small bounded batch and most ticks are an idle no-op). It's driven by the root-level `flyer_terms.toml` in your data repo (broad sale-scan categories); absent or empty, the flyer just comes back empty. Cron invocations are billed to your account like any request.
+
 ## 6. Onboard yourself
 
 Run the **Onboard member** Action (your data repo → Actions) with `username: <you>` (leave `invite_code` blank to auto-generate). It allowlists you in KV and mints your invite code (shown in the run summary — **visible only to you**, since this is your private repo). Your `users/<you>/` subtree is created automatically on your first write (e.g. setting your Kroger store) — the commit engine creates files at any path.
