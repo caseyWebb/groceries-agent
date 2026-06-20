@@ -24,9 +24,9 @@
 
 ## 5. Slim the data-repo template (coupled to the merge — land together)
 
-- [ ] 5.1 In the template repo (`groceries-agent-data-template`, the `docs/data-template` submodule), slim `wrangler.jsonc` to the minimal operator-owned set per design Decision 5: keep `vars.GITHUB_APP_ID` (+ optional `name`, `workers_dev`/`routes`, id-less KV bindings); **remove** code-level keys (`main`, `compatibility_date`, `compatibility_flags`, `triggers`, `observability`). Update the file's explanatory comments to say code-level config is merged in at deploy.
+- [x] 5.1 (maintainer) DONE @ groceries-agent-data-template f65e410 — slimmed to name/workers_dev/vars + id-less KV. Original: In the template repo (`groceries-agent-data-template`, the `docs/data-template` submodule), slim `wrangler.jsonc` to the minimal operator-owned set per design Decision 5: keep `vars.GITHUB_APP_ID` (+ optional `name`, `workers_dev`/`routes`, id-less KV bindings); **remove** code-level keys (`main`, `compatibility_date`, `compatibility_flags`, `triggers`, `observability`). Update the file's explanatory comments to say code-level config is merged in at deploy.
 - [x] 5.2 Verify the **KV-id write-back** path still pins provisioned ids into the slim operator config across deploys (creating `kv_namespaces` if absent); adjust the write-back step in `data-deploy.yml` if it assumes the section exists.
-- [ ] 5.3 Bump the `docs/data-template` submodule pointer in this repo to the slimmed template commit (do this only alongside the merge step from group 3, never before).
+- [x] 5.3 Bump the `docs/data-template` submodule pointer in this repo to the slimmed template commit (do this only alongside the merge step from group 3, never before).
 
 ## 6. Docs (same pass — no drift)
 
