@@ -101,7 +101,13 @@ Then add the **GitHub App private key** as a Worker secret in the Cloudflare das
 
 *(CLI alternative: `npx wrangler secret put GITHUB_APP_PRIVATE_KEY < app-pkcs8.pem`.)* Delete `app-pkcs8.pem` when done.
 
-**A background flyer warm starts running automatically.** Your `wrangler.jsonc` ships one **cron trigger**; once deployed, a scheduled sweep periodically pre-computes the Kroger sale flyer for each member's store into the existing `KROGER_KV` namespace, so `kroger_flyer` is a fast cache read instead of a live scan. No extra setup — it reuses your Kroger credentials (step 3) and is **comfortably within the Cloudflare free tier** (a single trigger; each tick does a small bounded batch and most ticks are an idle no-op). It's driven by the root-level `flyer_terms.toml` in your data repo (broad sale-scan categories); absent or empty, the flyer just comes back empty. Cron invocations are billed to your account like any request.
+**A background flyer warm runs on a cron — but you MUST add the trigger to YOUR data repo's `wrangler.jsonc`.** The deploy **overlays your data-repo `wrangler.jsonc` over the code's** (`cp` in `data-deploy.yml`), so the `triggers.crons` block that ships in the *code* repo is overwritten and never deployed — `wrangler deploy` is declarative about triggers, so without it in the *deployed* config, **no cron is registered** (the Worker still serves fine; the flyer just stays empty). To turn the warm on, add this top-level block to your data repo's `wrangler.jsonc` and redeploy:
+
+```jsonc
+"triggers": { "crons": ["*/5 * * * *"] },
+```
+
+Once registered, a scheduled sweep periodically pre-computes the Kroger sale flyer for each member's store into the existing `KROGER_KV` namespace, so `kroger_flyer` is a fast cache read instead of a live scan. It reuses your Kroger credentials (step 3) and is **comfortably within the Cloudflare free tier** (a single trigger; each tick does a small bounded batch and most ticks are an idle no-op). It's driven by the root-level `flyer_terms.toml` in your data repo (broad sale-scan categories); absent or empty, the flyer just comes back empty. Cron invocations are billed to your account like any request. *(This manual step is required because the deploy replaces, rather than merges, the wrangler config — a known limitation; see the deploy notes.)*
 
 **Monitoring the background jobs (optional).** The warm and the inbound-email handler run with no one watching, so the Worker exposes a `/health` endpoint that reports each background job's last-run/freshness. To use it:
 

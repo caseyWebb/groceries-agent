@@ -62,6 +62,11 @@
 	// re-runs ~daily — that cadence lives in code (DEFAULT_REFRESH_MS), not here; the
 	// frequent cron just gives the sweep ticks to make progress on. Idle ticks are a
 	// single cheap KV read. Test locally with `wrangler dev --test-scheduled`.
+	// HEADS-UP: the operator deploy (data-deploy.yml) OVERLAYS the operator's data-repo
+	// wrangler.jsonc over this file (a `cp`, not a merge), so this `triggers` block does
+	// NOT deploy on its own — each operator must replicate it in their own data-repo
+	// wrangler.jsonc (see SELF_HOSTING.md). A deploy-merge of code-level config would
+	// remove that requirement.
 	"triggers": {
 		"crons": [
 			"*/5 * * * *"
