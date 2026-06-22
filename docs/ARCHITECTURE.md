@@ -178,9 +178,9 @@ A GitHub Action regenerates derived data on every push to the data repo's `recip
 
 - **`_indexes/recipes.json`** — all recipe frontmatter aggregated as one slug-keyed JSON document (objective fields only). The Worker reads it once per filtering operation — one API call instead of fetching every recipe file.
 
-Ready-to-eat is per-tenant (`users/<username>/ready_to_eat.toml`), so it has **no** aggregate index; the Worker reads each member's catalog directly (the build still structurally validates any it finds).
+Ready-to-eat is per-tenant and now lives in the `profile:<username>` KV bundle (no aggregate index, no GitHub file); the Worker reads each member's catalog from KV and validates it at write time.
 
-The same build runs **validation**: every TOML parses, every recipe frontmatter is well-formed, `pairs_with` references resolve, and status values are in the enum. Validation failures fail the Action (red CI) but don't block reads — the Worker keeps reading HEAD. The point is fast feedback, not gating. The Worker reimplements a *structural* subset of this validation in TypeScript for write-time checks (it can't run the Node validator on `workerd`).
+The same build runs **validation** over what GitHub still owns: every TOML parses, every recipe frontmatter is well-formed, `pairs_with` references resolve, status values are in the enum, and `stores/`, the discovery files, and per-tenant `cooking_log.toml` are structurally checked. KV-backed per-tenant state (profile bundle + `state:<username>:*`) is **not** build-validated — it has no GitHub file to check; the Worker is its sole validator, at write time. Validation failures fail the Action (red CI) but don't block reads — the Worker keeps reading HEAD. The point is fast feedback, not gating. The Worker reimplements a *structural* subset of this validation in TypeScript for write-time checks (it can't run the Node validator on `workerd`).
 
 A useful side effect: the indexes are a public-ish artifact any tool can consume — `scripts/build-site.mjs` builds a static GitHub Pages cookbook from them with no backend.
 

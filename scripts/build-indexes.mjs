@@ -42,8 +42,6 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Recommended-but-optional fields whose absence signals an incomplete migration.
 // last_cooked / rating / discovered_at are legitimately null by design and are NOT warned.
 const RECOMMENDED_FIELDS = ['protein', 'time_total', 'ingredients_key'];
-const READY_TO_EAT_MEALS = new Set(['breakfast', 'lunch', 'dinner']);
-const READY_TO_EAT_STATUSES = new Set(['active', 'draft', 'rejected']);
 // Recipe bodies must carry these H2 sections so site generation can reliably
 // locate the ingredient list (for checkboxes) and the step list (for read-aloud).
 // Extra H2 sections (e.g. a future `## Notes`) are permitted and render generically.
@@ -249,56 +247,10 @@ export async function buildRecipeIndexes(recipesDir) {
   return { recipes, errors, warnings };
 }
 
-// --- ready-to-eat catalog validation -------------------------------------
-
-// Ready-to-eat is per-tenant (users/<id>/ready_to_eat.toml) — no aggregate index.
-// Structural-validate one already-parsed catalog; returns an array of errors.
-export function validateReadyToEatCatalog(parsed, rel) {
-  const errors = [];
-  const items = Array.isArray(parsed.items) ? parsed.items : [];
-  const slugs = new Set();
-  for (const it of items) {
-    if (typeof it.name !== 'string' || !it.name) errors.push(`${rel}: ready-to-eat item missing required \`name\``);
-    if (typeof it.slug !== 'string' || !it.slug) {
-      errors.push(`${rel}: ready-to-eat item missing required \`slug\``);
-      continue;
-    }
-    if (slugs.has(it.slug)) errors.push(`${rel}: duplicate ready-to-eat slug \`${it.slug}\``);
-    slugs.add(it.slug);
-    if (!READY_TO_EAT_MEALS.has(it.meal)) {
-      errors.push(`${rel}: \`meal\` = ${JSON.stringify(it.meal)} is not one of breakfast | lunch | dinner`);
-    }
-    if (it.status != null && !READY_TO_EAT_STATUSES.has(it.status)) {
-      errors.push(`${rel}: \`status\` = ${JSON.stringify(it.status)} is not one of active | draft | rejected`);
-    }
-    if (it.rating != null && (!Number.isInteger(it.rating) || it.rating < 1 || it.rating > 5)) {
-      errors.push(`${rel}: ready-to-eat \`rating\` = ${JSON.stringify(it.rating)} must be an integer 1–5`);
-    }
-  }
-  return errors;
-}
-
-// --- kitchen inventory validation ----------------------------------------
-
-// Kitchen inventory is per-tenant (users/<id>/kitchen.toml) — no aggregate index.
-// `owned` is the gating list: an array of EQUIPMENT_VOCAB slugs (the gate's left
-// operand, kept vocabulary-clean here AND in the Worker write subset). `[notes]`
-// is freeform and only parse-checked. An absent file is valid (unknown inventory).
-export function validateKitchenInventory(parsed, rel) {
-  const errors = [];
-  if (parsed.owned != null) {
-    if (!Array.isArray(parsed.owned)) {
-      errors.push(`${rel}: kitchen \`owned\` must be an array of equipment slugs (got ${JSON.stringify(parsed.owned)})`);
-    } else {
-      for (const slug of parsed.owned) {
-        if (typeof slug !== 'string' || !EQUIPMENT_VOCAB.includes(slug)) {
-          errors.push(`${rel}: kitchen \`owned\` slug ${JSON.stringify(slug)} is not in the controlled vocabulary`);
-        }
-      }
-    }
-  }
-  return errors;
-}
+// Ready-to-eat and kitchen inventory moved to DATA_KV (the profile:<username>
+// bundle); they are no longer GitHub-backed, so the build validates neither.
+// Both are validated at write time by the Worker (src/validate.ts via
+// update_ready_to_eat / update_kitchen).
 
 // --- shared store-registry validation ------------------------------------
 
@@ -358,11 +310,11 @@ export function validateDiscoverySources(parsed, rel) {
 
 // --- cooking-log + meal-plan validation ---------------------------------
 
-// Validate cooking_log.toml + meal_plan.toml against the recipe set, and
-// soft-check that frontmatter last_cooked agrees with the log. Pure: takes the
-// already-parsed objects (or null when a file is absent) plus the recipes map.
-// Returns { errors, warnings }.
-export function validateCookingArtifacts({ recipes, cookingLog, mealPlan }) {
+// Validate cooking_log.toml against the recipe set. Pure: takes the already-parsed
+// object (or null when the file is absent) plus the recipes map. Returns
+// { errors, warnings }. (meal_plan.toml moved to DATA_KV — validated by the Worker
+// at write time, not here.)
+export function validateCookingArtifacts({ recipes, cookingLog }) {
   // Accept a quoted ISO string OR a bare TOML date (smol-toml parses those as
   // Date). Returns the YYYY-MM-DD string, or null when not a valid date.
   const isoOf = (v) => {
@@ -396,25 +348,6 @@ export function validateCookingArtifacts({ recipes, cookingLog, mealPlan }) {
       }
     } else if (typeof e.name !== 'string' || e.name.length === 0) {
       errors.push(`${where}: ${e.type} entry is missing "name"`);
-    }
-  });
-
-  const planned = mealPlan && Array.isArray(mealPlan.planned) ? mealPlan.planned : [];
-  planned.forEach((p, i) => {
-    const where = `meal_plan.toml planned ${i + 1}`;
-    if (typeof p.recipe !== 'string' || p.recipe.length === 0) {
-      errors.push(`${where}: missing "recipe" (slug)`);
-    } else if (!slugs.has(p.recipe)) {
-      errors.push(`${where}: references unknown slug "${p.recipe}"`);
-    }
-    if (p.planned_for != null && isoOf(p.planned_for) === null) {
-      errors.push(`${where}: invalid planned_for (${JSON.stringify(p.planned_for)})`);
-    }
-    // sides is an optional array of FREE-TEXT open-world side names (no slug) riding
-    // on the main's row — shape-only, never slug-resolved. Present-but-not-a-string-
-    // array is a hard failure (like a non-array perishable_ingredients).
-    if (p.sides != null && (!Array.isArray(p.sides) || p.sides.some((s) => typeof s !== 'string'))) {
-      errors.push(`${where}: sides must be an array of side names (got ${JSON.stringify(p.sides)})`);
     }
   });
 
@@ -470,20 +403,12 @@ export async function run({ recipesDir, root = REPO_ROOT } = {}) {
   const { recipes, errors: rErr, warnings } = await buildRecipeIndexes(recipesDir);
   const { parsed, errors: tErr } = await parseCheckToml(root);
 
-  // Ready-to-eat is per-tenant — structural-validate every ready_to_eat.toml the
-  // walk found (root during single-user bootstrap, users/<id>/ once migrated). No index.
-  const rteErr = [];
+  // Shared store registry (stores/<slug>.toml) — structural-validate each store.
+  // (ready_to_eat.toml / kitchen.toml moved to DATA_KV — no longer build-validated.)
+  const storeErr = [];
   for (const [file, obj] of parsed) {
-    if (file === path.join(root, 'ready_to_eat.toml') || file.endsWith(`${path.sep}ready_to_eat.toml`)) {
-      rteErr.push(...validateReadyToEatCatalog(obj, path.relative(REPO_ROOT, file)));
-    }
-    // Kitchen inventory is per-tenant (users/<id>/kitchen.toml) — vocab-check owned.
-    if (file === path.join(root, 'kitchen.toml') || file.endsWith(`${path.sep}kitchen.toml`)) {
-      rteErr.push(...validateKitchenInventory(obj, path.relative(REPO_ROOT, file)));
-    }
-    // Shared store registry (stores/<slug>.toml) — structural-validate each store.
     if (file.startsWith(`${path.join(root, 'stores')}${path.sep}`) && file.endsWith('.toml')) {
-      rteErr.push(...validateStore(obj, path.relative(REPO_ROOT, file)));
+      storeErr.push(...validateStore(obj, path.relative(REPO_ROOT, file)));
     }
   }
 
@@ -495,12 +420,11 @@ export async function run({ recipesDir, root = REPO_ROOT } = {}) {
   if (sources) discErr.push(...validateDiscoverySources(sources, 'discovery_sources.toml'));
 
   const cookingLog = parsed.get(path.join(root, 'cooking_log.toml')) ?? null;
-  const mealPlan = parsed.get(path.join(root, 'meal_plan.toml')) ?? null;
-  const { errors: cErr, warnings: cWarn } = validateCookingArtifacts({ recipes, cookingLog, mealPlan });
+  const { errors: cErr, warnings: cWarn } = validateCookingArtifacts({ recipes, cookingLog });
 
   return {
     indexes: { recipes },
-    errors: [...rErr, ...tErr, ...rteErr, ...discErr, ...cErr],
+    errors: [...rErr, ...tErr, ...storeErr, ...discErr, ...cErr],
     warnings: [...warnings, ...cWarn],
   };
 }
