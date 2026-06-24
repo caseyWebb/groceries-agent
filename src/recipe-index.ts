@@ -110,6 +110,32 @@ export async function loadRecipeIndex(env: Env): Promise<RecipeIndex> {
 }
 
 /**
+ * Load every recipe embedding from the sibling `recipe_embeddings` table (migration
+ * 0007) into a `slug → vector` map, for the semantic-search cosine pass. Vectors are
+ * stored as JSON-array TEXT; a row that fails to parse or isn't a numeric array is
+ * skipped (a derived index self-heals on the next reconcile — one bad row must not
+ * abort a search). An empty/absent table yields an empty map (nothing indexed yet).
+ *
+ * This is the "load embeddings through the Worker" path the design flags as B's
+ * runway limit: fine at friend-group scale (hundreds × 768 floats), and the prefilter
+ * still bounds the COSINE work to survivors even though the load is whole-table. The
+ * written-down Vectorize promotion trigger covers the eventual scale-out.
+ */
+export async function loadRecipeEmbeddings(env: Env): Promise<Map<string, number[]>> {
+  const rows = await db(env).all<{ slug: string; embedding: string }>(
+    "SELECT slug, embedding FROM recipe_embeddings",
+  );
+  const map = new Map<string, number[]>();
+  for (const { slug, embedding } of rows) {
+    const parsed = parseJsonColumn(embedding);
+    if (Array.isArray(parsed) && parsed.every((n) => typeof n === "number")) {
+      map.set(slug, parsed as number[]);
+    }
+  }
+  return map;
+}
+
+/**
  * Map canonicalized-free `source_url` → slug for every indexed recipe with a
  * source. Discovery canonicalizes both sides before comparing, so this returns the
  * raw stored URL; the caller (discovery.ts) canonicalizes. Used by the enumeration

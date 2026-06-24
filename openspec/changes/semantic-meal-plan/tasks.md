@@ -28,13 +28,15 @@
 
 ## 3. recipe_semantic_search tool (additive, backend-agnostic)
 
-- [ ] 3.1 Implement `recipe_semantic_search(specs[])`: per spec, SQL facet-prefilter → cosine over survivors → top-K compact rows (slug, title, description, key facets, score)
-- [ ] 3.2 Enforce hard constraints (dietary, makeability, anti-similarity/variety facets) in the SQL filter so semantic rank cannot override them
-- [ ] 3.3 Favorites k-NN re-rank: boost candidates by max cosine to the caller's favorited recipes (nearest-liked, not centroid); no-op on cold start
-- [ ] 3.4 Freshness boost from `last_cooked`/never-cooked, reading `rotation.resurface_after_days` / `rotation.novelty_boost` from preferences
-- [ ] 3.5 Batch K specs into one tool round-trip; return results grouped by spec
-- [ ] 3.6 Freeze the tool contract as backend-agnostic; register in `src/tools.ts` and document in `docs/TOOLS.md`
-- [ ] 3.7 Unit tests for facet-gating, cosine ranking, k-NN re-rank, freshness boost (pure, injectable deps like `src/matching.ts`)
+> Reuses `filterRecipes` (pure, in-memory over the loaded index) for the hard gate, then a brute-force cosine over the `recipe_embeddings` join — matching the codebase's actual list_recipes shape (JS filter over the index, not raw SQL). Pure ranking in `src/semantic-search.ts`; thin wiring in `src/tools.ts`.
+
+- [x] 3.1 Implement `recipe_semantic_search(specs[])`: per spec, facet-prefilter → cosine over survivors → top-K compact rows (slug, title, description, protein/cuisine/time_total, score, similarity)
+- [x] 3.2 Hard constraints (dietary, makeability, anti-similarity/variety facets) run in the same `filterRecipes` gate as list_recipes, so semantic rank only reorders survivors and can never admit a rejected recipe
+- [x] 3.3 Favorites k-NN re-rank: boost candidates by max cosine to the caller's favorited recipes (nearest-liked, not centroid); no-op on cold start. **Favorite source is `rating >= 4`** (the documented backfill) until group 5 adds `overlay.favorite` — the cutover repoints only the source, not the re-rank math
+- [x] 3.4 Freshness boost from `last_cooked`/never-cooked, reading `rotation.resurface_after_days` / `rotation.novelty_boost` from preferences (defaults until group 5.6 formalizes the schema)
+- [x] 3.5 Batch K specs into one tool round-trip (all vibes embed in one Workers AI call); return results grouped by spec `label`
+- [x] 3.6 Freeze the tool contract as backend-agnostic; registered in `src/tools.ts` and documented in `docs/TOOLS.md`
+- [x] 3.7 Unit tests for facet-gating, cosine ranking, k-NN re-rank, freshness boost (pure, injectable deps like `src/matching.ts` — `test/semantic-search.test.ts`)
 
 ## 4. Experimental semantic-meal-plan skill (additive, invoke-by-name)
 

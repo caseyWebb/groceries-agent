@@ -35,6 +35,26 @@ List recipes matching filters. Reads the recipe index from the D1 `recipes` tabl
 - `exclude_cooked_within_days` (number): drop recipes cooked within the last N days. Caller-supplied window, not a stored default.
 - `not_cooked_since` (date): recipes with `last_cooked: null` (never cooked) **pass** this filter.
 
+### `recipe_semantic_search(specs)`
+
+Semantic recipe retrieval (**experimental**, `semantic-meal-plan`). Embeds each spec's free-text `vibe` and ranks the facet-prefiltered corpus by cosine similarity, re-ranked by taste and freshness. Backend-agnostic contract: the middle leg is a brute-force cosine over a D1 `recipe_embeddings` join today; a future Vectorize swap is invisible to the caller. Reads the index (`src/recipe-index.ts`), the embeddings (`recipe_embeddings`), and the caller's overlay / cooking log / preferences. An empty/unindexed corpus returns empty result groups; an unreadable index returns `index_unavailable`.
+
+**Params:**
+- `specs` (array, required, ≥1): each `{ vibe, label, facets?, k? }`:
+  - `vibe` (string): free-text description of the dish wanted (`"rich slow-braised cold-weather comfort"`), embedded and matched by **meaning**, not keyword.
+  - `label` (string): an arbitrary tag echoed back so the caller can tell each spec's results apart.
+  - `facets` (object, optional): the **same** hard filters as `list_recipes` (`status`, `protein`, `cuisine`, `course`, `query`, `season`, `dietary`, `max_time_total`, `not_cooked_since`, `exclude_cooked_within_days`, `include_unmakeable`). They **constrain** the candidate set; semantic rank only reorders within them and can never admit a recipe a facet rejects.
+  - `k` (number, optional): top-K for this spec (default `10`, max `50`).
+
+**Returns:**
+- `{ results: [{ label, recipes: [{ slug, title, description, protein, cuisine, time_total, score, similarity }] }] }` — one group per input spec, in spec order. `similarity` is the raw query↔recipe cosine; `score` is the blended rank (cosine + favorite + freshness). Both rounded to 4 dp.
+
+**Notes:**
+- **Facet gate first, then cosine.** Hard constraints are applied by the same `filterRecipes` gate as `list_recipes` (including the default makeability gate); cosine only ranks the survivors, so it cannot override a constraint.
+- **Re-rank = cosine + two small nudges.** `+ favoriteWeight · max cosine to any favorited recipe` (taste *direction* — nearest-liked, not a centroid; no-op on cold start) and `+ freshness` (never-cooked surfaced by `novelty_boost`; cooked-within-`resurface_after_days` linearly demoted). The nudges are deliberately small relative to cosine — they reorder near-ties, never drag an irrelevant recipe up. Favorites are the caller's `rating >= 4` recipes (the documented backfill for the forthcoming `favorite` flag); `rotation.{novelty_boost,resurface_after_days}` come from preferences, defaulting when unset.
+- **Unembedded recipes are omitted.** A just-imported recipe whose embedding the cron hasn't reconciled yet is excluded from ranking (not an error) — it stays findable via `list_recipes` until the next reconcile.
+- **One round-trip, one embedding call.** All spec vibes embed in a single Workers AI request; pass several diverse specs (a vibe, a variety/wildcard, a never-cooked novelty) for recall rather than many calls.
+
 ### `read_recipe(slug)`
 
 Read a single recipe's full content (frontmatter + body).
