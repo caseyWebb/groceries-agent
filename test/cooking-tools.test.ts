@@ -2,21 +2,6 @@ import { describe, it, expect } from "vitest";
 import { loadRetrospective } from "../src/cooking-tools.js";
 import type { Env } from "../src/env.js";
 
-// Minimal KV fake (meal-plan state; loadRetrospective no longer reads the profile
-// from KV — the overlay is the D1 `overlay` table, served empty by envWith below).
-function fakeKv(initial: Record<string, string> = {}): KVNamespace {
-  const store = new Map(Object.entries(initial));
-  return {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => {
-      store.set(k, v);
-    },
-    delete: async (k: string) => {
-      store.delete(k);
-    },
-  } as unknown as KVNamespace;
-}
-
 // A fake D1Database that routes by SQL: the `cooking_log LEFT JOIN recipes` window
 // query returns `joinRows`; `SELECT * FROM recipes` returns `recipeRows`.
 // `throwOnRecipes` simulates an unreadable recipes table (index_unavailable).
@@ -82,7 +67,7 @@ describe("loadRetrospective — D1 cooking_log + recipe index", () => {
     // The join row carries protein/cuisine already COALESCE'd in (recipe-derived).
     const joinRows = [{ type: "recipe", date: "2026-06-10", recipe: "tacos", name: null, protein: "beef", cuisine: "mexican" }];
     const env = envWith(joinRows, [TACOS_ROW]);
-    const r = await loadRetrospective(env, fakeKv(), "everett", "all");
+    const r = await loadRetrospective(env, "everett", "all");
     expect(r.recipes_cooked.find((x) => x.recipe === "tacos")).toBeTruthy();
     expect(r.protein_mix.beef).toBe(1);
     expect(r.cuisine_mix.mexican).toBe(1);
@@ -91,7 +76,7 @@ describe("loadRetrospective — D1 cooking_log + recipe index", () => {
   it("counts a non-recipe entry's inline dims", async () => {
     const joinRows = [{ type: "ad_hoc", date: "2026-06-11", recipe: null, name: "stir fry", protein: "chicken", cuisine: null }];
     const env = envWith(joinRows, []);
-    const r = await loadRetrospective(env, fakeKv(), "everett", "all");
+    const r = await loadRetrospective(env, "everett", "all");
     expect(r.protein_mix.chicken).toBe(1);
     expect(r.cuisine_mix.unknown).toBe(1);
   });
@@ -99,14 +84,14 @@ describe("loadRetrospective — D1 cooking_log + recipe index", () => {
   it("surfaces index_unavailable when the recipes table is unreadable", async () => {
     const joinRows = [{ type: "recipe", date: "2026-06-10", recipe: "tacos", name: null, protein: "beef", cuisine: "mexican" }];
     const env = envWith(joinRows, [], { throwOnRecipes: true });
-    await expect(loadRetrospective(env, fakeKv(), "everett", "all")).rejects.toMatchObject({
+    await expect(loadRetrospective(env, "everett", "all")).rejects.toMatchObject({
       code: "index_unavailable",
     });
   });
 
   it("an empty log is not an error — empty history", async () => {
     const env = envWith([], []);
-    const r = await loadRetrospective(env, fakeKv(), "everett", "all");
+    const r = await loadRetrospective(env, "everett", "all");
     expect(r.recipes_cooked).toEqual([]);
   });
 });

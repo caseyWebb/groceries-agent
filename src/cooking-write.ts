@@ -9,9 +9,11 @@
 // D1 in slice 1) — an unresolved slug is a structured `not_found`, written nowhere.
 //
 // Side effect preserved from commit_changes: a recipe entry clears that slug from
-// the caller's meal plan (still KV until slice 5). last_cooked is NEVER written —
-// it is derived by query (getLastCookedMap), so logging a recipe implicitly updates
-// the recipe's effective last_cooked with no second write.
+// the caller's meal plan. With the meal plan now in D1 (slice 5), the cooking-log
+// INSERT and the `meal_plan` row DELETE run in ONE D1 `batch` (transactional clear —
+// resolves the slice-2 cross-store seam). last_cooked is NEVER written — it is derived
+// by query (getLastCookedMap), so logging a recipe implicitly updates the recipe's
+// effective last_cooked with no second write.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -19,8 +21,7 @@ import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { ToolError, runTool } from "./errors.js";
 import { validateNewEntry, type CookingLogEntry } from "./cooking-log.js";
-import { applyMealPlanOps } from "./meal-plan.js";
-import { getMealPlanState, writeMealPlanState } from "./user-kv.js";
+import { mealPlanDeleteStmt } from "./session-db.js";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -29,7 +30,6 @@ function today(): string {
 export function registerCookingWriteTools(
   server: McpServer,
   env: Env,
-  dataKv: KVNamespace,
   username: string,
 ): void {
   server.registerTool(
@@ -72,26 +72,26 @@ export function registerCookingWriteTools(
           }
         }
 
-        await db(env).run(
-          "INSERT INTO cooking_log (tenant, date, type, recipe, name, protein, cuisine) " +
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-          username,
-          entry.date,
-          entry.type,
-          entry.recipe ?? null,
-          entry.name ?? null,
-          entry.protein ?? null,
-          entry.cuisine ?? null,
-        );
-
-        // Recipe entry: clear that recipe from the KV meal plan (the side effect
-        // commit_changes performed). Cross-store (D1 + KV) and so non-atomic — the
-        // same non-atomicity commit_changes had; resolves when the meal plan joins D1.
+        // The cooking-log INSERT and (for a recipe entry) the meal-plan row DELETE run
+        // in ONE D1 transaction — both per-tenant tables are in D1 now, so the clear is
+        // atomic with the log write (resolves the slice-2 cross-store seam).
+        const stmts: D1PreparedStatement[] = [
+          db(env).prepare(
+            "INSERT INTO cooking_log (tenant, date, type, recipe, name, protein, cuisine) " +
+              "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            username,
+            entry.date,
+            entry.type,
+            entry.recipe ?? null,
+            entry.name ?? null,
+            entry.protein ?? null,
+            entry.cuisine ?? null,
+          ),
+        ];
         if (entry.type === "recipe" && entry.recipe) {
-          const current = await getMealPlanState(dataKv, username);
-          const { items, applied } = applyMealPlanOps(current, [{ op: "remove", recipe: entry.recipe }]);
-          if (applied.length > 0) await writeMealPlanState(dataKv, username, items);
+          stmts.push(mealPlanDeleteStmt(env, username, entry.recipe));
         }
+        await db(env).batch(stmts);
 
         return { logged: entry };
       }),

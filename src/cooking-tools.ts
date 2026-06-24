@@ -1,6 +1,6 @@
 // Read + analysis tools for the cooking-history / meal-planning capabilities:
-//   read_meal_plan  — current committed cook intent (KV-backed, for session resume)
-//   update_meal_plan — add/remove planned entries in KV
+//   read_meal_plan  — current committed cook intent (D1-backed, for session resume)
+//   update_meal_plan — add/remove planned entries in the D1 `meal_plan` table
 //   retrospective   — aggregate the D1 cooking_log over a period (real mixes,
 //                     cadence, cook-vs-convenience, ready-to-eat favorites,
 //                     underused), joining type=recipe rows to the recipe index for
@@ -13,13 +13,13 @@ import type { Env } from "./env.js";
 import { ToolError, runTool } from "./errors.js";
 import { db } from "./db.js";
 import type { CookingLogEntry } from "./cooking-log.js";
-import { applyMealPlanOps, type MealPlanOp } from "./meal-plan.js";
+import { type MealPlanOp } from "./meal-plan.js";
 import { retrospective, type RetrospectiveResult } from "./retrospective.js";
 import { loadRecipeIndex } from "./recipe-index.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
 import { readOverlay } from "./profile-db.js";
 import type { RecipeIndex } from "./recipes.js";
-import { getMealPlanState, writeMealPlanState } from "./user-kv.js";
+import { readMealPlan, applyMealPlanRowOps } from "./session-db.js";
 
 /** One D1 `cooking_log LEFT JOIN recipes` row (protein/cuisine already COALESCE'd). */
 interface CookingLogJoinRow {
@@ -42,7 +42,6 @@ interface CookingLogJoinRow {
  */
 export async function loadRetrospective(
   env: Env,
-  _dataKv: KVNamespace,
   username: string,
   period: string,
 ): Promise<RetrospectiveResult> {
@@ -93,7 +92,6 @@ export async function loadRetrospective(
 export function registerCookingTools(
   server: McpServer,
   env: Env,
-  dataKv: KVNamespace,
   username: string,
 ): void {
   server.registerTool(
@@ -105,7 +103,7 @@ export function registerCookingTools(
     },
     () =>
       runTool(async () => {
-        const planned = await getMealPlanState(dataKv, username);
+        const planned = await readMealPlan(env, username);
         return { planned };
       }),
   );
@@ -114,7 +112,7 @@ export function registerCookingTools(
     "update_meal_plan",
     {
       description:
-        "Add or remove planned meal entries. `add` upserts by recipe slug (updating planned_for and merging sides); `remove` drops every row for the slug. Call this after logging a cooked meal to remove it from the plan. Returns { applied, conflicts } with no commit_sha (KV-backed).",
+        "Add or remove planned meal entries. `add` upserts by recipe slug (updating planned_for and merging sides); `remove` drops every row for the slug. Call this after logging a cooked meal to remove it from the plan. Returns { applied, conflicts } with no commit_sha (D1-backed).",
       inputSchema: {
         ops: z.array(
           z.object({
@@ -128,11 +126,7 @@ export function registerCookingTools(
     },
     ({ ops }) =>
       runTool(async () => {
-        const current = await getMealPlanState(dataKv, username);
-        const { items, applied, conflicts } = applyMealPlanOps(current, ops as MealPlanOp[]);
-        if (applied.length > 0) {
-          await writeMealPlanState(dataKv, username, items);
-        }
+        const { applied, conflicts } = await applyMealPlanRowOps(env, username, ops as MealPlanOp[]);
         return { applied, conflicts };
       }),
   );
@@ -144,6 +138,6 @@ export function registerCookingTools(
         "Aggregate cooking history over a period from the cooking log. period accepts 'Nd' (e.g. '30d'), 'week', 'month', 'quarter', 'year', or 'all'. Returns recipes_cooked, protein_mix, cuisine_mix (non-recipe entries counted via inline dims; missing → 'unknown'), cadence (cooks/week, recipe+ad_hoc only), cook_vs_convenience (cooked vs ready_to_eat), ready_to_eat_favorites (frequency-ranked), and underused (active recipes not cooked in the window).",
       inputSchema: { period: z.string().optional() },
     },
-    ({ period }) => runTool(() => loadRetrospective(env, dataKv, username, period ?? "month")),
+    ({ period }) => runTool(() => loadRetrospective(env, username, period ?? "month")),
   );
 }
