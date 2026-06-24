@@ -4,7 +4,6 @@ import {
   extractRecipeSources,
   indexSourceToSlug,
   buildCandidates,
-  flattenInbox,
   slugify,
   buildNewRecipe,
   type FeedEntry,
@@ -163,54 +162,3 @@ describe("buildNewRecipe", () => {
   });
 });
 
-describe("flattenInbox", () => {
-  const inbox = `
-[[entries]]
-from = "newsletter@seriouseats.com"
-subject = "This week's dinners"
-received_at = "2026-06-11"
-body = "Weeknight Chili https://www.seriouseats.com/chili\\nSheet-Pan Salmon https://www.seriouseats.com/salmon"
-
-[[entries]]
-from = "alice@example.com"
-subject = "Check this out"
-received_at = "2026-06-12"
-body = "You should try this: https://www.seriouseats.com/soup"
-`;
-
-  it("returns a list of emails with from/subject/received_at/body", () => {
-    const emails = flattenInbox(inbox);
-    expect(emails).toHaveLength(2);
-    expect(emails[0]).toMatchObject({
-      from: "newsletter@seriouseats.com",
-      subject: "This week's dinners",
-      received_at: "2026-06-11",
-    });
-    expect(emails[0].body).toContain("https://www.seriouseats.com/chili");
-    expect(emails[0]).not.toHaveProperty("url");
-    expect(emails[0]).not.toHaveProperty("candidates");
-  });
-
-  it("returns all emails without URL-based dedup (body is for LLM parsing)", () => {
-    const emails = flattenInbox(inbox);
-    expect(emails).toHaveLength(2);
-    expect(emails.map((e) => e.from)).toContain("alice@example.com");
-  });
-
-  it("returns an empty list for absent or malformed input", () => {
-    expect(flattenInbox(null)).toEqual([]);
-    expect(flattenInbox("")).toEqual([]);
-    expect(flattenInbox("this is = not valid = toml [[[")).toEqual([]);
-  });
-
-  it("returns an empty body string when the body field is absent", () => {
-    const emails = flattenInbox(`
-[[entries]]
-from = "x@y.com"
-subject = "No body"
-received_at = "2026-06-11"
-`);
-    expect(emails).toHaveLength(1);
-    expect(emails[0].body).toBe("");
-  });
-});

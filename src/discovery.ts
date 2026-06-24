@@ -11,7 +11,6 @@ import { normalizePerishables } from "./matching.js";
 import { serializeMarkdown, stripEmptyVarietyDimensions } from "./serialize.js";
 import { ToolError } from "./errors.js";
 import { truncate } from "./text.js";
-import { parseToml } from "./parse.js";
 import type { FeedItem } from "./feeds.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -91,36 +90,8 @@ export function buildCandidates(entries: FeedEntry[], seen: Set<string>): Candid
   return out;
 }
 
-/** One inbox email from `discoveries_inbox.toml`, for surfacing to the agent. */
-export interface InboxEmail {
-  from: string;
-  subject: string;
-  received_at: string | null;
-  body: string;
-}
-
-/**
- * Read the shared `discoveries_inbox.toml` (an array of `[[entries]]`, each with
- * `from`/`subject`/`received_at`/`body`) into a list of emails for the agent to
- * parse. The agent reads each `body` and identifies recipe titles + URLs itself.
- * Absent/malformed → empty list.
- */
-export function flattenInbox(inboxRaw: string | null): InboxEmail[] {
-  if (!inboxRaw) return [];
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = parseToml(inboxRaw, "discoveries_inbox.toml");
-  } catch {
-    return [];
-  }
-  const entries = Array.isArray(parsed.entries) ? (parsed.entries as Record<string, unknown>[]) : [];
-  return entries.map((entry) => ({
-    from: typeof entry.from === "string" ? entry.from : "",
-    subject: typeof entry.subject === "string" ? entry.subject : "",
-    received_at: typeof entry.received_at === "string" ? entry.received_at || null : null,
-    body: typeof entry.body === "string" ? entry.body : "",
-  }));
-}
+// The discovery inbox is the D1 `discovery_candidates` table now (slice 6) — read via
+// corpus-db `readDiscoveryInbox(env)` (no more TOML flatten).
 
 /** Title → plain slug (lowercase, accents stripped, non-alphanumerics → hyphens). */
 export function slugify(title: string): string {

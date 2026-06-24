@@ -13,24 +13,21 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import type { GitHubClient } from "./github.js";
-import { readOptional } from "./gh-read.js";
-import { parseToml } from "./parse.js";
 import { ToolError, runTool } from "./errors.js";
 import { commitFiles } from "./commit.js";
 import { fetchWithBrowserHeaders } from "./http.js";
-import { parseFeed, addFeeds, FEEDS_PATH } from "./feeds.js";
+import { parseFeed } from "./feeds.js";
 import { extractJsonLd, findRecipe, normalizeRecipe } from "./jsonld.js";
 import {
   buildCandidates,
   buildNewRecipe,
   canonicalizeUrl,
   extractRecipeSources,
-  flattenInbox,
   indexSourceToSlug,
   type FeedEntry,
 } from "./discovery.js";
 import { recipeSourceMap } from "./recipe-index.js";
-import { addSources, INBOX_PATH, SOURCES_PATH } from "./email.js";
+import { readFeeds, addFeedRows, addSourceRows, readDiscoveryInbox } from "./corpus-db.js";
 
 const MAX_PER_FEED = 8;
 
@@ -60,10 +57,7 @@ export function registerDiscoveryTools(
     },
     () =>
       runTool(async () => {
-        const feedsText = await readOptional(sharedGh, "feeds.toml");
-        if (!feedsText) return { candidates: [] };
-        const parsed = parseToml(feedsText, "feeds.toml");
-        const feeds = Array.isArray(parsed.feeds) ? (parsed.feeds as Record<string, unknown>[]) : [];
+        const feeds = await readFeeds(env);
         if (feeds.length === 0) return { candidates: [] };
 
         const seen = extractRecipeSources(await recipeSourceMap(env));
@@ -71,10 +65,10 @@ export function registerDiscoveryTools(
         // Fetch all feeds concurrently (distinct external domains, no shared-host burst concern).
         const results = await Promise.all(
           feeds.map(async (f) => {
-            const url = typeof f.url === "string" ? f.url : null;
+            const url = f.url;
             if (!url) return null;
-            const feedName = typeof f.name === "string" ? f.name : url;
-            const feedWeight = typeof f.weight === "number" ? f.weight : 1;
+            const feedName = f.name ?? url;
+            const feedWeight = f.weight ?? 1;
             try {
               const res = await fetchWithBrowserHeaders(url);
               if (!res.ok) return { skip: { feed: feedName, reason: `HTTP ${res.status}` } };
@@ -190,21 +184,17 @@ export function registerDiscoveryTools(
     "read_discovery_inbox",
     {
       description:
-        "Read the SHARED email discoveries inbox (root discoveries_inbox.toml) and return a list of forwarded newsletter emails ({ from, subject, received_at, body }). Each `body` is the full plain-text content of the email — YOU scan it for recipe titles and links, then call parse_recipe(url) on the promising ones. No pre-extraction: the LLM reads the body and decides what's worth importing. Surface these alongside fetch_rss_discoveries at menu time (1–2 at most, never dominating). Walled/paywalled sources can't be auto-fetched: present the link and have the user paste the recipe text, then create_recipe. An absent or empty inbox returns an empty list.",
+        "Read the SHARED email discoveries inbox and return a list of forwarded newsletter emails ({ from, subject, received_at, body }). Each `body` is the full plain-text content of the email — YOU scan it for recipe titles and links, then call parse_recipe(url) on the promising ones. No pre-extraction: the LLM reads the body and decides what's worth importing. Surface these alongside fetch_rss_discoveries at menu time (1–2 at most, never dominating). Walled/paywalled sources can't be auto-fetched: present the link and have the user paste the recipe text, then create_recipe. An absent or empty inbox returns an empty list.",
       inputSchema: {},
     },
-    () =>
-      runTool(async () => {
-        const inboxText = await readOptional(sharedGh, INBOX_PATH);
-        return { emails: flattenInbox(inboxText) };
-      }),
+    () => runTool(async () => ({ emails: await readDiscoveryInbox(env) })),
   );
 
   server.registerTool(
     "update_discovery_sources",
     {
       description:
-        "Add trusted sources to the SHARED inbound-newsletter allowlist (root discovery_sources.toml). `members` = friend-group personal addresses (anything they forward to groceries-agent@ gets indexed) — address only, no label. `senders` = newsletter From addresses (auto-forwarded mail from them gets indexed), with an optional `name` for the NEWSLETTER (e.g. \"Serious Eats\") — never a person's name. Use when a member sets up a forward or wants a newsletter indexed. Dedups by address — existing entries are untouched. Anyone trusted with this MCP is trusted to widen intake.",
+        "Add trusted sources to the SHARED inbound-newsletter allowlist. `members` = friend-group personal addresses (anything they forward to groceries-agent@ gets indexed) — address only, no label. `senders` = newsletter From addresses (auto-forwarded mail from them gets indexed), with an optional `name` for the NEWSLETTER (e.g. \"Serious Eats\") — never a person's name. Use when a member sets up a forward or wants a newsletter indexed. Dedups by address — existing entries are untouched. Anyone trusted with this MCP is trusted to widen intake.",
       inputSchema: {
         members: z.array(z.object({ address: z.string() })).optional(),
         senders: z.array(z.object({ address: z.string(), name: z.string().optional() })).optional(),
@@ -212,15 +202,8 @@ export function registerDiscoveryTools(
     },
     ({ members, senders }) =>
       runTool(async () => {
-        const existing = await readOptional(sharedGh, SOURCES_PATH);
-        const { text, added } = addSources(existing, { members, senders });
-        if (added.members === 0 && added.senders === 0) return { added, commit_sha: null };
-        const { commit_sha } = await commitFiles(
-          sharedGh,
-          [{ path: SOURCES_PATH, content: text }],
-          `discovery: add ${added.members} member(s), ${added.senders} sender(s)`,
-        );
-        return { added, commit_sha };
+        const added = await addSourceRows(env, { members, senders });
+        return { added };
       }),
   );
 
@@ -228,7 +211,7 @@ export function registerDiscoveryTools(
     "update_feeds",
     {
       description:
-        "Add RSS/Atom discovery feeds to the SHARED feeds.toml at the data-repo root (the pool fetch_rss_discoveries reads). Add-only, deduped by canonicalized url — existing feeds untouched. Each feed needs a url; name, weight (default 1), and tags are optional. Discovery feeds are a shared, group-wide concern, so anyone trusted with this MCP may widen the set (like update_discovery_sources). Returns { added, commit_sha }; makes no commit when no new feed is added.",
+        "Add RSS/Atom discovery feeds to the SHARED feed set (the pool fetch_rss_discoveries reads). Add-only, deduped by url — existing feeds untouched. Each feed needs a url; name, weight (default 1), and tags are optional. Discovery feeds are a shared, group-wide concern, so anyone trusted with this MCP may widen the set (like update_discovery_sources). Returns { added }.",
       inputSchema: {
         feeds: z.array(
           z.object({
@@ -242,15 +225,8 @@ export function registerDiscoveryTools(
     },
     ({ feeds }) =>
       runTool(async () => {
-        const existing = await readOptional(sharedGh, FEEDS_PATH);
-        const { text, added } = addFeeds(existing, feeds);
-        if (added === 0) return { added, commit_sha: null };
-        const { commit_sha } = await commitFiles(
-          sharedGh,
-          [{ path: FEEDS_PATH, content: text }],
-          `discovery: add ${added} feed(s)`,
-        );
-        return { added, commit_sha };
+        const added = await addFeedRows(env, feeds);
+        return { added };
       }),
   );
 }
