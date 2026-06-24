@@ -11,8 +11,9 @@ import type { Tenant } from "./tenant.js";
 import { directoryFromEnv } from "./tenant.js";
 import { createGitHubClient, prefixedClient, GitHubError } from "./github.js";
 import { createInstallationAuth } from "./github-app.js";
-import { readFile, readOptional } from "./gh-read.js";
-import { parseMarkdown, parseToml } from "./parse.js";
+import { readFile } from "./gh-read.js";
+import { parseMarkdown } from "./parse.js";
+import { readAliases, readSkuCache } from "./corpus-db.js";
 import { ToolError, runTool } from "./errors.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
@@ -167,34 +168,13 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   let aliasesPromise: Promise<Record<string, string>> | null = null;
   function getAliases(): Promise<Record<string, string>> {
     if (!aliasesPromise) {
-      aliasesPromise = (async () => {
-        const aliasText = await readOptional(sharedGh, "aliases.toml");
-        return aliasText !== null
-          ? ((parseToml(aliasText, "aliases.toml").aliases as Record<string, string>) ?? {})
-          : {};
-      })();
+      aliasesPromise = readAliases(env);
     }
     return aliasesPromise;
   }
 
   async function getCacheMappings(): Promise<CachedMapping[]> {
-    const cacheText = await readOptional(sharedGh, "skus/kroger.toml");
-    const cache: CachedMapping[] = [];
-    if (cacheText) {
-      const mappings = (parseToml(cacheText, "skus/kroger.toml").mappings as Record<string, unknown>[]) ?? [];
-      for (const m of mappings) {
-        if (typeof m.ingredient === "string" && typeof m.sku === "string") {
-          cache.push({
-            ingredient: m.ingredient,
-            sku: m.sku,
-            brand: typeof m.brand === "string" ? m.brand : undefined,
-            size: typeof m.size === "string" ? m.size : undefined,
-            locationId: typeof m.locationId === "string" ? m.locationId : undefined,
-          });
-        }
-      }
-    }
-    return cache;
+    return readSkuCache(env);
   }
 
   // Per-request lazy reads of the caller's subjective layer. The overlay
@@ -591,7 +571,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
-  registerOrderTools(server, sharedGh, env, tenant.id, resolveIngredient, getLocationId);
+  registerOrderTools(server, env, tenant.id, resolveIngredient, getLocationId);
 
   // get_weather_forecast — read-only Open-Meteo fetch; location resolved from
   // the caller's preferences (location_zip → parse preferred_location). Used by

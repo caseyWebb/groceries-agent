@@ -180,7 +180,7 @@ export function registerDiscoveryTools(
             );
           }
         }
-        const { slug: finalSlug, file } = await buildNewRecipe(sharedGh, frontmatter, body, slug);
+        const { slug: finalSlug, file } = await buildNewRecipe(sharedGh, env, frontmatter, body, slug);
         const { commit_sha } = await commitFiles(sharedGh, [file], `add draft recipe ${finalSlug}`);
         return { slug: finalSlug, commit_sha };
       }),

@@ -158,9 +158,11 @@ function fakeD1(slugs: string[]): FakeStore {
 }
 
 describe("buildRecipeUpdate", () => {
+  // buildRecipeUpdate reads aliases from D1 (readAliases); an empty fake → {} aliases.
+  const env = fakeD1([]).env;
   it("merges updates into frontmatter and preserves the body", async () => {
     const gh = ghWith({ "recipes/salmon.md": RECIPE });
-    const file = await buildRecipeUpdate(gh, "salmon", { rating: 4, last_cooked: "2026-06-09" });
+    const file = await buildRecipeUpdate(gh, env, "salmon", { rating: 4, last_cooked: "2026-06-09" });
     expect(file.path).toBe("recipes/salmon.md");
     const { frontmatter, body } = parseMarkdown(file.content);
     expect(frontmatter.rating).toBe(4);
@@ -171,7 +173,7 @@ describe("buildRecipeUpdate", () => {
 
   it("normalizes perishable_ingredients into shared content (lowercased, deduped)", async () => {
     const gh = ghWith({ "recipes/salmon.md": RECIPE }); // no aliases.toml → 404 → {} aliases
-    const file = await buildRecipeUpdate(gh, "salmon", {
+    const file = await buildRecipeUpdate(gh, env, "salmon", {
       perishable_ingredients: ["Cilantro", "cilantro", " Lime "],
     });
     const { frontmatter } = parseMarkdown(file.content);
@@ -180,12 +182,12 @@ describe("buildRecipeUpdate", () => {
 
   it("rejects a malformed slug as not_found", async () => {
     const gh = ghWith({});
-    await expect(buildRecipeUpdate(gh, "Not A Slug", {})).rejects.toMatchObject({ code: "not_found" });
+    await expect(buildRecipeUpdate(gh, env, "Not A Slug", {})).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("maps a missing recipe to not_found", async () => {
     const gh = ghWith({});
-    await expect(buildRecipeUpdate(gh, "ghost", {})).rejects.toMatchObject({ code: "not_found" });
+    await expect(buildRecipeUpdate(gh, env, "ghost", {})).rejects.toMatchObject({ code: "not_found" });
   });
 });
 

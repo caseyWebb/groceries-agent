@@ -11,6 +11,10 @@ import {
 } from "../src/discovery.js";
 import { parseMarkdown } from "../src/parse.js";
 import { GitHubError, type GitHubClient } from "../src/github.js";
+import { fakeD1 } from "./fake-d1.js";
+
+// buildNewRecipe reads aliases from D1 (readAliases); an empty `aliases` table → {}.
+const env = fakeD1().env;
 
 function ghWith(files: Record<string, string>): GitHubClient {
   return {
@@ -127,7 +131,7 @@ const BODY = "## Ingredients\n- a\n\n## Instructions\n1. do it\n";
 describe("buildNewRecipe", () => {
   it("creates recipes/<slug>.md, defaulting status to draft", async () => {
     const gh = ghWith({});
-    const { slug, file } = await buildNewRecipe(gh, { title: "Test Dish" }, BODY);
+    const { slug, file } = await buildNewRecipe(gh, env, { title: "Test Dish" }, BODY);
     expect(slug).toBe("test-dish");
     expect(file.path).toBe("recipes/test-dish.md");
     const { frontmatter, body } = parseMarkdown(file.content);
@@ -137,25 +141,25 @@ describe("buildNewRecipe", () => {
 
   it("preserves an explicit status", async () => {
     const gh = ghWith({});
-    const { file } = await buildNewRecipe(gh, { title: "X", status: "active" }, BODY);
+    const { file } = await buildNewRecipe(gh, env, { title: "X", status: "active" }, BODY);
     expect(parseMarkdown(file.content).frontmatter.status).toBe("active");
   });
 
   it("refuses to overwrite an existing slug", async () => {
     const gh = ghWith({ "recipes/test-dish.md": "---\ntitle: Test Dish\n---\n## Ingredients\n## Instructions\n" });
-    await expect(buildNewRecipe(gh, { title: "Test Dish" }, BODY)).rejects.toMatchObject({ code: "slug_exists" });
+    await expect(buildNewRecipe(gh, env, { title: "Test Dish" }, BODY)).rejects.toMatchObject({ code: "slug_exists" });
   });
 
   it("rejects a body missing the H2 contract", async () => {
     const gh = ghWith({});
-    await expect(buildNewRecipe(gh, { title: "No Sections" }, "just prose")).rejects.toMatchObject({
+    await expect(buildNewRecipe(gh, env, { title: "No Sections" }, "just prose")).rejects.toMatchObject({
       code: "validation_failed",
     });
   });
 
   it("rejects when no title/slug is derivable", async () => {
     const gh = ghWith({});
-    await expect(buildNewRecipe(gh, {}, BODY)).rejects.toMatchObject({ code: "validation_failed" });
+    await expect(buildNewRecipe(gh, env, {}, BODY)).rejects.toMatchObject({ code: "validation_failed" });
   });
 });
 

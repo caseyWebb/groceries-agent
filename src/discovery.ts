@@ -3,8 +3,10 @@
 // builder. Kept I/O-light (only buildNewRecipe touches the GitHub client, to
 // read for a collision) so the logic is unit-testable.
 
+import type { Env } from "./env.js";
 import type { GitHubClient, TreeFile } from "./github.js";
-import { readOptional, loadAliases } from "./gh-read.js";
+import { readOptional } from "./gh-read.js";
+import { readAliases } from "./corpus-db.js";
 import { normalizePerishables } from "./matching.js";
 import { serializeMarkdown, stripEmptyVarietyDimensions } from "./serialize.js";
 import { ToolError } from "./errors.js";
@@ -139,6 +141,7 @@ export function slugify(title: string): string {
  */
 export async function buildNewRecipe(
   gh: GitHubClient,
+  env: Env,
   frontmatter: Record<string, unknown>,
   body: string,
   slugOverride?: string,
@@ -169,7 +172,7 @@ export async function buildNewRecipe(
   // Canonicalize perishable_ingredients (objective shared content) at create the
   // same way the verify matcher normalizes, so overlap lines up across recipes.
   if ("perishable_ingredients" in fm) {
-    fm.perishable_ingredients = normalizePerishables(fm.perishable_ingredients, await loadAliases(gh));
+    fm.perishable_ingredients = normalizePerishables(fm.perishable_ingredients, await readAliases(env));
   }
   // Treat a none/empty protein|cuisine as absent so a no-protein dish writes
   // cleanly instead of tripping the controlled-vocabulary check.

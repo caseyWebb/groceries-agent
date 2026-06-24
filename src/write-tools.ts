@@ -11,7 +11,8 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import type { GitHubClient, TreeFile } from "./github.js";
-import { readFile, loadAliases } from "./gh-read.js";
+import { readFile } from "./gh-read.js";
+import { readAliases } from "./corpus-db.js";
 import { normalizePerishables } from "./matching.js";
 import { parseMarkdown } from "./parse.js";
 import { serializeMarkdown, stripEmptyVarietyDimensions } from "./serialize.js";
@@ -64,6 +65,7 @@ const SUBJECTIVE_KEYS = ["rating", "status"] as const;
 /** Build an objective-content update for a shared recipe (root `recipes/<slug>.md`). */
 export async function buildRecipeUpdate(
   gh: GitHubClient,
+  env: Env,
   slug: string,
   updates: Record<string, unknown>,
 ): Promise<TreeFile> {
@@ -76,7 +78,7 @@ export async function buildRecipeUpdate(
   // same way the verify matcher does so cross-recipe overlap lines up (only when
   // the caller is writing the field — a non-array passes through for validation).
   if ("perishable_ingredients" in updates) {
-    merged.perishable_ingredients = normalizePerishables(merged.perishable_ingredients, await loadAliases(gh));
+    merged.perishable_ingredients = normalizePerishables(merged.perishable_ingredients, await readAliases(env));
   }
   // Treat a none/empty protein|cuisine as absent so a no-protein dish writes
   // cleanly instead of tripping the controlled-vocabulary check.
@@ -188,7 +190,7 @@ export function registerWriteTools(
         const updated_fields = Object.keys(updates);
         if (updated_fields.length === 0) return { slug, updated_fields: [] };
 
-        const file = await buildRecipeUpdate(gh, slug, updates);
+        const file = await buildRecipeUpdate(gh, env, slug, updates);
         const { commit_sha } = await commitFiles(gh, [file], `update recipe ${slug}`);
         return { slug, updated_fields, commit_sha };
       }),

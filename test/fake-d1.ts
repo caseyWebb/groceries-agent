@@ -1,9 +1,12 @@
-// A small in-memory D1 fake for the session-state tables (pantry, meal_plan,
-// grocery_list) plus the recipes resolution SELECT used by log_cooked. It routes by
-// SQL: tenant-scoped SELECT/DELETE/INSERT with ON CONFLICT upserts keyed by each
-// table's primary key, and the WHERE filters the tools rely on (pantry category /
-// prepared_from IS NOT NULL, grocery status, the recipe/normalized_name point keys).
-// Enough fidelity to exercise the row writers' SQL/bind contract without a live D1.
+// A small in-memory D1 fake. Originally for the session-state tables (pantry,
+// meal_plan, grocery_list) plus the recipes resolution SELECT used by log_cooked; now
+// also the shared-corpus tables (aliases, feeds, discovery_*, flyer_terms, sku_cache,
+// discovery_candidates, stores, store_notes, recipe_notes) the d1-shared-corpus slice
+// added. It routes by SQL: SELECT/DELETE/INSERT with ON CONFLICT / INSERT OR IGNORE
+// upserts keyed by each table's primary key, the tenant-scoped WHERE filters the
+// session/profile tools rely on, and a handful of shared-corpus WHERE clauses
+// (recipe/store/url equality). Enough fidelity to exercise the row writers' SQL/bind
+// contract without a live D1.
 
 import type { Env } from "../src/env.js";
 
@@ -18,7 +21,33 @@ const PK: Record<string, string[]> = {
   pantry: ["tenant", "normalized_name"],
   meal_plan: ["tenant", "recipe"],
   grocery_list: ["tenant", "normalized_name"],
+  // shared-corpus (d1-shared-corpus)
+  aliases: ["variant"],
+  feeds: ["url"],
+  discovery_members: ["address"],
+  discovery_senders: ["address"],
+  flyer_terms: ["term"],
+  sku_cache: ["ingredient", "location_id"],
+  discovery_candidates: ["id"],
+  stores: ["slug"],
+  store_notes: ["id"],
+  recipe_notes: ["id"],
 };
+
+// Shared-corpus tables have no `tenant` column — SELECT/DELETE over them are global,
+// filtered only by explicit WHERE equality clauses below.
+const GLOBAL_TABLES = new Set([
+  "aliases",
+  "feeds",
+  "discovery_members",
+  "discovery_senders",
+  "flyer_terms",
+  "sku_cache",
+  "discovery_candidates",
+  "stores",
+  "store_notes",
+  "recipe_notes",
+]);
 
 export function fakeD1(
   init: { tables?: Record<string, Record<string, unknown>[]>; recipes?: string[] } = {},
@@ -37,6 +66,23 @@ export function fakeD1(
     return m ? m[1] : null;
   };
 
+  // Apply the WHERE-equality filters the corpus/session reads use. Each maps a column
+  // to the positional bind it compares against (?N). Unrecognized clauses are ignored.
+  const applyWhere = (sql: string, binds: unknown[], rows: Record<string, unknown>[]): Record<string, unknown>[] => {
+    let out = rows;
+    const eq = (col: string, n: number) => {
+      out = out.filter((r) => r[col] === binds[n - 1]);
+    };
+    if (/category = \?2/i.test(sql)) eq("category", 2);
+    if (/prepared_from IS NOT NULL/i.test(sql)) out = out.filter((r) => r.prepared_from != null);
+    if (/status = \?2/i.test(sql)) eq("status", 2);
+    if (/\brecipe = \?1/i.test(sql)) eq("recipe", 1);
+    if (/\brecipe = \?2/i.test(sql)) eq("recipe", 2);
+    if (/\bstore = \?1/i.test(sql)) eq("store", 1);
+    if (/normalized_name = \?2/i.test(sql)) eq("normalized_name", 2);
+    return out;
+  };
+
   const exec = (sql: string, binds: unknown[]): { rows: Record<string, unknown>[]; changes: number } => {
     const table = tableOf(sql);
     if (/^SELECT/i.test(sql)) {
@@ -45,44 +91,55 @@ export function fakeD1(
         return { rows: typeof slug === "string" && known.has(slug) ? [{ ok: 1 }] : [], changes: 0 };
       }
       if (!table || !tables[table]) return { rows: [], changes: 0 };
-      let rows = tables[table].filter((r) => r.tenant === binds[0]);
-      // Positional filters mirror session-db's appended WHERE clauses.
-      if (/category = \?2/i.test(sql)) rows = rows.filter((r) => r.category === binds[1]);
-      if (/prepared_from IS NOT NULL/i.test(sql)) rows = rows.filter((r) => r.prepared_from != null);
-      if (/status = \?2/i.test(sql)) rows = rows.filter((r) => r.status === binds[1]);
-      if (/recipe = \?2/i.test(sql)) rows = rows.filter((r) => r.recipe === binds[1]);
-      if (/normalized_name = \?2/i.test(sql)) rows = rows.filter((r) => r.normalized_name === binds[1]);
+      const base = GLOBAL_TABLES.has(table) ? tables[table] : tables[table].filter((r) => r.tenant === binds[0]);
+      const rows = applyWhere(sql, binds, base);
       return { rows: rows.map((r) => ({ ...r })), changes: 0 };
     }
     if (/^DELETE/i.test(sql)) {
       if (!table || !tables[table]) return { rows: [], changes: 0 };
       const before = tables[table].length;
-      tables[table] = tables[table].filter((r) => {
-        if (r.tenant !== binds[0]) return true;
-        if (/recipe = \?2/i.test(sql)) return r.recipe !== binds[1];
-        if (/normalized_name = \?2/i.test(sql)) return r.normalized_name !== binds[1];
-        return false; // tenant-wide delete
-      });
+      if (GLOBAL_TABLES.has(table)) {
+        const keep = (r: Record<string, unknown>): boolean => {
+          if (/\brecipe = \?1/i.test(sql)) return r.recipe !== binds[0];
+          if (/\bstore = \?1/i.test(sql)) return r.store !== binds[0];
+          if (/\bid = \?1/i.test(sql)) return r.id !== binds[0];
+          return false; // table-wide delete
+        };
+        tables[table] = tables[table].filter((r) => keep(r));
+      } else {
+        tables[table] = tables[table].filter((r) => {
+          if (r.tenant !== binds[0]) return true;
+          if (/recipe = \?2/i.test(sql)) return r.recipe !== binds[1];
+          if (/normalized_name = \?2/i.test(sql)) return r.normalized_name !== binds[1];
+          return false; // tenant-wide delete
+        });
+      }
       return { rows: [], changes: before - tables[table].length };
     }
     if (/^INSERT/i.test(sql)) {
       if (!table || !tables[table]) return { rows: [], changes: 0 };
-      const cols = /INSERT INTO \w+ \(([^)]+)\)/.exec(sql)![1].split(",").map((c) => c.trim());
+      const cols = /INSERT (?:OR IGNORE )?INTO \w+ \(([^)]+)\)/i.exec(sql)![1].split(",").map((c) => c.trim());
       const row: Record<string, unknown> = {};
       cols.forEach((c, i) => (row[c] = binds[i] ?? null));
       const pk = PK[table] ?? ["tenant", "normalized_name"];
       const idx = tables[table].findIndex((r) => pk.every((k) => r[k] === row[k]));
-      if (idx >= 0 && /ON CONFLICT/i.test(sql)) {
-        // Apply the DO UPDATE SET col = excluded.col list (every col except the PK
-        // that the statement names — for our writers that's everything but PK + the
-        // preserved columns, which simply aren't in the SET clause).
-        const setCols = [...sql.matchAll(/(\w+) = excluded\.(\w+)/gi)].map((m) => m[1]);
-        const merged = { ...tables[table][idx] };
-        for (const c of setCols) merged[c] = row[c];
-        tables[table][idx] = merged;
-      } else {
-        tables[table].push(row);
+      if (idx >= 0) {
+        if (/ON CONFLICT/i.test(sql)) {
+          const setCols = [...sql.matchAll(/(\w+) = excluded\.(\w+)/gi)].map((m) => m[1]);
+          const merged = { ...tables[table][idx] };
+          for (const c of setCols) merged[c] = row[c];
+          tables[table][idx] = merged;
+          return { rows: [], changes: 1 };
+        }
+        // INSERT OR IGNORE (or a plain INSERT) on an existing PK/UNIQUE → no-op.
+        return { rows: [], changes: 0 };
       }
+      // UNIQUE(url) constraint on discovery_candidates: an INSERT OR IGNORE whose url
+      // already exists is a no-op even though the PK (id) differs.
+      if (table === "discovery_candidates" && /OR IGNORE/i.test(sql) && "url" in row) {
+        if (tables[table].some((r) => r.url === row.url)) return { rows: [], changes: 0 };
+      }
+      tables[table].push(row);
       return { rows: [], changes: 1 };
     }
     return { rows: [], changes: 0 };
