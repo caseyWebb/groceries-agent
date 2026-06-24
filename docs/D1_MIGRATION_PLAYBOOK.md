@@ -144,4 +144,17 @@ the key). Build-env: typecheck ✅, 551 vitest + 121 tooling ✅. Plugin rebuilt
   `update_preferences` patch doesn't clobber siblings; brands tri-state behaves (set/[]/null);
   "rated 4+ by others" works via the overlay query.
 
+### Slice 5 — d1-session-state  ✅ implemented
+pantry / meal_plan / grocery_list → D1 row tables (`src/session-db.ts`); add/remove are single
+rows (no whole-array rewrite), status/category filters are `WHERE` clauses, and `log_cooked`'s
+meal-plan clear is now ONE D1 transaction with the cooking-log insert. `place_order` + in-store
+walk transition `grocery_list.status` via D1. `src/user-kv.ts` deleted; `DATA_KV` holds no
+domain data (binding now removable — a follow-up). Backfill `migrations/0004-session-state-d1.mjs`.
+Build-env: typecheck ✅, 566 vitest + 126 tooling ✅. Plugin rebuilt.
+- **Live to verify:** `0005_session_state.sql` applies; backfill populates the three tables and
+  removes the `state:<u>:*` KV keys; add/remove hit single rows; status/category filters query;
+  `log_cooked` clears the plan atomically.
+- **Cleanup tracked:** `DATA_KV` is now empty of domain data — the binding can be dropped in a
+  later wrangler/operator-config cleanup (kept bound for now to avoid a deploy-config change).
+
 <!-- Subsequent slices appended as they are implemented. -->
