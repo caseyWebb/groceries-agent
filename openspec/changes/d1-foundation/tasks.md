@@ -27,9 +27,9 @@
 
 ## 6. Deploy workflow
 
-- [ ] 6.1 `.github/workflows/data-deploy.yml`: after the KV-id pin step, add **Apply D1 schema migrations** — `wrangler d1 migrations apply DB --remote` (via `cloudflare/wrangler-action`, `workingDirectory: _code`), running BEFORE the existing `run-migrations.mjs` step.
-- [ ] 6.2 Update the pin step to also pin auto-provisioned D1 ids (it already runs `merge-wrangler-config.mjs pin`; once 5.2 lands, the same invocation covers D1).
-- [ ] 6.3 Confirm `wrangler deploy` auto-provisions the id-less `DB` binding and writes `database_id` into `_code/wrangler.jsonc` for the pin step. If the pinned `wrangler-action` version does NOT, add a `wrangler d1 create grocery-mcp` step whose id feeds the pin (fallback noted in design).
+- [x] 6.1 `.github/workflows/data-deploy.yml`: after the KV-id pin step, add **Apply D1 schema migrations** — `wrangler d1 migrations apply DB --remote` (via `cloudflare/wrangler-action`, `workingDirectory: _code`), running BEFORE the existing `run-migrations.mjs` step.
+- [x] 6.2 Update the pin step to also pin auto-provisioned D1 ids (it already runs `merge-wrangler-config.mjs pin`; the same invocation now covers D1 via `pinBindingIds`/`bindingIdsChanged`). Step renamed + commit message updated.
+- [ ] 6.3 NOT VERIFIED LIVE — this sandbox has no Cloudflare account / wrangler login, so I cannot confirm `wrangler deploy` (pinned `wrangler-action` v4.0.0) auto-provisions the id-less `DB` binding and writes `database_id` into `_code/wrangler.jsonc` for the pin step. The workflow assumes KV-parity (documented as a primary risk in design.md). If a future operator deploy shows D1 is NOT auto-provisioned in place, the fallback is an explicit `wrangler d1 create grocery-mcp` step feeding the pin (noted in design). Left unchecked pending a live deploy.
 
 ## 7. Health
 
