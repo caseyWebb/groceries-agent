@@ -88,4 +88,19 @@ provisioning, and the `/health` D1 probe. `migrations/d1/0001_init.sql` creates 
 - **Live to verify:** the one-time setup above; deploy applies `0001_init.sql`; `/health` D1
   row is `ok`. (Build-env tests: typecheck clean, 514 vitest + 107 tooling passing.)
 
+### Slice 1 — d1-recipe-index  ✅ implemented
+Recipe index KV blob → D1 `recipes` table (a derived projection — rebuilt by the build, no
+backfill). `build-indexes` now does `DELETE FROM recipes` + batched `INSERT` instead of the
+KV publish; `list_recipes`/`retrospective`/discovery read D1; the committed
+`_indexes/recipes.json` is removed (in the **data** and **template** repos too). Capability
+renamed `recipe-index-kv` → `recipe-index`. Build-env: typecheck ✅, 530 vitest + 113 tooling ✅.
+- **Live to verify:**
+  - `migrations/d1/0002_recipes.sql` applies (deploy step, or `wrangler d1 migrations apply DB --local`).
+  - After deploy, the post-deploy `build-indexes` populates `recipes`; `list_recipes` returns
+    results without a recipe push; `npx wrangler d1 execute DB --remote --command "SELECT count(*) FROM recipes"`
+    is non-zero.
+  - The data/template repos drop `_indexes/recipes.json` (already committed on the branch).
+- **Cleanup tracked:** `openspec/specs/data-indexing/spec.md` still describes the old KV index
+  publish — stale, to be corrected in the final pass (it was outside this slice's deltas).
+
 <!-- Subsequent slices appended as they are implemented. -->
