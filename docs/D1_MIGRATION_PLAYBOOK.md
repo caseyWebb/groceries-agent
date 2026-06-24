@@ -157,4 +157,42 @@ Build-env: typecheck ✅, 566 vitest + 126 tooling ✅. Plugin rebuilt.
 - **Cleanup tracked:** `DATA_KV` is now empty of domain data — the binding can be dropped in a
   later wrangler/operator-config cleanup (kept bound for now to avoid a deploy-config change).
 
-<!-- Subsequent slices appended as they are implemented. -->
+### Slice 6 — d1-shared-corpus  ✅ implemented
+The last GitHub TOML → D1: `aliases`, `feeds`, `discovery_senders`/`discovery_members`,
+`flyer_terms`, `sku_cache`, `discovery_candidates` (inbox), `stores`, `store_notes`,
+`recipe_notes`. `read_recipe_notes` is now fully D1 (notes + group ratings in one path). The
+build **collapses to recipes-only** (store/discovery validators moved to write-time
+`validateStoreInput`/`validateDiscoveryCandidate`); `smol-toml` is gone from the Worker + build
+(kept only for the `.mjs` backfills). Backfill `migrations/0005-shared-corpus-d1.mjs`. Build-env:
+typecheck ✅, 523 vitest + 124 tooling ✅.
+- **Live to verify:** `0006_shared_corpus.sql` applies; backfill populates the corpus tables
+  (notes preserve `author`/`private`; inbox dedups by url); matcher resolves via D1 aliases/SKU
+  cache; `read_recipe_notes` returns notes + ratings; store/discovery writes validate at the tool.
+
+---
+
+## ⚠️ Post-migration cleanup — order matters (do NOT do early)
+
+The shared-corpus and cooking-log `.toml` files in the **data repo are the backfill SOURCE** —
+the `.mjs` migrations read them at deploy time to populate D1. **Do not delete them until you
+have deployed and confirmed D1 is populated**, or the backfill has nothing to migrate (data
+loss). This is unlike slice 1's `_indexes/recipes.json` (a *derived* file, safely deleted in
+this PR).
+
+Once D1 is confirmed authoritative (deploy succeeded, `/health` D1 ok, spot-check a few tables):
+1. In the **data repo**, delete the now-inert files: `aliases.toml`, `feeds.toml`,
+   `discovery_sources.toml`, `discoveries_inbox.toml`, `flyer_terms.toml`, `skus/kroger.toml`,
+   `stores/`, `users/*/store_notes/`, `users/*/notes/`, and `users/*/cooking_log.toml`. Commit.
+   (Keep `recipes/*.md` and `storage_guidance/*.md` — those stay in GitHub forever.)
+2. `DATA_KV` now holds no domain data — its binding can be dropped from `wrangler.jsonc` in a
+   later cleanup (left bound here to avoid a mid-migration deploy-config change).
+3. `smol-toml` can be dropped from `package.json` only after every operator has migrated and the
+   `.mjs` backfill migrations are retired.
+
+## Whole-PR verification checklist
+- [ ] Token has D1 edit; `wrangler d1 create grocery-mcp` run; `database_id` pinned in the data repo's `wrangler.jsonc` (+ KV ids if they were never pinned).
+- [ ] Deploy succeeds; `wrangler d1 migrations apply DB --remote` applies `0001`–`0006`.
+- [ ] Backfills run (`migrations/0001`–`0005-*.mjs`); spot-check row counts in `recipes`, `cooking_log`, `profile`, `pantry`, `grocery_list`, `aliases`, `stores`, `recipe_notes`.
+- [ ] `/health` reports D1 reachable.
+- [ ] Smoke a session: `read_user_profile`, `list_recipes`, `log_cooked`, `rate_recipe`, a grocery add, `read_recipe_notes`.
+- [ ] Only after all green: the post-migration cleanup above.
