@@ -7,10 +7,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildRecipeIndexes,
-  validateStore,
-  validateDiscoveriesInbox,
-  validateDiscoverySources,
-  parseCheckToml,
   stableStringify,
   normalizeValue,
   deriveSlug,
@@ -308,85 +304,6 @@ test('absent requires_equipment defaults to [] and does not warn', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('validateStore: identity-only — requires slug+name, domain a string, tolerates legacy layout keys', () => {
-  const ok = { slug: 'west-7th-tom-thumb', name: 'Tom Thumb', label: 'West 7th', domain: 'grocery' };
-  assert.deepEqual(validateStore(ok, 'stores/west-7th-tom-thumb.toml'), []);
-
-  // Missing required slug/name.
-  const noId = validateStore({}, 'stores/x.toml');
-  assert.ok(noId.some((e) => /missing required `slug`/.test(e)), noId.join('\n'));
-  assert.ok(noId.some((e) => /missing required `name`/.test(e)), noId.join('\n'));
-
-  // domain must be a string when present.
-  const badDomain = validateStore({ slug: 's', name: 'S', domain: 3 }, 'stores/s.toml');
-  assert.ok(badDomain.some((e) => /`domain` must be a string/.test(e)), badDomain.join('\n'));
-
-  // Layout is notes now: legacy aisles/item_locations/doesnt_carry keys are tolerated, not validated.
-  const legacy = validateStore(
-    {
-      slug: 's',
-      name: 'S',
-      aisles: [{ sections: ['ok'] }, { number: 2, sections: [3] }],
-      item_locations: [{ aisle: '1' }],
-      doesnt_carry: 'harissa',
-    },
-    'stores/s.toml',
-  );
-  assert.deepEqual(legacy, []);
-});
-
-test('run: an absent stores/ tree is valid (no store error)', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'grocery-store-'));
-  await mkdir(path.join(root, 'recipes'), { recursive: true });
-  await writeFile(path.join(root, 'recipes', 'r.md'), recipe('title: R', SECTIONS));
-  const { errors } = await run({ root });
-  assert.deepEqual(errors, []);
-  await rm(root, { recursive: true, force: true });
-});
-
-test('run: a malformed store in stores/ fails the build', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'grocery-store-'));
-  await mkdir(path.join(root, 'recipes'), { recursive: true });
-  await writeFile(path.join(root, 'recipes', 'r.md'), recipe('title: R', SECTIONS));
-  await mkdir(path.join(root, 'stores'), { recursive: true });
-  // Missing required `name`.
-  await writeFile(path.join(root, 'stores', 'bad.toml'), 'slug = "bad"\n');
-  const { errors } = await run({ root });
-  assert.ok(errors.some((e) => /stores\/bad\.toml: store is missing required `name`/.test(e)), errors.join('\n'));
-  await rm(root, { recursive: true, force: true });
-});
-
-// --- shared discovery-source structural validation ----------------------
-
-test('validateDiscoveriesInbox: clean inbox passes, candidate missing url reports', () => {
-  const ok = {
-    entries: [
-      {
-        from: 'news@seriouseats.com',
-        candidates: [{ title: 'Chili', url: 'https://x.test/chili' }],
-      },
-    ],
-  };
-  assert.deepEqual(validateDiscoveriesInbox(ok, 'discoveries_inbox.toml'), []);
-  // Empty/absent-shaped file is valid.
-  assert.deepEqual(validateDiscoveriesInbox({}, 'discoveries_inbox.toml'), []);
-  const bad = { entries: [{ from: 'x@y.com', candidates: [{ title: 'No URL' }] }] };
-  const errs = validateDiscoveriesInbox(bad, 'discoveries_inbox.toml');
-  assert.ok(errs.some((e) => /missing required `url`/.test(e)), errs.join('\n'));
-});
-
-test('validateDiscoverySources: valid addresses pass, bad ones report', () => {
-  const ok = {
-    members: [{ address: 'alice@example.com' }],
-    senders: [{ address: 'news@seriouseats.com', name: 'SE' }],
-  };
-  assert.deepEqual(validateDiscoverySources(ok, 'discovery_sources.toml'), []);
-  assert.deepEqual(validateDiscoverySources({}, 'discovery_sources.toml'), []);
-  const bad = { senders: [{ address: 'not-an-email' }] };
-  const errs = validateDiscoverySources(bad, 'discovery_sources.toml');
-  assert.ok(errs.some((e) => /`senders` entry needs a valid `address`/.test(e)), errs.join('\n'));
-});
-
 // --- required body sections (structural contract) -----------------------
 
 test('hasH2Section detects ATX H2 headings, ignores other levels', () => {
@@ -615,14 +532,4 @@ test('build run() does not write _indexes/recipes.json (the index is D1 now)', a
   }
   assert.equal(exists, false);
   await rm(root, { recursive: true, force: true });
-});
-
-// --- TOML parse-check ----------------------------------------------------
-
-test('hard-fail: unparseable TOML', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'grocery-toml-'));
-  await writeFile(path.join(dir, 'broken.toml'), 'this = = invalid');
-  const { errors } = await parseCheckToml(dir);
-  assert.ok(errors.some((e) => e.includes('TOML')), errors.join('\n'));
-  await rm(dir, { recursive: true, force: true });
 });

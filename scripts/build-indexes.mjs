@@ -13,7 +13,6 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import matter from 'gray-matter';
-import { parse as parseToml } from 'smol-toml';
 import { PROTEIN_VOCAB, CUISINE_VOCAB, EQUIPMENT_VOCAB } from '../src/vocab.js';
 import { resolveD1Access, makeD1Client } from './d1-rest.mjs';
 
@@ -245,137 +244,21 @@ export async function buildRecipeIndexes(recipesDir) {
   return { recipes, errors, warnings };
 }
 
-// Ready-to-eat and kitchen inventory moved to DATA_KV (the profile:<username>
-// bundle); they are no longer GitHub-backed, so the build validates neither.
-// Both are validated at write time by the Worker (src/validate.ts via
-// update_ready_to_eat / update_kitchen).
-
-// --- shared store-registry validation ------------------------------------
-
-// Stores are shared (stores/<slug>.toml), keyed by location — no aggregate index.
-// Structural-validate one already-parsed store; returns an array of errors. The
-// registry holds IDENTITY only: `slug`+`name` required; `domain` a string when
-// present. Layout lives in attributed store notes (store_notes/<slug>.toml), not
-// here — legacy `aisles`/`item_locations`/`doesnt_carry` keys are tolerated and
-// ignored. An absent stores/ tree never reaches here (the walk skips it).
-export function validateStore(parsed, rel) {
-  const errors = [];
-  if (typeof parsed.slug !== 'string' || !parsed.slug) {
-    errors.push(`${rel}: store is missing required \`slug\``);
-  }
-  if (typeof parsed.name !== 'string' || !parsed.name) {
-    errors.push(`${rel}: store is missing required \`name\``);
-  }
-  if (parsed.domain != null && typeof parsed.domain !== 'string') {
-    errors.push(`${rel}: \`domain\` must be a string (got ${JSON.stringify(parsed.domain)})`);
-  }
-  return errors;
-}
-
-// --- shared discovery-source validation ----------------------------------
-
-// The email discoveries inbox (root discoveries_inbox.toml) is shared and
-// agent/email-written: each [[entries]] holds candidates, every candidate needs a
-// `url`. Absent file is valid (no discoveries yet).
-export function validateDiscoveriesInbox(parsed, rel) {
-  const errors = [];
-  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
-  for (const e of entries) {
-    const cands = Array.isArray(e.candidates) ? e.candidates : [];
-    for (const c of cands) {
-      if (typeof c.url !== 'string' || !c.url) {
-        errors.push(`${rel}: inbox candidate is missing required \`url\``);
-      }
-    }
-  }
-  return errors;
-}
-
-// The inbound-newsletter allowlist (root discovery_sources.toml) is shared config:
-// every [[members]]/[[senders]] entry needs a valid `address`. Absent file is valid.
-export function validateDiscoverySources(parsed, rel) {
-  const errors = [];
-  for (const key of ['members', 'senders']) {
-    const rows = Array.isArray(parsed[key]) ? parsed[key] : [];
-    for (const r of rows) {
-      if (typeof r.address !== 'string' || !r.address.includes('@')) {
-        errors.push(`${rel}: \`${key}\` entry needs a valid \`address\` (got ${JSON.stringify(r.address)})`);
-      }
-    }
-  }
-  return errors;
-}
-
-// (The cooking log left GitHub for the D1 `cooking_log` table (d1-cooking-log), so
-// the build no longer validates it — there is no cooking_log.toml in the corpus to
-// check. Its structural validation lives on in the Worker's log_cooked tool, which
-// also resolves recipe slugs against the D1 `recipes` table at write time. meal_plan
-// likewise moved to DATA_KV and is Worker-validated, not built here.)
-
-// --- toml parse-check (whole repo) --------------------------------------
-
-async function walkToml(dir, acc) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === 'ENOENT') return acc;
-    throw err;
-  }
-  for (const e of entries) {
-    if (e.name === 'node_modules' || e.name === '.git') continue;
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) await walkToml(full, acc);
-    else if (e.isFile() && e.name.endsWith('.toml')) acc.push(full);
-  }
-  return acc;
-}
-
-// Parse-checks every tracked .toml. Returns { parsed: Map<path,obj>, errors }.
-export async function parseCheckToml(root) {
-  const errors = [];
-  const parsed = new Map();
-  const files = (await walkToml(root, [])).sort();
-  for (const file of files) {
-    const rel = path.relative(REPO_ROOT, file);
-    try {
-      parsed.set(file, parseToml(await readFile(file, 'utf8')));
-    } catch (err) {
-      errors.push(`${rel}: TOML failed to parse — ${err.message}`);
-    }
-  }
-  return { parsed, errors };
-}
+// After d1-shared-corpus (slice 6 — the last), GitHub holds ONLY recipes/*.md. Every
+// other corpus artifact (the store registry + store notes, recipe notes, aliases,
+// feeds, the newsletter allowlist + discovery inbox, the SKU cache, flyer terms) is a
+// D1 table, written and VALIDATED at the Worker's write tools (src/validate.ts). So the
+// build no longer parses or validates any TOML — it validates recipe markdown and
+// projects the recipe index, and nothing else. (Profile / session / cooking-log data
+// likewise left GitHub for D1 in earlier slices.)
 
 // --- orchestration -------------------------------------------------------
 
 export async function run({ recipesDir, root = REPO_ROOT } = {}) {
   recipesDir ??= path.join(root, 'recipes');
 
-  const { recipes, errors: rErr, warnings } = await buildRecipeIndexes(recipesDir);
-  const { parsed, errors: tErr } = await parseCheckToml(root);
-
-  // Shared store registry (stores/<slug>.toml) — structural-validate each store.
-  // (ready_to_eat.toml / kitchen.toml moved to DATA_KV — no longer build-validated.)
-  const storeErr = [];
-  for (const [file, obj] of parsed) {
-    if (file.startsWith(`${path.join(root, 'stores')}${path.sep}`) && file.endsWith('.toml')) {
-      storeErr.push(...validateStore(obj, path.relative(REPO_ROOT, file)));
-    }
-  }
-
-  // Shared discovery sources (root-only, single files): inbox + sender allowlist.
-  const discErr = [];
-  const inbox = parsed.get(path.join(root, 'discoveries_inbox.toml'));
-  if (inbox) discErr.push(...validateDiscoveriesInbox(inbox, 'discoveries_inbox.toml'));
-  const sources = parsed.get(path.join(root, 'discovery_sources.toml'));
-  if (sources) discErr.push(...validateDiscoverySources(sources, 'discovery_sources.toml'));
-
-  return {
-    indexes: { recipes },
-    errors: [...rErr, ...tErr, ...storeErr, ...discErr],
-    warnings: [...warnings],
-  };
+  const { recipes, errors, warnings } = await buildRecipeIndexes(recipesDir);
+  return { indexes: { recipes }, errors: [...errors], warnings: [...warnings] };
 }
 
 // --- D1 projection -------------------------------------------------------

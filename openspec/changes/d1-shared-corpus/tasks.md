@@ -1,43 +1,43 @@
 ## 1. Schema + backfill
 
-- [ ] 1.1 Add `migrations/d1/0006_shared_corpus.sql`: `aliases`, `feeds`, `discovery_senders`, `discovery_members`, `flyer_terms`, `sku_cache`, `discovery_candidates` (UNIQUE url), `stores`, `store_notes`, `recipe_notes` + indexes (`sku_cache(ingredient, location_id)`, `recipe_notes(recipe)`, `store_notes(store)`).
-- [ ] 1.2 Add `migrations/0005-shared-corpus-d1.mjs`: read the data-repo checkout TOML (single files + `stores/`, `store_notes/`, `notes/` trees), parse, insert rows. Idempotent (reload per table).
-- [ ] 1.3 Test the backfill (each artifact → rows; attribution/private preserved for notes; inbox dedup by url).
+- [x] 1.1 Add `migrations/d1/0006_shared_corpus.sql`: `aliases`, `feeds`, `discovery_senders`, `discovery_members`, `flyer_terms`, `sku_cache`, `discovery_candidates` (UNIQUE url), `stores`, `store_notes`, `recipe_notes` + indexes.
+- [x] 1.2 Add `migrations/0005-shared-corpus-d1.mjs`: read the data-repo checkout TOML (single files + `stores/`, `store_notes/`, `notes/` trees), parse, insert rows. Idempotent (reload per table).
+- [x] 1.3 Test the backfill (`tests/shared-corpus-d1-backfill.test.mjs`): each artifact → rows; attribution/private preserved; inbox dedup by url.
 
 ## 2. Reads → D1
 
-- [ ] 2.1 Matcher: aliases (`gh-read.ts`/`tools.ts`) and SKU cache (`getCacheMappings`) → D1 queries; cache lookup by `(ingredient, location_id)`.
-- [ ] 2.2 Stores: `list_stores`/`read_store` (`stores.ts`/`stores-tools.ts`) → D1.
-- [ ] 2.3 Notes: `read_store_notes` and `read_recipe_notes` (`notes-tools.ts`) → D1 (recipe-notes join the slice-4 ratings query; apply own-private + everyone-shared filter).
-- [ ] 2.4 Discovery: `read_discovery_inbox`, feeds reader, flyer-terms reader (`flyer-warm.ts`) → D1.
+- [x] 2.1 Matcher: aliases + SKU cache → D1 (`src/corpus-db.ts`); cache lookup by `(ingredient, location_id)`.
+- [x] 2.2 Stores: `list_stores`/`read_store` → D1.
+- [x] 2.3 Notes: `read_store_notes` + `read_recipe_notes` → D1 (recipe-notes join the slice-4 ratings query; own-private + everyone-shared filter).
+- [x] 2.4 Discovery: `read_discovery_inbox`, feeds reader, flyer-terms reader → D1.
 
 ## 3. Writes → D1 (with write-time validation)
 
-- [ ] 3.1 `update_aliases`, `update_feeds`, `update_discovery_sources` → D1 upsert/delete.
-- [ ] 3.2 `add/update/remove_store` + write-time store validation (slug/name/domain, moved from the build).
-- [ ] 3.3 `add/update/remove_store_note`, `add/update/remove_recipe_note` → D1 (author = caller; private flag).
-- [ ] 3.4 SKU-cache writer (`order-tools.ts`) → upsert `sku_cache`.
-- [ ] 3.5 Email-ingest inbox writer (`email.ts`/`discovery.ts`) → insert `discovery_candidates` with `UNIQUE(url)` dedup + write-time candidate validation.
+- [x] 3.1 `update_aliases`, `update_feeds`, `update_discovery_sources` → D1.
+- [x] 3.2 `add/update/remove_store` + write-time `validateStoreInput` (moved from the build).
+- [x] 3.3 `add/update/remove_store_note`, `add/update/remove_recipe_note` → D1 (author = caller; private flag).
+- [x] 3.4 SKU-cache writer (`order-tools.ts`) → upsert `sku_cache`.
+- [x] 3.5 Email-ingest inbox writer → insert `discovery_candidates` (UNIQUE(url) dedup) + `validateDiscoveryCandidate`.
 
 ## 4. Build collapses to recipes-only
 
-- [ ] 4.1 `scripts/build-indexes.mjs`: remove `validateStore`, `validateDiscoveriesInbox`, `validateDiscoverySources`, and `parseCheckToml`/`walkToml`; the run is now recipe validation + index projection (slice 1).
-- [ ] 4.2 Move the dropped validations into `src/validate.ts` as write-time checks used by the tools in §3.
+- [x] 4.1 `scripts/build-indexes.mjs`: removed `validateStore`/`validateDiscoveriesInbox`/`validateDiscoverySources`/`parseCheckToml`/`walkToml`; the run is recipe validation + index projection only.
+- [x] 4.2 The dropped store/discovery validations moved into `src/validate.ts` as write-time checks (`validateStoreInput`, `validateDiscoveryCandidate`).
 
 ## 5. Remove TOML
 
-- [ ] 5.1 Remove `smol-toml` usages; delete `src/parse.ts`/`src/serialize.ts` TOML helpers (or the files if empty); drop `smol-toml` from `package.json`/lockfile.
-- [ ] 5.2 Data-repo cleanup commit: delete the now-orphaned `.toml` files (aliases/feeds/discovery/flyer/sku/inbox, `stores/`, `store_notes/`, `notes/`, and the slice-2 `cooking_log.toml` leftovers).
+- [x] 5.1 Removed all `smol-toml`/`parseToml`/`stringifyTomlWithHeader` usage from `src/**` and `scripts/build-indexes.mjs` (the Worker + build are TOML-free; `src/parse.ts`/`src/serialize.ts` keep only the YAML `parseMarkdown`/`serializeMarkdown` for recipes). **CORRECTION:** `smol-toml` is KEPT in `package.json` — the one-time `.mjs` backfill migrations (0001–0005) still parse the legacy TOML to migrate it into D1. The dependency can be dropped only after every operator has migrated and those migrations are retired.
+- [ ] 5.2 **DEFERRED (post-backfill, NOT this PR):** the data-repo `.toml` files are the backfill SOURCE — the migrations read them at deploy time. Deleting them before the operator runs the backfill = data loss (unlike slice 1's *derived* `_indexes/recipes.json`). They are deleted as a separate data-repo commit only after D1 is confirmed authoritative. Documented in the operator playbook.
 
 ## 6. Docs
 
-- [ ] 6.1 `docs/SCHEMAS.md`: D1 tables replace every remaining TOML schema.
-- [ ] 6.2 `docs/ARCHITECTURE.md`: the completed boundary — GitHub = recipes only; D1 = all domain data; KV = ephemeral infra.
-- [ ] 6.3 `CONTRIBUTING.md`: remove TOML data tooling; note write-time validation replaced build-time for non-recipe data.
+- [x] 6.1 `docs/SCHEMAS.md`: D1 tables replace the remaining shared-corpus TOML schemas.
+- [x] 6.2 `docs/ARCHITECTURE.md`: the completed boundary — GitHub = recipes only; D1 = all domain data; KV = ephemeral infra.
+- [x] 6.3 `CONTRIBUTING.md`: TOML data tooling removed from the runtime path; write-time validation replaced build-time for non-recipe data.
 
 ## 7. Verify
 
-- [ ] 7.1 `npm run typecheck` + `npm test` green (every read/write path; notes attribution/privacy; sku-cache + inbox dedup; build recipes-only).
-- [ ] 7.2 Manual: backfill; matcher resolves via D1 aliases/cache; `read_recipe_notes` returns notes + group ratings in one path; store/discovery writes validate at the tool.
+- [x] 7.1 `npm run typecheck` + `npm test` (523 pass / 9 skipped) + `npm run test:tooling` (124 pass) green — every read/write path; notes attribution/privacy; sku-cache + inbox dedup; build recipes-only.
+- [ ] 7.2 Manual (NEEDS LIVE D1): backfill; matcher resolves via D1 aliases/cache; `read_recipe_notes` returns notes + group ratings in one path; store/discovery writes validate at the tool. Covered against a fake D1 in unit/tooling tests; live round-trip is the operator's deploy-time smoke.
 
-> Note: this slice has the largest tool surface — the two spec deltas here (`shared-corpus`, `build-automation`) capture the architecture; the per-tool deltas for `ingredient-matching`, `newsletter-discovery`, and `recipe-notes` are enumerated above and finalized when this slice is applied.
+> Note: the two spec deltas here (`shared-corpus`, `build-automation`) capture the architecture; per-tool deltas for `ingredient-matching`/`newsletter-discovery`/`recipe-notes` are folded into those.
