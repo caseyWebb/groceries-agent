@@ -79,7 +79,16 @@ export function fakeD1(
     if (/\brecipe = \?1/i.test(sql)) eq("recipe", 1);
     if (/\brecipe = \?2/i.test(sql)) eq("recipe", 2);
     if (/\bstore = \?1/i.test(sql)) eq("store", 1);
+    if (/\bslug = \?1/i.test(sql)) eq("slug", 1);
     if (/normalized_name = \?2/i.test(sql)) eq("normalized_name", 2);
+    // Attributed notes: privacy rule (private=0 OR author=?2), and self-scoped
+    // findOwnNote (author=?2 AND created_at=?3).
+    if (/\(private = 0 OR author = \?2\)/i.test(sql)) {
+      out = out.filter((r) => r.private === 0 || r.author === binds[1]);
+    } else if (/\bauthor = \?2/i.test(sql)) {
+      eq("author", 2);
+    }
+    if (/created_at = \?3/i.test(sql)) eq("created_at", 3);
     return out;
   };
 
@@ -92,7 +101,18 @@ export function fakeD1(
       }
       if (!table || !tables[table]) return { rows: [], changes: 0 };
       const base = GLOBAL_TABLES.has(table) ? tables[table] : tables[table].filter((r) => r.tenant === binds[0]);
-      const rows = applyWhere(sql, binds, base);
+      let rows = applyWhere(sql, binds, base);
+      // Honor the simple ORDER BY clauses the corpus reads use.
+      const order = /ORDER BY\s+(\w+)(\s+DESC)?/i.exec(sql);
+      if (order) {
+        const col = order[1];
+        const dir = order[2] ? -1 : 1;
+        rows = [...rows].sort((a, b) => {
+          const av = a[col] as string;
+          const bv = b[col] as string;
+          return av < bv ? -dir : av > bv ? dir : 0;
+        });
+      }
       return { rows: rows.map((r) => ({ ...r })), changes: 0 };
     }
     if (/^DELETE/i.test(sql)) {
@@ -141,6 +161,22 @@ export function fakeD1(
       }
       tables[table].push(row);
       return { rows: [], changes: 1 };
+    }
+    if (/^UPDATE/i.test(sql)) {
+      if (!table || !tables[table]) return { rows: [], changes: 0 };
+      // Note edits: UPDATE <table> SET body=?1, tags=?2, private=?3 WHERE id=?N.
+      const m = /SET\s+(.+?)\s+WHERE\s+id = \?(\d+)/is.exec(sql);
+      if (!m) return { rows: [], changes: 0 };
+      const setCols = [...m[1].matchAll(/(\w+)\s*=\s*\?(\d+)/g)].map((x) => ({ col: x[1], n: Number(x[2]) }));
+      const idVal = binds[Number(m[2]) - 1];
+      let changes = 0;
+      for (const r of tables[table]) {
+        if (r.id === idVal) {
+          for (const { col, n } of setCols) r[col] = binds[n - 1] ?? null;
+          changes++;
+        }
+      }
+      return { rows: [], changes };
     }
     return { rows: [], changes: 0 };
   };

@@ -41,6 +41,40 @@ function fail(path: string, message: string): never {
   throw new ToolError("validation_failed", `${path}: ${message}`, { path });
 }
 
+// kebab-case location slug; anchored so it also rejects path traversal.
+const STORE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * Write-time store-identity validation (moved off the build into the Worker, slice 6).
+ * `slug` must be kebab-case; `name` required; `domain` a non-empty string when given.
+ * Throws ToolError("validation_failed") so add_store / update_store make no write.
+ */
+export function validateStoreInput(input: {
+  slug: string;
+  name: string;
+  domain?: string;
+}): void {
+  if (!STORE_SLUG_RE.test(input.slug)) {
+    throw new ToolError("validation_failed", `Invalid store slug: ${input.slug}`, { slug: input.slug });
+  }
+  if (typeof input.name !== "string" || !input.name.trim()) {
+    throw new ToolError("validation_failed", "store name must not be empty", { slug: input.slug });
+  }
+  if (input.domain != null && (typeof input.domain !== "string" || !input.domain.trim())) {
+    throw new ToolError("validation_failed", `\`domain\` must be a non-empty string`, { slug: input.slug });
+  }
+}
+
+/**
+ * Write-time discovery-candidate validation (the email-ingest inbox writer, slice 6).
+ * A candidate needs a non-empty `url`. Throws ToolError("validation_failed").
+ */
+export function validateDiscoveryCandidate(cand: { url: string }): void {
+  if (typeof cand.url !== "string" || !cand.url.length) {
+    throw new ToolError("validation_failed", "inbox candidate is missing required field `url`", {});
+  }
+}
+
 function parseTomlOrFail(path: string, content: string): Record<string, unknown> {
   try {
     return parseTomlRaw(content) as Record<string, unknown>;

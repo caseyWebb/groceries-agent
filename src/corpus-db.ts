@@ -298,3 +298,288 @@ export async function insertDiscoveryCandidate(
   );
   return res.changes > 0;
 }
+
+// === Stores ==================================================================
+
+/**
+ * Objective store IDENTITY (shared, unattributed). The non-core identity fields
+ * (label/chain/address/location_id) are kept in the `extra` JSON column.
+ */
+export interface Store {
+  slug: string;
+  name: string;
+  label?: string;
+  chain?: string;
+  address?: string;
+  domain: string;
+  location_id?: string;
+}
+
+const STORE_EXTRA_KEYS = ["label", "chain", "address", "location_id"] as const;
+
+function storeOfRow(r: { slug: string; name: string; domain: string | null; extra: string | null }): Store {
+  const store: Store = { slug: r.slug, name: r.name, domain: r.domain ?? "grocery" };
+  if (r.extra) {
+    try {
+      const extra = JSON.parse(r.extra) as Record<string, unknown>;
+      for (const k of STORE_EXTRA_KEYS) {
+        if (typeof extra[k] === "string" && extra[k]) store[k] = extra[k] as string;
+      }
+    } catch {
+      /* ignore malformed extra */
+    }
+  }
+  return store;
+}
+
+function storeExtraJson(store: Store): string | null {
+  const extra: Record<string, string> = {};
+  for (const k of STORE_EXTRA_KEYS) {
+    const v = store[k];
+    if (typeof v === "string" && v) extra[k] = v;
+  }
+  return Object.keys(extra).length ? JSON.stringify(extra) : null;
+}
+
+/** List the registered stores (identity only), sorted by slug. */
+export async function listStoreRows(env: Env): Promise<Store[]> {
+  const rows = await db(env).all<{ slug: string; name: string; domain: string | null; extra: string | null }>(
+    "SELECT slug, name, domain, extra FROM stores ORDER BY slug",
+  );
+  return rows.map(storeOfRow);
+}
+
+/** Read one store by slug, or null when absent. */
+export async function readStoreRow(env: Env, slug: string): Promise<Store | null> {
+  const row = await db(env).first<{ slug: string; name: string; domain: string | null; extra: string | null }>(
+    "SELECT slug, name, domain, extra FROM stores WHERE slug = ?1",
+    slug,
+  );
+  return row ? storeOfRow(row) : null;
+}
+
+/** Insert a new store row (caller checks the slug isn't already registered). */
+export async function insertStore(env: Env, store: Store): Promise<void> {
+  await db(env).run(
+    "INSERT INTO stores (slug, name, domain, extra) VALUES (?1, ?2, ?3, ?4)",
+    store.slug,
+    store.name,
+    store.domain,
+    storeExtraJson(store),
+  );
+}
+
+/** Upsert a store row by slug (used by update_store after applying its ops). */
+export async function upsertStore(env: Env, store: Store): Promise<void> {
+  await db(env).run(
+    "INSERT INTO stores (slug, name, domain, extra) VALUES (?1, ?2, ?3, ?4) " +
+      "ON CONFLICT(slug) DO UPDATE SET name = excluded.name, domain = excluded.domain, extra = excluded.extra",
+    store.slug,
+    store.name,
+    store.domain,
+    storeExtraJson(store),
+  );
+}
+
+/** Delete a store by slug. Returns whether a row was removed. */
+export async function deleteStore(env: Env, slug: string): Promise<boolean> {
+  const res = await db(env).run("DELETE FROM stores WHERE slug = ?1", slug);
+  return res.changes > 0;
+}
+
+// === Notes (attributed: recipe_notes, store_notes) ===========================
+
+/** A note surfaced in a group read, carrying its author + privacy. */
+export interface AttributedNote {
+  author: string;
+  created_at: string;
+  body: string;
+  tags: string[];
+  private: boolean;
+}
+
+/** A note as the caller owns it (used by update/remove, addressed by created_at). */
+export interface OwnedNote extends AttributedNote {
+  id: string;
+}
+
+type NoteTable = "recipe_notes" | "store_notes";
+const noteSubjectCol = (table: NoteTable): "recipe" | "store" =>
+  table === "recipe_notes" ? "recipe" : "store";
+
+function attributedNoteOf(r: {
+  author: string;
+  created_at: string | null;
+  body: string;
+  tags: string | null;
+  private: number | null;
+}): AttributedNote {
+  return {
+    author: r.author,
+    created_at: r.created_at ?? "",
+    body: r.body,
+    tags: parseJsonArray(r.tags),
+    private: r.private === 1,
+  };
+}
+
+/**
+ * Read a subject's group notes with the privacy rule applied: the caller's own
+ * private notes plus everyone's shared notes (private=0 OR author=caller). Ordered
+ * by created_at (author as tiebreak) for determinism.
+ */
+async function readNotes(
+  env: Env,
+  table: NoteTable,
+  subject: string,
+  caller: string,
+): Promise<AttributedNote[]> {
+  const col = noteSubjectCol(table);
+  const rows = await db(env).all<{
+    author: string;
+    created_at: string | null;
+    body: string;
+    tags: string | null;
+    private: number | null;
+  }>(
+    `SELECT author, body, tags, private, created_at FROM ${table} ` +
+      `WHERE ${col} = ?1 AND (private = 0 OR author = ?2)`,
+    subject,
+    caller,
+  );
+  const notes = rows.map(attributedNoteOf);
+  notes.sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.author < b.author ? -1 : 1,
+  );
+  return notes;
+}
+
+export const readRecipeNotes = (env: Env, recipe: string, caller: string) =>
+  readNotes(env, "recipe_notes", recipe, caller);
+export const readStoreNotes = (env: Env, store: string, caller: string) =>
+  readNotes(env, "store_notes", store, caller);
+
+/** Insert an attributed note; returns its id (the addressing key for update/remove). */
+async function insertNote(
+  env: Env,
+  table: NoteTable,
+  subject: string,
+  author: string,
+  note: { created_at: string; body: string; tags: string[]; private: boolean },
+): Promise<string> {
+  const col = noteSubjectCol(table);
+  const id = `${author} ${subject} ${note.created_at}`;
+  await db(env).run(
+    `INSERT INTO ${table} (id, ${col}, author, body, tags, private, created_at) ` +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    id,
+    subject,
+    author,
+    note.body,
+    JSON.stringify(note.tags),
+    note.private ? 1 : 0,
+    note.created_at,
+  );
+  return id;
+}
+
+export const insertRecipeNote = (
+  env: Env,
+  recipe: string,
+  author: string,
+  note: { created_at: string; body: string; tags: string[]; private: boolean },
+) => insertNote(env, "recipe_notes", recipe, author, note);
+export const insertStoreNote = (
+  env: Env,
+  store: string,
+  author: string,
+  note: { created_at: string; body: string; tags: string[]; private: boolean },
+) => insertNote(env, "store_notes", store, author, note);
+
+/**
+ * Find the caller's OWN note on a subject by created_at (self-scoped — only the
+ * caller's rows are queryable here, mirroring the structural self-scoping of the old
+ * per-tenant note files). Returns null when none matches.
+ */
+async function findOwnNote(
+  env: Env,
+  table: NoteTable,
+  subject: string,
+  author: string,
+  createdAt: string,
+): Promise<OwnedNote | null> {
+  const col = noteSubjectCol(table);
+  const row = await db(env).first<{
+    id: string;
+    author: string;
+    created_at: string | null;
+    body: string;
+    tags: string | null;
+    private: number | null;
+  }>(
+    `SELECT id, author, body, tags, private, created_at FROM ${table} ` +
+      `WHERE ${col} = ?1 AND author = ?2 AND created_at = ?3`,
+    subject,
+    author,
+    createdAt,
+  );
+  if (!row) return null;
+  return { id: row.id, ...attributedNoteOf(row) };
+}
+
+/** Patch fields on the caller's own note (by created_at). Returns false when no match. */
+async function updateOwnNote(
+  env: Env,
+  table: NoteTable,
+  subject: string,
+  author: string,
+  createdAt: string,
+  patch: { body?: string; tags?: string[]; private?: boolean },
+): Promise<boolean> {
+  const existing = await findOwnNote(env, table, subject, author, createdAt);
+  if (!existing) return false;
+  const body = patch.body ?? existing.body;
+  const tags = patch.tags ?? existing.tags;
+  const priv = patch.private ?? existing.private;
+  await db(env).run(
+    `UPDATE ${table} SET body = ?1, tags = ?2, private = ?3 WHERE id = ?4`,
+    body,
+    JSON.stringify(tags),
+    priv ? 1 : 0,
+    existing.id,
+  );
+  return true;
+}
+
+/** Delete the caller's own note (by created_at). Returns false when no match. */
+async function removeOwnNote(
+  env: Env,
+  table: NoteTable,
+  subject: string,
+  author: string,
+  createdAt: string,
+): Promise<boolean> {
+  const existing = await findOwnNote(env, table, subject, author, createdAt);
+  if (!existing) return false;
+  await db(env).run(`DELETE FROM ${table} WHERE id = ?1`, existing.id);
+  return true;
+}
+
+export const updateRecipeNote = (
+  env: Env,
+  recipe: string,
+  author: string,
+  createdAt: string,
+  patch: { body?: string; tags?: string[]; private?: boolean },
+) => updateOwnNote(env, "recipe_notes", recipe, author, createdAt, patch);
+export const removeRecipeNote = (env: Env, recipe: string, author: string, createdAt: string) =>
+  removeOwnNote(env, "recipe_notes", recipe, author, createdAt);
+export const updateStoreNote = (
+  env: Env,
+  store: string,
+  author: string,
+  createdAt: string,
+  patch: { body?: string; tags?: string[]; private?: boolean },
+) => updateOwnNote(env, "store_notes", store, author, createdAt, patch);
+export const removeStoreNote = (env: Env, store: string, author: string, createdAt: string) =>
+  removeOwnNote(env, "store_notes", store, author, createdAt);

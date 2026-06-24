@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import type { Tenant } from "./tenant.js";
 import { directoryFromEnv } from "./tenant.js";
-import { createGitHubClient, prefixedClient, GitHubError } from "./github.js";
+import { createGitHubClient, GitHubError } from "./github.js";
 import { createInstallationAuth } from "./github-app.js";
 import { readFile } from "./gh-read.js";
 import { parseMarkdown } from "./parse.js";
@@ -113,10 +113,9 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   const server = new McpServer({ name: "grocery-mcp", version: "0.1.0" });
 
   // Repo access is authenticated with a short-lived GitHub App installation token
-  // (D3) against the single data repo. `sharedGh` addresses root paths (objective
-  // content `recipes/`, reference data, SKU cache, indexes); `gh` is the same repo
-  // wrapped to address this tenant's `users/<username>/` subtree (personal state,
-  // overlay, notes). One repo, two path views — never another tenant's subtree.
+  // (D3) against the single data repo. After slice 6 the ONLY data the Worker reads
+  // from GitHub is recipe markdown (everything else — profile, session, shared corpus
+  // — is D1), so `sharedGh` (root paths: `recipes/`) is the only client needed.
   const installationAuth = createInstallationAuth(
     env.GITHUB_APP_ID,
     env.GITHUB_APP_PRIVATE_KEY,
@@ -124,7 +123,6 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   );
   const dataGh = createGitHubClient(tenant.dataRepo, installationAuth);
   const sharedGh = dataGh;
-  const gh = prefixedClient(dataGh, tenant.userPrefix);
   const kroger = createKrogerClient(env);
 
   // Per-request lazy caches backed by the D1 profile tables (the profile left KV
@@ -559,15 +557,16 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   // source URL against the shared corpus so a recipe is reused, not duplicated (§6.4).
   registerDiscoveryTools(server, sharedGh, env);
 
-  // Recipe notes (§8): attributed annotations authored in this tenant's subtree,
-  // aggregated across the group at read time (KV tenant directory → each subtree).
-  registerNoteTools(server, sharedGh, gh, tenant.id, directoryFromEnv(env), env);
+  // Recipe notes (§8): attributed annotations in the D1 `recipe_notes` table,
+  // aggregated across the group at read time with the privacy WHERE (own-private +
+  // group-shared), joined with the slice-4 overlay-ratings query (fully D1).
+  registerNoteTools(server, tenant.id, directoryFromEnv(env), env);
 
-  // In-store fulfillment: the shared stores/ registry (identity-only CRUD,
-  // unattributed) + attributed per-tenant store notes (the recipe-notes pattern,
-  // store analog) — layout lives in layout/location/stock-tagged store notes.
-  registerStoreTools(server, sharedGh);
-  registerStoreNoteTools(server, sharedGh, gh, tenant.id, directoryFromEnv(env));
+  // In-store fulfillment: the shared D1 `stores` registry (identity-only CRUD,
+  // unattributed) + attributed D1 `store_notes` (the recipe-notes pattern, store
+  // analog) — layout lives in layout/location/stock-tagged store notes.
+  registerStoreTools(server, env);
+  registerStoreNoteTools(server, tenant.id, env);
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
