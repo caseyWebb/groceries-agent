@@ -43,21 +43,6 @@ function ghWith(files: Record<string, string>): GitHubClient {
   };
 }
 
-// Minimal KV fake backed by a Map; user-kv helpers use get/put/delete only.
-function fakeKv(initial: Record<string, string> = {}): { kv: KVNamespace; store: Map<string, string> } {
-  const store = new Map(Object.entries(initial));
-  const kv = {
-    get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => {
-      store.set(k, v);
-    },
-    delete: async (k: string) => {
-      store.delete(k);
-    },
-  } as unknown as KVNamespace;
-  return { kv, store };
-}
-
 // An in-memory fake D1 covering the profile tables the write tools touch. It routes
 // by SQL prefix/table: `SELECT 1 … FROM recipes` resolves a slug against `slugs`;
 // SELECT/INSERT/DELETE against profile, overlay, staples, stockup, brand_prefs,
@@ -78,6 +63,7 @@ function fakeD1(slugs: string[]): FakeStore {
     brand_prefs: [],
     kitchen_equipment: [],
     ready_to_eat: [],
+    pantry: [],
   };
 
   function tableOf(sql: string): string | null {
@@ -107,6 +93,7 @@ function fakeD1(slugs: string[]): FakeStore {
         if (r.tenant !== tenant) return true;
         if (sql.includes("recipe = ?2")) return r.recipe !== binds[1];
         if (sql.includes("term = ?2")) return r.term !== binds[1];
+        if (sql.includes("normalized_name = ?2")) return r.normalized_name !== binds[1];
         return false;
       });
       return { rows: [], changes: before - tables[table].length };
@@ -354,9 +341,9 @@ describe("markVerified", () => {
 });
 
 // Invoke the real registered write-tool handlers through a minimal fake server.
-// Pantry is KV-backed now, so the integration tests read back from the fake KV
-// (state:<username>:pantry) rather than capturing GitHub commit trees.
-function collectTools(gh: GitHubClient, dataKv: KVNamespace, username: string, env: Env = fakeD1([]).env) {
+// Pantry is D1-backed now (the `pantry` table in the fake D1), so the integration
+// tests read back from the fake D1's table rather than capturing GitHub commit trees.
+function collectTools(gh: GitHubClient, username: string, env: Env = fakeD1([]).env) {
   const handlers = new Map<string, (input: unknown) => Promise<{ content: { text: string }[] }>>();
   const server = {
     registerTool: (name: string, _cfg: unknown, handler: (input: unknown) => Promise<{ content: { text: string }[] }>) => {
@@ -367,16 +354,15 @@ function collectTools(gh: GitHubClient, dataKv: KVNamespace, username: string, e
     server as unknown as Parameters<typeof registerWriteTools>[0],
     gh,
     env,
-    dataKv,
     username,
   );
   return handlers;
 }
 
-describe("update_pantry / mark_pantry_verified (KV-backed)", () => {
-  it("update_pantry add seeds the pantry key when none exists yet, no commit_sha", async () => {
-    const { kv, store } = fakeKv();
-    const handlers = collectTools(ghWith({}), kv, "everett");
+describe("update_pantry / mark_pantry_verified (D1-backed)", () => {
+  it("update_pantry add inserts a pantry row, no commit_sha", async () => {
+    const d1 = fakeD1([]);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_pantry")!({
       operations: [{ op: "add", item: { name: "butter", category: "fridge" } }],
     });
@@ -387,25 +373,23 @@ describe("update_pantry / mark_pantry_verified (KV-backed)", () => {
     };
     expect(out.applied).toContainEqual({ op: "add", name: "butter" });
     expect(out.conflicts).toHaveLength(0);
-    expect(out.commit_sha).toBeUndefined(); // KV-backed: no git commit
-    const items = JSON.parse(store.get("state:everett:pantry")!) as Record<string, unknown>[];
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ name: "butter", category: "fridge" });
+    expect(out.commit_sha).toBeUndefined(); // D1-backed: no git commit
+    expect(d1.tables.pantry).toHaveLength(1);
+    expect(d1.tables.pantry[0]).toMatchObject({ tenant: "everett", name: "butter", category: "fridge", normalized_name: "butter" });
   });
 
   it("update_pantry add works for a single minimal op (name only)", async () => {
-    const { kv, store } = fakeKv();
-    const handlers = collectTools(ghWith({}), kv, "everett");
+    const d1 = fakeD1([]);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_pantry")!({ operations: [{ op: "add", name: "butter" }] });
     const out = JSON.parse(res.content[0].text) as { applied: { op: string; name: string }[] };
     expect(out.applied).toContainEqual({ op: "add", name: "butter" });
-    const items = JSON.parse(store.get("state:everett:pantry")!) as Record<string, unknown>[];
-    expect(items.map((i) => i.name)).toEqual(["butter"]);
+    expect(d1.tables.pantry.map((i) => i.name)).toEqual(["butter"]);
   });
 
   it("a lone remove against an absent pantry reports a conflict and writes nothing", async () => {
-    const { kv, store } = fakeKv();
-    const handlers = collectTools(ghWith({}), kv, "everett");
+    const d1 = fakeD1([]);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_pantry")!({ operations: [{ op: "remove", name: "ghost" }] });
     const out = JSON.parse(res.content[0].text) as {
       applied: unknown[];
@@ -413,25 +397,24 @@ describe("update_pantry / mark_pantry_verified (KV-backed)", () => {
     };
     expect(out.applied).toHaveLength(0);
     expect(out.conflicts).toContainEqual({ op: "remove", name: "ghost", reason: "no pantry item with that name" });
-    expect(store.has("state:everett:pantry")).toBe(false); // no write
+    expect(d1.tables.pantry).toHaveLength(0); // no write
   });
 
   it("mark_pantry_verified against an absent pantry reports missing, writes nothing", async () => {
-    const { kv, store } = fakeKv();
-    const handlers = collectTools(ghWith({}), kv, "everett");
+    const d1 = fakeD1([]);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("mark_pantry_verified")!({ items: ["butter"] });
     const out = JSON.parse(res.content[0].text) as { verified: string[]; conflicts: { op: string; name: string }[] };
     expect(out.verified).toHaveLength(0);
     expect(out.conflicts).toContainEqual({ op: "verify", name: "butter", reason: "no pantry item with that name" });
-    expect(store.has("state:everett:pantry")).toBe(false); // no write
+    expect(d1.tables.pantry).toHaveLength(0); // no write
   });
 });
 
 describe("rate_recipe (subjective overlay write → D1)", () => {
   it("writes only the caller's overlay row for an existing recipe, no commit_sha", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1(["miso-salmon"]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("rate_recipe")!({ slug: "miso-salmon", rating: 5 });
     const out = JSON.parse(res.content[0].text) as { slug: string; overlay: Record<string, unknown>; commit_sha?: string };
     expect(out.slug).toBe("miso-salmon");
@@ -443,9 +426,8 @@ describe("rate_recipe (subjective overlay write → D1)", () => {
   });
 
   it("sets status and merges with an existing rating across calls", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1(["miso-salmon"]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     await handlers.get("rate_recipe")!({ slug: "miso-salmon", rating: 4 });
     const res = await handlers.get("rate_recipe")!({ slug: "miso-salmon", status: "active" });
     const out = JSON.parse(res.content[0].text) as { overlay: Record<string, unknown> };
@@ -455,9 +437,8 @@ describe("rate_recipe (subjective overlay write → D1)", () => {
   });
 
   it("rejects a slug not in the recipe index (not_found), writing nothing", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]); // no recipes
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("rate_recipe")!({ slug: "ghost", status: "active" });
     const out = JSON.parse(res.content[0].text) as { error: string };
     expect(out.error).toBe("not_found");
@@ -465,16 +446,14 @@ describe("rate_recipe (subjective overlay write → D1)", () => {
   });
 
   it("rejects a malformed slug (not_found) before touching D1", async () => {
-    const { kv } = fakeKv();
-    const handlers = collectTools(ghWith({}), kv, "everett", fakeD1(["miso-salmon"]).env);
+    const handlers = collectTools(ghWith({}), "everett", fakeD1(["miso-salmon"]).env);
     const res = await handlers.get("rate_recipe")!({ slug: "Not A Slug", rating: 3 });
     expect((JSON.parse(res.content[0].text) as { error: string }).error).toBe("not_found");
   });
 
   it("rejects an empty edit (neither rating nor status) with validation_failed", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1(["miso-salmon"]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("rate_recipe")!({ slug: "miso-salmon" });
     const out = JSON.parse(res.content[0].text) as { error: string };
     expect(out.error).toBe("validation_failed");
@@ -484,9 +463,8 @@ describe("rate_recipe (subjective overlay write → D1)", () => {
 
 describe("profile writes → D1 (staples / stockup / kitchen / ready-to-eat)", () => {
   it("update_staples upserts staple rows with a normalized_name", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_staples")!({
       add: [{ name: "Olive Oil" }, { name: "Eggs", perishable: true }],
     });
@@ -497,9 +475,8 @@ describe("profile writes → D1 (staples / stockup / kitchen / ready-to-eat)", (
   });
 
   it("update_stockup writes rows and the freezer estimate onto the profile row", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     await handlers.get("update_stockup")!({
       items: [{ name: "Chicken Thighs", unit: "lb" }],
       freezer_capacity_estimate: "moderate",
@@ -511,9 +488,8 @@ describe("profile writes → D1 (staples / stockup / kitchen / ready-to-eat)", (
   });
 
   it("update_kitchen replaces equipment rows and stores notes JSON on the profile row", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_kitchen")!({
       operations: [
         { op: "add", slug: "blender" },
@@ -527,9 +503,8 @@ describe("profile writes → D1 (staples / stockup / kitchen / ready-to-eat)", (
   });
 
   it("add_draft_ready_to_eat writes a catalog row keyed by generated slug", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("add_draft_ready_to_eat")!({
       items: [{ meal: "dinner", name: "Frozen Lasagna" }],
     });
@@ -543,10 +518,9 @@ describe("profile writes → D1 (staples / stockup / kitchen / ready-to-eat)", (
 
 describe("update_preferences (merge-patch → D1)", () => {
   it("partial patch merges without clobbering siblings", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
     d1.tables.profile.push({ tenant: "everett", stores: JSON.stringify({ primary: "kroger" }) });
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     await handlers.get("update_preferences")!({
       patch: { stores: { preferred_location: "Kroger - 76137" } },
     });
@@ -555,10 +529,9 @@ describe("update_preferences (merge-patch → D1)", () => {
   });
 
   it("brands tri-state: value UPSERTs, [] is don't-care, null DELETEs", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
     d1.tables.brand_prefs.push({ tenant: "everett", term: "canola_oil", ranks: '["Crisco"]' });
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     await handlers.get("update_preferences")!({
       patch: { brands: { olive_oil: ["Cobram"], yellow_onion: [], canola_oil: null } },
     });
@@ -569,9 +542,8 @@ describe("update_preferences (merge-patch → D1)", () => {
   });
 
   it("rejects an unknown top-level key toward custom, storing nothing", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_preferences")!({ patch: { spice_tolerance: "high" } });
     const out = JSON.parse(res.content[0].text) as { error: string; message?: string };
     expect(out.error).toBe("validation_failed");
@@ -580,9 +552,8 @@ describe("update_preferences (merge-patch → D1)", () => {
   });
 
   it("rejects a type-invalid merged result (bad enum), storing nothing", async () => {
-    const { kv } = fakeKv();
     const d1 = fakeD1([]);
-    const handlers = collectTools(ghWith({}), kv, "everett", d1.env);
+    const handlers = collectTools(ghWith({}), "everett", d1.env);
     const res = await handlers.get("update_preferences")!({ patch: { lunch_strategy: "sometimes" } });
     const out = JSON.parse(res.content[0].text) as { error: string };
     expect(out.error).toBe("malformed_data");
@@ -594,8 +565,7 @@ describe("update_recipe (objective-only)", () => {
   const RECIPE_MD = "---\ntitle: Salmon\nstatus: active\n---\n\n## Ingredients\n- salmon\n";
 
   it("rejects a status edit, directing the caller to rate_recipe, writing nothing", async () => {
-    const { kv } = fakeKv();
-    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), kv, "everett", fakeD1(["salmon"]).env);
+    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), "everett", fakeD1(["salmon"]).env);
     const res = await handlers.get("update_recipe")!({ slug: "salmon", updates: { status: "active" } });
     const out = JSON.parse(res.content[0].text) as { error: string; message?: string };
     expect(out.error).toBe("validation_failed");
@@ -603,15 +573,13 @@ describe("update_recipe (objective-only)", () => {
   });
 
   it("rejects a rating edit toward rate_recipe", async () => {
-    const { kv } = fakeKv();
-    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), kv, "everett", fakeD1(["salmon"]).env);
+    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), "everett", fakeD1(["salmon"]).env);
     const res = await handlers.get("update_recipe")!({ slug: "salmon", updates: { rating: 5 } });
     expect((JSON.parse(res.content[0].text) as { error: string }).error).toBe("validation_failed");
   });
 
   it("still rejects last_cooked toward log_cooked", async () => {
-    const { kv } = fakeKv();
-    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), kv, "everett", fakeD1(["salmon"]).env);
+    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), "everett", fakeD1(["salmon"]).env);
     const res = await handlers.get("update_recipe")!({ slug: "salmon", updates: { last_cooked: "2026-06-09" } });
     const out = JSON.parse(res.content[0].text) as { error: string };
     expect(out.error).toBe("validation_failed");
@@ -619,8 +587,7 @@ describe("update_recipe (objective-only)", () => {
   });
 
   it("commits an objective frontmatter edit and returns updated_fields", async () => {
-    const { kv } = fakeKv();
-    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), kv, "everett", fakeD1(["salmon"]).env);
+    const handlers = collectTools(ghWith({ "recipes/salmon.md": RECIPE_MD }), "everett", fakeD1(["salmon"]).env);
     const res = await handlers.get("update_recipe")!({ slug: "salmon", updates: { time_total: 30 } });
     const out = JSON.parse(res.content[0].text) as { slug: string; updated_fields: string[]; commit_sha: string };
     expect(out.slug).toBe("salmon");

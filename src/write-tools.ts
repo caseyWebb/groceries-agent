@@ -1,9 +1,10 @@
 // Repo-data write tools (data-write-tools capability). Each tool reads the
-// current file(s), applies a pure transform, and persists via the atomic commit
-// engine (commit.ts) for shared GitHub content, or DATA_KV for per-tenant state.
+// current file(s)/rows, applies a pure transform, and persists via the atomic commit
+// engine (commit.ts) for shared GitHub content, or D1 rows for per-tenant state.
 // Objective recipe content is shared (GitHub); a recipe's subjective disposition
-// (rating/status) is per-tenant and routes to the caller's KV overlay via
-// `rate_recipe`. No tool here writes a Kroger cart or calls an external service.
+// (rating/status) is per-tenant and routes to the caller's D1 overlay via
+// `rate_recipe`; the pantry is the D1 `pantry` table (src/session-db.ts). No tool here
+// writes a Kroger cart or calls an external service.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -17,7 +18,6 @@ import { serializeMarkdown, stripEmptyVarietyDimensions } from "./serialize.js";
 import { ToolError, runTool } from "./errors.js";
 import { commitFiles } from "./commit.js";
 import { applyOverlayEdit, type OverlayRow } from "./overlay.js";
-import { applyPantryOperations, markVerified, type PantryItem } from "./pantry-write.js";
 import { applyKitchenOperations } from "./kitchen.js";
 import { slugify } from "./discovery.js";
 import { addStockup } from "./stockup.js";
@@ -42,7 +42,7 @@ import {
   profileUpsertStmt,
   brandStmt,
 } from "./profile-db.js";
-import { writePantryState, getPantryState } from "./user-kv.js";
+import { applyPantryRowOps, markPantryVerifiedRows } from "./session-db.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MEALS = ["breakfast", "lunch", "dinner"] as const;
@@ -150,16 +150,15 @@ const SHARED_CURATED_FILES: Record<string, string> = {
 /**
  * `gh` is the root data-repo client (shared recipe + aliases writes — the only
  * GitHub-backed writes left here). `env` is D1: the `recipes` index (queried by
- * `rate_recipe` to validate a slug) AND the profile tables (preferences/taste/diet/
- * kitchen/staples/overlay/ready_to_eat/stockup — all via src/profile-db.ts). `dataKv`
- * + `username` back the session-state pantry key (meal_plan/grocery_list live in
- * their own tool groups).
+ * `rate_recipe` to validate a slug), the profile tables (preferences/taste/diet/
+ * kitchen/staples/overlay/ready_to_eat/stockup — via src/profile-db.ts) AND the
+ * session-state pantry table (via src/session-db.ts). meal_plan/grocery_list live in
+ * their own tool groups.
  */
 export function registerWriteTools(
   server: McpServer,
   gh: GitHubClient,
   env: Env,
-  dataKv: KVNamespace,
   username: string,
 ): void {
   server.registerTool(
@@ -249,11 +248,7 @@ export function registerWriteTools(
     },
     ({ operations }) =>
       runTool(async () => {
-        const items = await getPantryState(dataKv, username);
-        const result = applyPantryOperations(items as PantryItem[], operations, today());
-        if (result.applied.length > 0) {
-          await writePantryState(dataKv, username, result.items);
-        }
+        const result = await applyPantryRowOps(env, username, operations, today());
         return { applied: result.applied, conflicts: result.conflicts };
       }),
   );
@@ -356,12 +351,8 @@ export function registerWriteTools(
     },
     ({ items }) =>
       runTool(async () => {
-        const current = await getPantryState(dataKv, username);
-        const { items: nextItems, verified, missing } = markVerified(current as PantryItem[], items, today());
+        const { verified, missing } = await markPantryVerifiedRows(env, username, items, today());
         const conflicts = missing.map((name) => ({ op: "verify" as const, name, reason: "no pantry item with that name" }));
-        if (verified.length > 0) {
-          await writePantryState(dataKv, username, nextItems);
-        }
         return { verified, conflicts };
       }),
   );

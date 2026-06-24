@@ -26,7 +26,7 @@ import { loadRecipeIndex } from "./recipe-index.js";
 import { listStorageGuidance, readStorageGuidance } from "./storage-guidance.js";
 import { fetchWeatherForecast } from "./weather.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
-import { getPantryState } from "./user-kv.js";
+import { readPantry } from "./session-db.js";
 import {
   readProfile,
   readPreferences,
@@ -365,13 +365,10 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
             "stale_only is not computable: freshness is an LLM-judged, conversational concern (storage, open packages, visual inspection), not a function of the repo data.",
           );
         }
-        let items = await getPantryState(env.DATA_KV, tenant.id);
-        if (filter?.category !== undefined) {
-          items = items.filter((i) => i.category === filter.category);
-        }
-        if (filter?.prepared_only) {
-          items = items.filter((i) => i.prepared_from != null);
-        }
+        const items = await readPantry(env, tenant.id, {
+          category: filter?.category,
+          preparedOnly: filter?.prepared_only,
+        });
         return { items };
       }),
   );
@@ -563,17 +560,17 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
 
   // Repo-data write tools route by category internally (objective recipe content →
   // shared root via GitHub; personal profile/overlay → D1 profile tables; session
-  // state pantry → DATA_KV), so they take the ROOT client + D1 (env) + DATA_KV +
+  // state pantry → D1 pantry table), so they take the ROOT client + D1 (env) +
   // tenant id.
-  registerWriteTools(server, sharedGh, env, env.DATA_KV, tenant.id);
-  registerGroceryListTools(server, env.DATA_KV, tenant.id);
+  registerWriteTools(server, sharedGh, env, tenant.id);
+  registerGroceryListTools(server, env, tenant.id);
 
   // Cooking history + meal plan: read_meal_plan (resume), update_meal_plan, and
-  // retrospective. Meal plan reads/writes go through DATA_KV; the cooking log is the
-  // D1 `cooking_log` table. log_cooked appends a cooking event (D1 write + meal-plan
-  // clear) — it needs D1 (env) plus the KV meal plan, so it registers here too.
-  registerCookingTools(server, env, env.DATA_KV, tenant.id);
-  registerCookingWriteTools(server, env, env.DATA_KV, tenant.id);
+  // retrospective. Meal plan reads/writes go through the D1 `meal_plan` table; the
+  // cooking log is the D1 `cooking_log` table. log_cooked appends a cooking event and
+  // clears the cooked recipe from the meal plan in ONE D1 transaction (slice 5).
+  registerCookingTools(server, env, tenant.id);
+  registerCookingWriteTools(server, env, tenant.id);
 
   // Discovery: RSS recipe candidates, parse-only URL import, draft create, plus the
   // feeds/sources config writers. Everything here is SHARED (root client) — recipes,
