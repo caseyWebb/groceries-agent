@@ -27,7 +27,14 @@ import {
   type FeedEntry,
 } from "./discovery.js";
 import { recipeSourceMap } from "./recipe-index.js";
-import { readFeeds, addFeedRows, addSourceRows, readDiscoveryInbox } from "./corpus-db.js";
+import {
+  readFeeds,
+  addFeedRows,
+  addSourceRows,
+  readDiscoveryInbox,
+  readDiscoveryRejections,
+  addDiscoveryRejection,
+} from "./corpus-db.js";
 
 const MAX_PER_FEED = 8;
 
@@ -47,6 +54,7 @@ export function registerDiscoveryTools(
   server: McpServer,
   sharedGh: GitHubClient,
   env: Env,
+  tenantId: string,
 ): void {
   server.registerTool(
     "fetch_rss_discoveries",
@@ -60,7 +68,14 @@ export function registerDiscoveryTools(
         const feeds = await readFeeds(env);
         if (feeds.length === 0) return { candidates: [] };
 
-        const seen = extractRecipeSources(await recipeSourceMap(env));
+        // Dedup against BOTH the corpus (already-imported) and the group's rejected
+        // URLs, so a suppressed discovery never reappears in the pool.
+        const [sourceMap, rejected] = await Promise.all([
+          recipeSourceMap(env),
+          readDiscoveryRejections(env),
+        ]);
+        const seen = extractRecipeSources(sourceMap);
+        for (const url of rejected) seen.add(url);
 
         // Fetch all feeds concurrently (distinct external domains, no shared-host burst concern).
         const results = await Promise.all(
@@ -188,6 +203,26 @@ export function registerDiscoveryTools(
       inputSchema: {},
     },
     () => runTool(async () => ({ emails: await readDiscoveryInbox(env) })),
+  );
+
+  server.registerTool(
+    "reject_discovery",
+    {
+      description:
+        "SHARED, group-wide suppression of a discovery URL: stop it (and its tracker-wrapped variants) from ever resurfacing in fetch_rss_discoveries or read_discovery_inbox for ANYONE. Use ONLY when a candidate is not corpus-worthy for the GROUP — junk, broken, not actually a recipe, a duplicate, or clearly off-base. This is collective curation, deliberately asymmetric with a personal rating: a 'not for me this time' is a no-action skip (just don't import it), NEVER a reject. Idempotent on the canonical URL; an optional `reason` is recorded for provenance. Does not touch the corpus or anyone's recipe overlay.",
+      inputSchema: { url: z.string(), reason: z.string().optional() },
+    },
+    ({ url, reason }) =>
+      runTool(async () => {
+        const canonical = canonicalizeUrl(url);
+        await addDiscoveryRejection(env, {
+          url: canonical,
+          reason: reason ?? null,
+          rejectedBy: tenantId,
+          rejectedAt: new Date().toISOString().slice(0, 10),
+        });
+        return { url: canonical, rejected: true };
+      }),
   );
 
   server.registerTool(

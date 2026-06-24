@@ -40,15 +40,15 @@
 
 ## 4. Experimental semantic-meal-plan skill (additive, invoke-by-name)
 
-- [ ] 4.1 Add the `semantic-meal-plan` flow to `AGENT_INSTRUCTIONS.md`, marked experimental; ensure `build-plugin.mjs` does NOT auto-route it from `grocery-core`
-- [ ] 4.2 Distillation: context + user message → K search specs split into `{ vibe, facets, label }`; map retrospective anti-similarity to facets
-- [ ] 4.3 Recall set: always include a variety/wildcard spec, a never-cooked×taste novelty spec, and pantry-overlap specs; generous K
-- [ ] 4.4 Sides in the same compose pass via chosen mains' `side_search_terms` (facet `course: side`); preserve holistic mains+sides reasoning
-- [ ] 4.5 Aggressive in-session import: cheap blurb triage → `parse_recipe` + agent-written `description`/`side_search_terms`/facets → `create_recipe`; only matches; exact source-URL dedup
-- [ ] 4.6 Disposition collapse: import = yes; no-action = stays a discovery; explicit reject = SHARED suppression on the `discovery_candidates` URL (group-wide), reserved for not-corpus-worthy; no draft state in this flow
-- [ ] 4.7 Add the shared suppression to the discovery read path (`fetch_rss_discoveries`/`read_discovery_inbox` exclude group-rejected URLs)
-- [ ] 4.8 Exploration allowance: optionally surface one flagged "a bit outside your usual" pick
-- [ ] 4.9 In-session imports solo-commit per recipe (no batching), matching `create_recipe` today
+- [x] 4.1 Add the `semantic-meal-plan` flow to `AGENT_INSTRUCTIONS.md`, marked experimental; the description is explicit invoke-by-name ("ordinary menu requests go to meal-plan") so the relevance router never auto-picks it over the production flow
+- [x] 4.2 Distillation: context + user message → search specs split into `{ vibe, facets, label }`; retrospective anti-similarity mapped to facets/specs (can't phrase "not chicken" as a vibe)
+- [x] 4.3 Recall set: always a variety/wildcard spec, a never-cooked×taste novelty spec, and pantry-overlap specs; generous K
+- [x] 4.4 Sides in the same compose pass via chosen mains' `side_search_terms` (facet `course: side`); mains+sides reasoned as one plate
+- [x] 4.5 Aggressive in-session import: cheap blurb triage → `parse_recipe` + agent-written `description`/`side_search_terms`/facets → `create_recipe` (lands `active`); only matches; `existing_slug` source-URL dedup; notes the reconcile lag (just-imported isn't re-searchable this session)
+- [x] 4.6 Disposition collapse: import = yes; no-action = stays a discovery; explicit reject = SHARED suppression (group-wide), reserved for not-corpus-worthy; no draft state in this flow
+- [x] 4.7 Shared suppression in the discovery read path: `reject_discovery(url, reason?)` tool + `discovery_rejections` table (migration 0008); `fetch_rss_discoveries` folds it into `seen`, `read_discovery_inbox` drops matches (canonical URL)
+- [x] 4.8 Exploration allowance: surface one flagged "a bit outside your usual" pick (from the wildcard spec)
+- [x] 4.9 In-session imports solo-commit per recipe (no batching), matching `create_recipe` today
 
 ## 5. Favorite cutover (BREAKING)
 

@@ -657,7 +657,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   // feeds.toml, the discoveries inbox, and discovery_sources.toml all live at the
   // data-repo root, so any member's config feeds one group pool. Imports dedupe by
   // source URL against the shared corpus so a recipe is reused, not duplicated (§6.4).
-  registerDiscoveryTools(server, sharedGh, env);
+  registerDiscoveryTools(server, sharedGh, env, tenant.id);
 
   // Recipe notes (§8): attributed annotations in the D1 `recipe_notes` table,
   // aggregated across the group at read time with the privacy WHERE (own-private +

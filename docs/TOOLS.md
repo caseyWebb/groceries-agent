@@ -534,7 +534,7 @@ Fetch the **shared, group-wide** discovery feeds and return a **deduped candidat
 **Returns:**
 - `{ candidates: [{ url, title, source, feed_weight, summary }], skipped?: [{ feed, reason }] }` — `source` is the feed name; `feed_weight` is the feed's configured trust hint (passed through, not used to rank); unreachable feeds are reported in `skipped`, not fatal.
 
-**Notes:** Feeds are read from the **shared root `feeds.toml`** (not a per-tenant `users/<id>/` path) — discovery sources are a shared concern, so any member's feeds contribute to one group pool. Empty or absent `feeds.toml` returns `{ candidates: [] }`. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against the caller's `users/<id>/ready_to_eat.toml` and `add_draft_ready_to_eat`.
+**Notes:** Feeds are read from the **shared root `feeds.toml`** (not a per-tenant `users/<id>/` path) — discovery sources are a shared concern, so any member's feeds contribute to one group pool. Empty or absent `feeds.toml` returns `{ candidates: [] }`. The pool excludes URLs the group has **rejected** via `reject_discovery` (the canonical URL is folded into the corpus-dedup set), so a suppressed discovery never reappears. There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primitive, so on-sale ready-to-eat discovery rides the existing `kroger_flyer` pre-pass (with ready-to-eat terms in `flyer_terms.toml`) plus agent-side dedup against the caller's `users/<id>/ready_to_eat.toml` and `add_draft_ready_to_eat`.
 
 ### `read_discovery_inbox()`
 
@@ -543,7 +543,20 @@ Read the **shared email discoveries inbox** (root `discoveries_inbox.toml`) and 
 **Returns:**
 - `{ emails: [{ from, subject, received_at, body }] }` — `from` is the sender address; `received_at` is the message date (YYYY-MM-DD or null); `body` is the plain-text email content for LLM parsing.
 
-**Notes:** Absent or empty inbox returns `{ emails: [] }`. After scanning an email body for recipes, call `parse_recipe(url)` on each promising link — if it returns `unreachable`/`no_jsonld`/`not_a_recipe`, present the link and have the user paste the recipe text, then `create_recipe`. The inbox is populated by the Worker's inbound-email handler (forwarded newsletters → `groceries-agent@<domain>`), not by any agent tool. Entries are auto-pruned after 30 days.
+**Notes:** Absent or empty inbox returns `{ emails: [] }`. After scanning an email body for recipes, call `parse_recipe(url)` on each promising link — if it returns `unreachable`/`no_jsonld`/`not_a_recipe`, present the link and have the user paste the recipe text, then `create_recipe`. Candidates whose URL the group has **rejected** via `reject_discovery` are dropped (canonical match), so a suppressed discovery never resurfaces. The inbox is populated by the Worker's inbound-email handler (forwarded newsletters → `groceries-agent@<domain>`), not by any agent tool. Entries are auto-pruned after 30 days.
+
+### `reject_discovery(url, reason?)`
+
+**Shared, group-wide suppression** of a discovery URL — the third disposition (alongside import and no-action) in the `semantic-meal-plan` flow. Stops the URL (and its tracker-wrapped variants) from ever resurfacing in `fetch_rss_discoveries` or `read_discovery_inbox` for **anyone**.
+
+**Params:**
+- `url` (string, required): the discovery URL to suppress. Canonicalized (query/fragment/trailing-slash stripped) so a tracker-wrapped and a bare link suppress as one.
+- `reason` (string, optional): free-text provenance ("not a recipe", "duplicate").
+
+**Returns:**
+- `{ url, rejected: true }` — `url` is the stored canonical form.
+
+**Notes:** Use **only** when a candidate is not corpus-worthy **for the group** — junk, broken, not actually a recipe, a duplicate, or clearly off-base. Deliberately **asymmetric** with the per-tenant `rating`/`favorite`: rejection is *collective curation* (the group curates one noisy stream once), so a personal "not for me this time" is a no-action **skip**, never a reject. Writes a row to the shared `discovery_rejections` table (canonical `url` PK; `reason`/`rejected_by`/`rejected_at` for provenance — `rejected_by` records who, but suppression is group-wide regardless). Idempotent on the canonical URL; a repeat refreshes the reason/provenance. Touches no recipe content or overlay.
 
 ### `update_discovery_sources(members?, senders?)`
 
