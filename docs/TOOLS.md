@@ -136,7 +136,7 @@ Set the caller's **personal status** for a recipe — `active | draft | rejected
 Write a **new** recipe to the **shared corpus** (the data-repo root, read by everyone), from agent-assembled frontmatter + body, as **one solo commit**. The slug derives from the title unless `slug` is supplied. The body MUST contain `## Ingredients` and `## Instructions` H2 sections (guarded — a body missing them is rejected, never committed). A recipe is shared and single-source: if the `source` URL is already in the corpus, the write is refused (`already_exists`) so the existing recipe is reused, not duplicated.
 
 **Params:**
-- `frontmatter` (object, required) — full recipe frontmatter. `status` defaults to `draft` if omitted, so discovery imports never land active by accident; discovery should also set `discovered_at` and `discovery_source`.
+- `frontmatter` (object, required) — full recipe frontmatter. `status` defaults to `draft` if omitted, so discovery imports never land active by accident; discovery should also set `discovered_at` and `discovery_source`. Set **`description`** (the craving-aligned semantic-identity brief — the recipe's search-embedding basis) at import, and **`side_search_terms`** for a `main` (phrases for the kind of side that completes it); see `docs/SCHEMAS.md` for both fields.
 - `body` (string, required) — markdown body with the `## Ingredients` / `## Instructions` sections.
 - `slug` (string, optional) — overrides the title-derived slug.
 
