@@ -51,6 +51,7 @@ import {
   matchIngredient,
   isFulfillable,
   isOnSale,
+  normalizeIngredient,
   MIN_FLYER_DISCOUNT,
   type CachedMapping,
   type MatchContext,
@@ -84,6 +85,10 @@ const searchSpecShape = {
   label: z.string(),
   facets: z.object(recipeFiltersShape).optional(),
   k: z.number().int().positive().optional(),
+  // Item names the ranker should bias toward (the caller's at-risk perishables /
+  // on-hand items). A bounded, perishable-weighted overlap boost — reorders survivors
+  // only, never gates. Normalized through the alias table before matching.
+  boost_ingredients: z.array(z.string()).optional(),
 };
 
 const pantryFilterShape = {
@@ -112,6 +117,24 @@ const unitPriceItemShape = {
 };
 
 const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"] as const;
+
+/** Normalize an ingredient-name array through the alias table (lowercase/trim/alias per
+ *  entry, drop empties, dedupe). Tolerates a missing/non-array/non-string value → []. The
+ *  shared boundary normalizer for `recipe_semantic_search`'s pantry-overlap set math. */
+function normalizeItems(value: unknown, aliases: Record<string, string>): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const norm = normalizeIngredient(entry, aliases);
+    if (norm && !seen.has(norm)) {
+      seen.add(norm);
+      out.push(norm);
+    }
+  }
+  return out;
+}
 
 /** One product row for the list-returning Kroger lookups (kroger_prices, ready_to_eat). */
 function productRow(c: KrogerCandidate): Record<string, unknown> {
@@ -332,7 +355,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
         // caller's overlay (favorites) / cooking log (freshness) / owned equipment
         // (makeability gate), and preferences (rotation tuning — optional, defaults
         // when unset, so semantic search works before any profile exists).
-        const [index, embeddings, overlay, lastCooked, owned, prefs] = await Promise.all([
+        const [index, embeddings, overlay, lastCooked, owned, prefs, aliases] = await Promise.all([
           loadRecipeIndex(env).catch((e) => {
             throw new ToolError(
               "index_unavailable",
@@ -344,6 +367,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
           getLastCookedMap(),
           getOwnedEquipment(),
           readPreferences(env, tenant.id).catch(() => null),
+          getAliases().catch(() => ({}) as Record<string, string>),
         ]);
 
         // Merge the caller's overlay (favorite/reject) + last_cooked onto the shared
@@ -376,6 +400,9 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
 
         const results = specs.map((spec, i) => {
           const survivors = filterRecipes(effective, spec.facets ?? {}, now, owned);
+          // Normalize the spec's boost items through the SAME alias table the index's
+          // ingredient arrays are normalized against, so the overlap is exact set math.
+          const boostItems = normalizeItems(spec.boost_ingredients, aliases);
           // Resolve each survivor's embedding + freshness; drop the unembedded (not
           // yet reconciled) — they stay browseable via list_recipes, just unranked here.
           const candidates: SearchCandidate[] = [];
@@ -392,9 +419,22 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
               time_total: typeof fm.time_total === "number" ? fm.time_total : null,
               embedding: vec,
               last_cooked: lastCooked.get(s.slug) ?? null,
+              // Normalize at the boundary so the ranker does plain set membership.
+              // perishable_ingredients is already normalized at import; ingredients_key
+              // is conventionally-but-not-guaranteed normalized, so alias-collapse it too.
+              ingredients_key: normalizeItems(fm.ingredients_key, aliases),
+              perishable_ingredients: normalizeItems(fm.perishable_ingredients, aliases),
             });
           }
-          const recipes = rankCandidates(candidates, vibeVecs[i], favoriteVecs, now, params, spec.k ?? DEFAULT_K);
+          const recipes = rankCandidates(
+            candidates,
+            vibeVecs[i],
+            favoriteVecs,
+            boostItems,
+            now,
+            params,
+            spec.k ?? DEFAULT_K,
+          );
           return { label: spec.label, recipes };
         });
 
