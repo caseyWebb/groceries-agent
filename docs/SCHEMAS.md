@@ -10,7 +10,7 @@ Concrete schemas with example values for every data file in the repo. Keep this 
 
 The data lives in **one private data repo** with two regions (see `ARCHITECTURE.md`). Every file below lives in exactly one:
 
-- **Authored markdown (GitHub, data-repo root)** — the ONLY tier a human hand-edits (Obsidian / native git apps): `recipes/*.md` (objective frontmatter + body) and `storage_guidance/*.md` (curated put-away advice).
+- **Authored markdown (GitHub, data-repo root)** — the human-editable tier (Obsidian / native git apps): `recipes/*.md` (objective frontmatter + body) and the `guidance/**/*.md` umbrella (`guidance/ingredient_storage/` — curated put-away advice, read-only; `guidance/cooking_techniques/` — technique memories, also agent-writable via `save_guidance`). This is what remains in GitHub after the D1 migration.
 - **Shared corpus (D1, `migrations/d1/0006_shared_corpus.sql`)** — objective, single-source, read by everyone: `aliases(variant, canonical)`, `sku_cache(ingredient, location_id, …)`, `flyer_terms(term)`, `stores(slug, name, domain, extra /*json*/)` (in-store-walk registry — identity columns `slug`/`name`/`domain` are top-level; optional identity fields `label`/`chain`/`address`/`location_id` are stored in the `extra` JSON column; layout lives in store notes), `feeds(url, …)` (RSS discovery feeds), `discovery_candidates(id, url UNIQUE, status, …)` (forwarded-newsletter inbox + group-wide rejection log; `status` values: `pending` | `rejected` — `pending` is the default for unprocessed candidates, `rejected` is set by `reject_discovery`), `discovery_senders`/`discovery_members` (inbound-email allowlist). Written + validated at the Worker write tools; read by query. The recipe index is the derived D1 `recipes` table — there is no `_indexes/recipes.json`.
 - **Attributed records (D1 `recipe_notes` / `store_notes`)** — each member's attributed recipe/store notes, stored in D1 tables carrying `author` (the writing tenant, set by the Worker) + a `private` flag. Both tables use `id TEXT PRIMARY KEY` (a generated stable key); `recipe`/`slug` (the recipe or store slug), `author`, `body`, `tags`, `private`, and `created_at` are ordinary columns (not the primary key). `read_recipe_notes` returns own-private + group-shared in one query, joined with the overlay favorites.
 - **Per-tenant D1 (the profile)** — each member's grocery **profile** lives in normalized D1 tables (`migrations/d1/0004_profile.sql`): a singleton `profile` row (the markdown fields `taste`/`diet_principles`, the preference scalars `default_cooking_nights`/`lunch_strategy`/`ready_to_eat_default_action`, the JSON columns `stores`/`dietary`/`rotation`/`custom`/`kitchen_notes`, and `freezer_capacity_estimate`), plus child tables `brand_prefs(tenant, term, ranks)`, `kitchen_equipment(tenant, slug)`, `staples(tenant, name, normalized_name, perishable)`, `overlay(tenant, recipe, favorite, reject)` (the two mutually-exclusive disposition marks; there is no `status` lifecycle or `rating` column), `ready_to_eat(tenant, slug, meal, name, favorite, reject, category, source, brand, notes)`, and `stockup(tenant, name, normalized_name, unit, typical_purchase, notes, baseline_price, buy_at_or_below)`. `idx_overlay_recipe` powers the cross-tenant group-favorites query. Reads assemble the agent-facing objects from these rows (`src/profile-db.ts`); writes mutate rows — no document format on the profile path.
@@ -488,9 +488,15 @@ Example rows (`discovery_members`):
 - Every entry needs a valid `address` (contains `@`) — enforced at build + write time.
 - Auth posture: a message is accepted only when authenticated (Cloudflare DKIM/SPF/DMARC) AND from a listed source — `sender ∧ aligned-DKIM` (auto-forward) or `member ∧ aligned-DKIM` (manual forward). Everything else is dropped silently.
 
-## storage_guidance/
+## guidance/
 
-**Shared corpus** (data-repo root). A curated, hand-maintained tree of **opinionated, vetted storage advice** the agent surfaces at put-away (2–3 relevant, non-obvious tips when new perishables enter the kitchen — on both the order `received` restock and a farmers-market `update_pantry` haul). It encodes opinions the model lacks, not shelf-life facts it already has — there is no shelf-life table; freshness is the agent's own judgment, not table-gated.
+**Shared corpus** (data-repo root). A curated tree of **opinionated, vetted advice** the agent surfaces in flow, organized by **domain** subdirectory. Each file is markdown prose keyed by a semantic slug, with an optional one-line `description` frontmatter field (the only structured field; the rest is freeform prose). Files are validated only for existence, not parse-checked as data (like other curated markdown). Both domains map by **agent world-knowledge over the semantic slugs** — there is deliberately no manifest or alias table; over-fetching is harmless.
+
+Two read tools cover the whole umbrella: `list_guidance(domain?)` (slugs + optional `description`, one domain or all grouped) and `read_guidance(domain, slugs)` (named entries' content). One gated write tool, `save_guidance(domain, slug, content, source?)`, exists for the writable domain only. See `docs/TOOLS.md`.
+
+### guidance/ingredient_storage/
+
+**Read-only.** Opinionated put-away advice the agent surfaces when new perishables enter the kitchen (2–3 relevant, non-obvious tips — on both the order `received` restock and a farmers-market `update_pantry` haul). It encodes opinions the model lacks, not shelf-life facts it already has — there is no shelf-life table; freshness is the agent's own judgment, not table-gated.
 
 Each file is **markdown prose keyed by a storage behavior *class*** — `tender-herbs.md`, `hardy-herbs.md`, `leafy-greens.md`, `alliums.md`, `potatoes.md`, … — so one entry covers a whole family without per-ingredient duplication. A few **singletons** (`basil.md`, `tomatoes.md`, `avocados.md`) exist for items whose rule contradicts their class. Relational "don't store together" rules (ethylene cross-contamination, onions↔potatoes) live in a dedicated **`_ethylene.md`**, because they belong to no single item.
 
@@ -504,11 +510,28 @@ description: cilantro, parsley, dill, mint — stems in water, in the fridge
 Stand stems in ~1 inch of water, loosely bagged, **in the refrigerator** …
 ```
 
-**Notes:**
-- **Read-only / edit-when-directed curated config** — there is **no write tool** for it (it is hand-maintained, never an agent side-effect file). Two read tools cover it: `list_storage_guidance()` (class slugs + the optional one-line `description` from each file's frontmatter) and `read_storage_guidance(slugs)` (the named entries' content). See `docs/TOOLS.md`.
-- The optional `description` frontmatter line is the only structured field; the rest is freeform prose. The file is validated only for existence, not parse-checked as data (like other curated markdown).
-- **Mapping is by agent world-knowledge over the semantic slugs** (e.g. cilantro → `tender-herbs`) — there is deliberately no ingredient→class manifest or alias table; over-fetching a class is harmless.
+- **Read-only / edit-when-directed curated config** — `save_guidance` rejects this domain (it is excluded from the writable allowlist), so it changes only by hand-editing the data repo. The read-only guarantee is enforced by the allowlist, not by the absence of any write tool.
 - **Confidence-in-prose:** solid tips are written plainly; contested/folklore tips are pre-hedged *in the prose itself* ("some cooks rinse berries in vinegar — results vary"), so relaying the file faithfully is relaying it honestly. No matching class file → the agent gives **no tip** (silence over invention).
+
+### guidance/cooking_techniques/
+
+**Agent-writable.** General cooking-technique memories the agent distills from member-supplied sources (ATK, Serious Eats) and surfaces inline during the guided `cook` flow. Each file is **markdown prose keyed by a *technique*** — `browning-meat.md`, `searing.md`, `resting-meat.md`, `blanching.md`, … — flat (no relational/`_`-prefixed files). One file per technique: refining a technique **overwrites** its file, never appends.
+
+```markdown
+---
+description: brown ground/whole meat in an even layer for fond and color, not steam
+source: https://www.seriouseats.com/...   # provenance — recorded by save_guidance
+---
+
+# Browning meat
+
+Spread the meat in an even layer across the entire surface and **do not disturb**.
+Break it up only after it's browned. You want **brown meat, not gray meat** — crowding steams it.
+```
+
+- **Shared + agent-writable** (the `stores`/`feeds` posture): any member's `save_guidance` write lands in the one shared tree, read by the whole group. Written via the shared commit engine (one atomic commit, same path as `create_recipe`).
+- `save_guidance(domain, slug, content, source?)`: `content` is the full markdown the agent composes (distilled, imperative, non-obvious — with a `description:` line); `source`, when given, is recorded into the frontmatter for provenance/citation. A kebab-case `slug`, no traversal.
+- **Capture** is member-initiated (a posted article/URL/distillation → the capture skill); **surfacing** is at cook time (the agent maps a recipe step → technique slug and weaves the non-obvious tip in at that step, capped ~2, silent when nothing matches). See AGENT_INSTRUCTIONS.
 
 ## stores (shared corpus, D1 `stores` table)
 

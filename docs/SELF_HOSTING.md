@@ -17,7 +17,7 @@ The operator's one-time setup. When you finish you'll have a private **data repo
 | Piece | What it is | Yours? |
 |---|---|---|
 | **Code repo** (`caseyWebb/groceries-agent`) | the Worker source + build tooling + reusable workflows | **no fork to run it** — your data repo references it (`@main` or a pinned tag). A fork is needed *only* for plugin Option 2 (your own auto-updating marketplace); Options 1 & 3 need no fork (step 7) |
-| **Data repo** (`<you>/groceries-agent-data`, **private**) | `recipes/` + `storage_guidance/` markdown, **plus your `wrangler.jsonc` + the caller workflows** (per-tenant and shared-corpus data live in D1, not here) | you create it from the template; it is your control plane |
+| **Data repo** (`<you>/groceries-agent-data`, **private**) | `recipes/` + `guidance/` markdown, **plus your `wrangler.jsonc` + the caller workflows** (per-tenant and shared-corpus data live in D1, not here) | you create it from the template; it is your control plane |
 | **Worker** (`grocery-mcp` on Cloudflare) | the MCP server Claude.ai talks to | you deploy it from your data repo's Actions |
 | **Cookbook site** (GitHub Pages on the data repo) | public read-only recipe site | optional; needs GitHub Pro |
 

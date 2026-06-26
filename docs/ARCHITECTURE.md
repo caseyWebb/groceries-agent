@@ -32,7 +32,7 @@ The system is three pieces with one clean split: **the LLM does the fuzzy work; 
 ┌────────────────────────────────────────────────────────┐
 │  ONE private GitHub data repo (operator-owned)         │
 │   authored corpus (read by all):                       │
-│     recipes/*.md · storage_guidance/                   │
+│     recipes/*.md · guidance/                           │
 │     _indexes/ (generated site artifact)                │
 └────────────────────────────────────────────────────────┘
 ┌────────────────────────────────────────────────────────┐
@@ -57,7 +57,7 @@ The system is three pieces with one clean split: **the LLM does the fuzzy work; 
 
 - **Claude.ai** is the conversational surface and the reasoning. Each chat starts fresh; state lives in D1 (profile + session state + cooking log + recipe index) and the data repo (attributed records + shared corpus), not in chat history. The agent reads what it needs through MCP tools at the start of a conversation.
 - **The Worker** (this repo, root `src/`) is a Cloudflare Worker hosting the `grocery-mcp` MCP server — the domain tool surface (pantry, recipes, Kroger, cart) — plus an OAuth 2.1 provider members connect their Claude.ai to. It is the locus of determinism and the multi-tenant gate.
-- **The data repo** (`<operator>/groceries-agent-data`, private) holds the GitHub-authored content: `recipes/*.md` and `storage_guidance/*.md`. Everything else — profile, session state, shared corpus, cooking log, recipe index — is in D1. Created from [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template); see [`SELF_HOSTING.md`](SELF_HOSTING.md).
+- **The data repo** (`<operator>/groceries-agent-data`, private) holds the GitHub-authored content: `recipes/*.md` and the `guidance/**/*.md` umbrella (`ingredient_storage/` + `cooking_techniques/`). Everything else — profile, session state, shared corpus, cooking log, recipe index — is in D1. Created from [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template); see [`SELF_HOSTING.md`](SELF_HOSTING.md).
 
 There is no database, no scheduler, no CLI, and no stateful agent runtime — the `agents` SDK is present only for its stateless `createMcpHandler` MCP transport (no Durable Objects, no Workflows). Everything else is glue.
 
@@ -81,7 +81,7 @@ The MCP tool boundary is where this is enforced. Tools are **coarse and opiniona
 
 ## Multi-tenant identity
 
-One self-hosted Worker serves a small friend group; each member connects their own Claude.ai. The code is a separate upstream self-hosters deploy without forking. GitHub holds the authored corpus (`recipes/*.md`, `storage_guidance/*.md`); all operational data (profile, session state, cooking log, shared corpus, recipe index) lives in D1, tenant-isolated by the `tenant` column.
+One self-hosted Worker serves a small friend group; each member connects their own Claude.ai. The code is a separate upstream self-hosters deploy without forking. GitHub holds the authored corpus (`recipes/*.md`, `guidance/**/*.md`); all operational data (profile, session state, cooking log, shared corpus, recipe index) lives in D1, tenant-isolated by the `tenant` column.
 
 - **OAuth 2.1 provider.** Claude.ai custom connectors authenticate via OAuth, so the Worker hosts an OAuth provider (`@cloudflare/workers-oauth-provider`, KV-backed — no SQL). `src/index.ts` constructs the provider; `src/authorize.ts` renders the invite-code consent page.
 - **Identity is an operator-issued invite code** against a curated allowlist — members need no GitHub account. The issued access token's grant carries the member's `tenantId`.
@@ -100,13 +100,13 @@ The data repo is the system's memory. It splits two ways — shared vs per-tenan
 
 Per `cloudflare-storage-architecture`, persistent state lives across three tiers chosen by the *nature* of the data, not by convenience:
 
-- **GitHub** — authored **markdown** only: `recipes/*.md` (recipe *content*) and `storage_guidance/*.md` (curated put-away advice). The source of truth for the human-authored corpus, hand-edited via Obsidian / native git apps. This is the one tier a human edits directly; everything else (shared corpus, attributed notes, profile, session, cooking log, recipe index) is D1.
+- **GitHub** — authored **markdown** only: `recipes/*.md` (recipe *content*) and the `guidance/**/*.md` umbrella (`guidance/ingredient_storage/` — curated, read-only put-away advice; `guidance/cooking_techniques/` — agent-writable technique memories, written via `save_guidance` through the commit engine). The source of truth for the human-authored corpus, hand-edited via Obsidian / native git apps. This is the one tier a human edits directly; everything else (shared corpus, attributed notes, profile, session, cooking log, recipe index) is D1.
 - **D1** (`env.DB`) — all **domain/operational data and derived projections**: the queryable, relational, admin-editable, strongly-consistent (read-after-write) tier. The recipe index, profile, session state, cooking log, notes, registries, config, and caches land here. Tools never touch `env.DB` directly — they go through `src/db.ts` (prepared-statement helpers + structured-error mapping; tools never throw).
 - **KV** — **ephemeral infrastructure only**, no domain data: `KROGER_KV` (Kroger tokens, PKCE verifiers, the TTL flyer cache, background-job health), `OAUTH_KV` (OAuth provider state), `TENANT_KV` (tenant directory / invites). The Worker binds only `KROGER_KV`, `TENANT_KV`, and `OAUTH_KV`.
 
 ### Shared vs per-tenant
 
-- **Shared corpus (D1)** — objective, single-source, read by everyone: `aliases`, the location-tagged `sku_cache`, `stores` (registry identity), `flyer_terms`, and the discovery sources (`feeds`, `discovery_candidates` inbox, `discovery_senders`/`discovery_members` allowlist, and `discovery_rejections` — the group-wide suppression set). Written + validated at the Worker write tools, read by query. (Curated `storage_guidance/*.md` stays GitHub markdown.) The recipe index is the derived D1 `recipes` table.
+- **Shared corpus (D1)** — objective, single-source, read by everyone: `aliases`, the location-tagged `sku_cache`, `stores` (registry identity), `flyer_terms`, and the discovery sources (`feeds`, `discovery_candidates` inbox, `discovery_senders`/`discovery_members` allowlist, and `discovery_rejections` — the group-wide suppression set). Written + validated at the Worker write tools, read by query. (The curated `guidance/**/*.md` umbrella stays GitHub markdown.) The recipe index is the derived D1 `recipes` table.
 - **Attributed records (D1, `recipe_notes` / `store_notes`)** — each member's attributed recipe/store notes, in D1 tables with an `author` column + `private` flag (own-private + group-shared at read time). The GitHub `users/<username>/` subtree holds no domain data.
 - **Per-tenant D1 (session state)** — each member's working state in D1 row tables: `pantry`, `meal_plan`, `grocery_list` (keyed by normalized name or recipe slug). Adds are row upserts, removes/status changes are targeted row statements — strong read-after-write consistency, no whole-array rewrite. The Worker read path has **no** GitHub/KV fallback (a miss returns empty).
 - **Per-tenant D1 (records + profile)** — the relational tier. The `cooking_log` table is per-tenant realized cook history; the `recipes` table is the shared objective recipe index; the **profile** tables (`profile`, `brand_prefs`, `kitchen_equipment`, `staples`, `overlay`, `ready_to_eat`, `stockup`) hold each member's preferences/taste/diet/kitchen/staples/overlay/ready-to-eat/stockup. Tenant-scoped on every read; written via `log_cooked` (cooking events — which also clears the cooked recipe from `meal_plan` in the **same transaction**), the build (recipe index), the profile write tools, and the session-state tools (`update_pantry`, `update_meal_plan`, `add_to_grocery_list`, …).
@@ -213,7 +213,7 @@ A GitHub Action regenerates derived data on every push to the data repo's `recip
 
 Ready-to-eat is per-tenant, in the D1 `ready_to_eat` table; the Worker reads each member's catalog from D1.
 
-The same build runs **validation** over what GitHub still owns: every recipe frontmatter is well-formed, `pairs_with` references resolve, and `storage_guidance/*.md` is structurally checked. The D1 profile tables + the D1 session-state tables (`pantry`/`meal_plan`/`grocery_list`) + the D1 `cooking_log` + the shared corpus (stores, aliases, sku_cache, feeds, discovery) are **not** build-validated — they live in D1, not in GitHub files; the Worker is their sole validator, at write time (`update_preferences`’ merge-patch validation for preferences, `log_cooked` for the cooking log with real recipe-slug resolution against `recipes`). Validation failures fail the Action (red CI) but don’t block reads — the Worker keeps reading HEAD. The point is fast feedback, not gating. The Worker reimplements a *structural* subset of this validation in TypeScript for write-time checks (it can’t run the Node validator on `workerd`).
+The same build runs **validation** over what GitHub still owns: every recipe frontmatter is well-formed, `pairs_with` references resolve, and `guidance/**/*.md` is structurally checked. The D1 profile tables + the D1 session-state tables (`pantry`/`meal_plan`/`grocery_list`) + the D1 `cooking_log` + the shared corpus (stores, aliases, sku_cache, feeds, discovery) are **not** build-validated — they live in D1, not in GitHub files; the Worker is their sole validator, at write time (`update_preferences`’ merge-patch validation for preferences, `log_cooked` for the cooking log with real recipe-slug resolution against `recipes`). Validation failures fail the Action (red CI) but don’t block reads — the Worker keeps reading HEAD. The point is fast feedback, not gating. The Worker reimplements a *structural* subset of this validation in TypeScript for write-time checks (it can’t run the Node validator on `workerd`).
 
 A useful side effect: the indexes are a public-ish artifact any tool can consume — `scripts/build-site.mjs` builds a static GitHub Pages cookbook from them with no backend.
 
