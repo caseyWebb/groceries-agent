@@ -1,4 +1,4 @@
--- 0009_overlay_favorite — the rating→favorite cutover (semantic-meal-plan, BREAKING).
+-- 0010_overlay_favorite — the rating→favorite cutover (semantic-meal-plan, BREAKING).
 --
 -- The 1–5 `rating` becomes a `favorite` boolean: a crisp anchor set for the
 -- semantic-search nearest-liked re-rank, and a simpler group signal (COUNT(favorite)

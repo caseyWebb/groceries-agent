@@ -111,7 +111,7 @@ export async function loadRecipeIndex(env: Env): Promise<RecipeIndex> {
 
 /**
  * Load every recipe embedding from the sibling `recipe_embeddings` table (migration
- * 0007) into a `slug → vector` map, for the semantic-search cosine pass. Vectors are
+ * 0008) into a `slug → vector` map, for the semantic-search cosine pass. Vectors are
  * stored as JSON-array TEXT; a row that fails to parse or isn't a numeric array is
  * skipped (a derived index self-heals on the next reconcile — one bad row must not
  * abort a search). An empty/absent table yields an empty map (nothing indexed yet).

@@ -1,4 +1,4 @@
--- 0007_recipe_embeddings — semantic recipe search (semantic-meal-plan, slice 1).
+-- 0008_recipe_embeddings — semantic recipe search (semantic-meal-plan, slice 1).
 --
 -- Two additive promoted columns on `recipes` + a sibling embedding table. All
 -- additive: the pre-semantic flow ignores the new columns, and an empty

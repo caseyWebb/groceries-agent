@@ -2,7 +2,7 @@
 // the description, and is generated Worker-side on the cron — NOT projected by the
 // Node build, which has no `env.AI` binding (see the design's embedding-placement
 // decision, option B). Each scheduled tick reconciles the sibling `recipe_embeddings`
-// table (migration 0007) toward the current `recipes.description` set:
+// table (migration 0008) toward the current `recipes.description` set:
 //
 //   * embed any recipe whose description is new or changed (a description-hash gate,
 //     so a steady corpus does ~no work), and

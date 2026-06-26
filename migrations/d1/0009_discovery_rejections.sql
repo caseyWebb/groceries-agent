@@ -1,4 +1,4 @@
--- 0008_discovery_rejections — group-wide suppression of discovery URLs
+-- 0009_discovery_rejections — group-wide suppression of discovery URLs
 -- (semantic-meal-plan, the disposition collapse). The aggressive in-session import
 -- flow has three dispositions: import (a recipe lands in the corpus), no-action (a
 -- candidate is simply left in the pool), and REJECT — "the group shouldn't see this

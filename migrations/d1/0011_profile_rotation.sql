@@ -1,4 +1,4 @@
--- 0010_profile_rotation — user-tunable freshness rotation (semantic-meal-plan).
+-- 0011_profile_rotation — user-tunable freshness rotation (semantic-meal-plan).
 --
 -- The semantic-search re-rank's freshness boost (never-cooked surfaced, recently-
 -- cooked demoted) has two knobs the user can tune: how long until a cooked recipe
