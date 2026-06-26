@@ -6,26 +6,26 @@ Defines the repo-data-backed read tools exposed by the MCP server (`list_recipes
 ## Requirements
 ### Requirement: list_recipes reads the index and filters in-worker
 
-The system SHALL provide `list_recipes(filters)` that reads the shared `_indexes/recipes.json` in a single call, **joins each entry with the caller's per-tenant overlay** (`favorite`, `status` from the D1 overlay; effective `status` defaults to `draft` when the caller has no overlay row), **the caller's cooking-log-derived `last_cooked`** (max cook date for the slug from that tenant's `cooking_log`), **and the caller's owned-equipment list** (`owned` from `kitchen.toml`, empty when absent), unions the caller's personal (unshared) recipes, and applies filters in the Worker, returning `{ recipes: [{ slug, title, frontmatter }] }` where `frontmatter` reflects the merged objective content + the caller's subjective fields. If the shared `_indexes/recipes.json` is missing or malformed, the tool SHALL return a structured `index_unavailable` error.
+The system SHALL provide `list_recipes(filters)` that reads the shared D1 `recipes` index, **joins each entry with the caller's per-tenant overlay** (`favorite` / `reject`), **the caller's cooking-log-derived `last_cooked`**, **and the caller's owned-equipment list**, unions the caller's personal (unshared) recipes, and applies filters in the Worker, returning `{ recipes: [{ slug, title, frontmatter }] }` where `frontmatter` reflects the merged objective content plus the caller's subjective marks. By default — with no overlay row — a recipe is **neutral (available)**; the default result is the whole corpus **minus the caller's rejects**. There is no `status` field and no effective-`draft` default. If the index is missing or malformed, the tool SHALL return a structured `index_unavailable` error.
 
-#### Scenario: Active recipes returned by default, per caller overlay
+#### Scenario: The whole corpus minus rejects is returned by default
 
-- **WHEN** `list_recipes({})` is invoked with no `status` filter
-- **THEN** only recipes whose **effective status for the caller** is `active` are returned, each with shared content merged with the caller's `favorite`/`last_cooked`
+- **WHEN** `list_recipes({})` is invoked
+- **THEN** every shared recipe the caller has not rejected is returned (no per-member activation required), each merged with the caller's `favorite`/`last_cooked`
 
-#### Scenario: Status reflects the caller, not the corpus
+#### Scenario: Rejected recipes are excluded
 
-- **WHEN** two tenants invoke `list_recipes({ status: "active" })` and they have dispositioned a shared recipe differently
-- **THEN** each tenant's result reflects their own overlay status for that recipe, not a shared/global status
+- **WHEN** the caller has rejected a recipe and invokes `list_recipes({})`
+- **THEN** that recipe is absent from the result; another member who has not rejected it still sees it
 
 #### Scenario: Personal recipes included
 
 - **WHEN** the caller has personal (unshared) recipes and invokes `list_recipes({})`
-- **THEN** the results include the caller's personal recipes alongside shared corpus recipes
+- **THEN** the results include the caller's personal recipes alongside non-rejected shared corpus recipes
 
 #### Scenario: Index missing or malformed
 
-- **WHEN** the shared `_indexes/recipes.json` cannot be read or parsed
+- **WHEN** the D1 `recipes` index cannot be read
 - **THEN** the tool returns a structured `index_unavailable` error rather than an empty list or a throw
 
 ### Requirement: list_recipes filter semantics
@@ -201,12 +201,12 @@ The system SHALL expose the cross-tenant group signal for a shared recipe — ho
 
 ### Requirement: list_recipes surfaces the favorite boolean
 
-`list_recipes` SHALL surface the caller's `favorite` boolean on each returned entry, merged from the caller's overlay at read time. The prior `rating` value SHALL no longer be merged or returned. (This change adds no dedicated `favorite` query filter to `list_recipes`; semantic retrieval and the favorite re-rank consume the boolean, and a member browses favorites through that path.)
+`list_recipes` SHALL surface the caller's `favorite` boolean on each returned entry, merged from the caller's overlay. It SHALL NOT surface a `status` or `rating` field. (Rejected recipes are excluded from the result entirely rather than surfaced with a flag.)
 
-#### Scenario: Favorite rides each entry, rating is gone
+#### Scenario: Favorite rides each entry; status and rating are gone
 
-- **WHEN** `list_recipes` returns recipes the caller has favorited and not favorited
-- **THEN** each entry's merged view carries `favorite: true`/`false` and carries no `rating` field
+- **WHEN** `list_recipes` returns recipes the caller has and has not favorited
+- **THEN** each entry's merged view carries `favorite: true`/`false` and carries no `status` and no `rating`
 
 ### Requirement: list_recipes surfaces the recipe description
 

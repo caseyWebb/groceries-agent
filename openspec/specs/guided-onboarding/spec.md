@@ -119,24 +119,14 @@ The onboarding skill SHALL capture the member's store location as the first setu
 - **WHEN** the store area runs
 - **THEN** the skill asks for a ZIP only and does not require the member to rank brands
 
-### Requirement: Starter corpus bootstrap
+### Requirement: A new member's corpus is available without activation
 
-Because a new member's overlay is empty and every shared recipe is therefore effective-`draft` (invisible to a default `list_recipes`), the onboarding skill SHALL, after taste/diet/equipment are captured, curate a soft-capped set of shared recipes that fit the captured taste/diet and pass the member's makeability gate, present them for confirmation, and bulk-promote the confirmed set to `active` in the caller's `overlay.toml` via a single `commit_changes` `recipe_updates` batch (each `{ slug, updates: { status: "active" } }`). Promotion SHALL set `status` only (no `rating`), and SHALL NOT modify shared recipe content. The skill SHALL also make the full known corpus reachable by pointing the member at the hosted recipe site (see "Hosted recipe site is the browse-everything surface") so they can opt any specific recipe into their active set. When the shared corpus is empty or too sparse to curate a starter set, the skill SHALL degrade to discovery-source seeding (see "Sparse-corpus onboarding seeds discovery sources") rather than promoting nothing silently.
+After taste/diet/equipment capture, the onboarding skill SHALL treat the whole shared corpus as immediately available to the new member (subject only to their makeability gate and any rejections they make later). It SHALL NOT require or perform a per-recipe activation step.
 
-#### Scenario: Curated set is promoted to active
+#### Scenario: First menu request works with no activation
 
-- **WHEN** the member confirms a curated starter set during onboarding
-- **THEN** the skill bulk-promotes those slugs to `status: active` in the caller's overlay in one commit, so a subsequent default `list_recipes()` returns a usable corpus
-
-#### Scenario: Promotion is overlay-only
-
-- **WHEN** a starter recipe is promoted
-- **THEN** only the caller's overlay `status` changes; the shared recipe content and other members' overlays are untouched, and no `rating` is set
-
-#### Scenario: Member opts in an off-profile recipe
-
-- **WHEN** the member names a specific recipe from the hosted site that was not in the curated set
-- **THEN** the skill promotes that recipe to `active` in the caller's overlay alongside the curated set
+- **WHEN** a freshly-onboarded member (who activated nothing) makes a menu request
+- **THEN** the planner considers the whole non-rejected shared corpus, ranked by their taste/diet profile and retrieval, with no empty-active-set dead end
 
 ### Requirement: Hosted recipe site is the browse-everything surface
 

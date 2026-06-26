@@ -33,12 +33,12 @@ TBD - created by archiving change discovery-and-disposition. Update Purpose afte
 
 ### Requirement: create_recipe persists a recipe with a solo commit
 
-`create_recipe(frontmatter, body)` SHALL write a new `recipes/<slug>.md` from the agent-supplied frontmatter and body and commit it on its own via the atomic commit engine — not staged into the end-of-session commit. The slug SHALL be derived from the title (or supplied). The tool SHALL refuse to overwrite an existing recipe, returning `{ error: "slug_exists", slug }` when a file already exists at the target path, and SHALL refuse to duplicate a recipe whose `source` URL is already in the corpus (`already_exists`, with the existing slug to reuse). `status` SHALL default to `draft` when omitted (stripped from the shared index; effective per-tenant). The importing agent SHALL populate `description` and, for mains, `side_search_terms` so the recipe is semantically retrievable once its embedding reconciles.
+`create_recipe(frontmatter, body)` SHALL write a new `recipes/<slug>.md` from the agent-supplied frontmatter and body and commit it on its own via the atomic commit engine — not staged into the end-of-session commit. The slug SHALL be derived from the title (or supplied). The tool SHALL refuse to overwrite an existing recipe, returning `{ error: "slug_exists", slug }` when a file already exists at the target path, and SHALL refuse to duplicate a recipe whose `source` URL is already in the corpus (`already_exists`, with the existing slug to reuse). It SHALL NOT stamp a `status` (the per-tenant `status` lifecycle is retired); a created recipe is an available corpus recipe by default. The importing agent SHALL populate `description` and, for mains, `side_search_terms` so the recipe is semantically retrievable once its embedding reconciles.
 
-#### Scenario: Recipe is created and committed
+#### Scenario: Recipe is created, committed, and available
 
 - **WHEN** `create_recipe` is called with frontmatter and a body containing `## Ingredients` and `## Instructions`
-- **THEN** a new `recipes/<slug>.md` is written and committed in a single commit, and the tool returns the slug
+- **THEN** a new `recipes/<slug>.md` is written and committed in a single commit with no `status` stamped, and the recipe is available to every member by default
 
 #### Scenario: Existing slug is not clobbered
 
@@ -49,20 +49,6 @@ TBD - created by archiving change discovery-and-disposition. Update Purpose afte
 
 - **WHEN** a main-course recipe is imported via the discovery/import path
 - **THEN** the created frontmatter carries an agent-written `description` and `side_search_terms`
-
-### Requirement: Imported recipes land in draft state
-
-A recipe created through the discovery flow SHALL be written with `status: draft`, a populated `discovered_at` date, and a `discovery_source` identifying the feed. Discovery SHALL NOT auto-activate or auto-rate an imported recipe; promotion to `active` (with a rating) or `rejected` happens later via `update_recipe` on user direction.
-
-#### Scenario: Discovery import is a draft
-
-- **WHEN** a recipe is imported via the discovery flow
-- **THEN** its `status` is `draft`, `discovered_at` is set, and `discovery_source` names the source feed
-
-#### Scenario: Drafts are accessible but not auto-promoted
-
-- **WHEN** the user later asks to see pending discoveries
-- **THEN** `list_recipes(status: draft)` returns them, and none was promoted to `active` without user direction
 
 ### Requirement: Recipe parsing is runtime-agnostic with no Node-only dependencies
 

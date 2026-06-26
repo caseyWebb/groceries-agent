@@ -6,17 +6,17 @@ Defines the validation rule set applied during the index build: which problems h
 ## Requirements
 ### Requirement: Hard-fail validation rules
 
-The system SHALL fail the build (non-zero exit) when any of the following structural problems is detected: a recipe's YAML frontmatter does not parse, any `.toml` file does not parse, a recipe `status` value is outside the allowed enum (`active`, `draft`, `rejected`, `archived`), two recipes resolve to the same slug, a `pairs_with` entry names a slug that does not resolve to a recipe in the corpus, or a `perishable_ingredients` value is present but is not an array of strings. (`course` shape validation is defined in "Course field shape validation"; `standalone` is no longer a recognized field and is neither validated nor projected.)
+The system SHALL fail the build (non-zero exit) when any of the following structural problems is detected: a recipe's YAML frontmatter does not parse, any `.toml` file does not parse, two recipes resolve to the same slug, a `pairs_with` entry names a slug that does not resolve to a recipe in the corpus, or a `perishable_ingredients` value is present but is not an array of strings. A recipe `status` is **no longer validated** — the per-tenant `status` lifecycle is retired, so any lingering frontmatter `status` is tolerated and ignored (stripped from the index, never enforced). (`course` shape validation is defined in "Course field shape validation"; `standalone` is no longer a recognized field and is neither validated nor projected.)
 
 #### Scenario: Malformed frontmatter blocks the build
 
 - **WHEN** a recipe file contains YAML frontmatter that fails to parse
 - **THEN** the build exits non-zero and reports the offending file
 
-#### Scenario: Invalid status enum blocks the build
+#### Scenario: A lingering frontmatter status does not block the build
 
-- **WHEN** a recipe declares `status: in-progress`
-- **THEN** the build exits non-zero and reports the invalid status value and file
+- **WHEN** an old recipe file still carries `status: draft` (or any value)
+- **THEN** the build does not validate or fail on it; the field is stripped from the index and ignored
 
 #### Scenario: Duplicate slug blocks the build
 
@@ -45,20 +45,25 @@ The system SHALL fail the build (non-zero exit) when any of the following struct
 
 ### Requirement: Required frontmatter fields
 
-The system SHALL require every recipe to define a non-empty `title` (string) and a `status` within the allowed enum. Absence of either SHALL be a hard failure.
+The system SHALL require every recipe to define a non-empty `title` (string). `status` is **not** a required or validated field. Absence of `title` SHALL be a hard failure.
 
 #### Scenario: Missing title blocks the build
 
 - **WHEN** a recipe omits `title` or sets it empty
 - **THEN** the build exits non-zero and reports the missing required field
 
+#### Scenario: Status is not required
+
+- **WHEN** a recipe omits `status` (or carries any `status` value)
+- **THEN** the build validates it fine — `status` is neither required nor enum-checked
+
 ### Requirement: Warn-only soft validation
 
-The system SHALL emit warnings, without failing the build, when recommended-but-optional frontmatter fields (e.g. `protein`, `time_total`, `rating`, `ingredients_key`) are missing or null. Optional arrays such as `pairs_with` / `perishable_ingredients` / `course` SHALL default to empty without warning.
+The system SHALL emit warnings, without failing the build, when recommended-but-optional frontmatter fields (e.g. `protein`, `time_total`, `ingredients_key`) are missing or null. Optional arrays such as `pairs_with` / `perishable_ingredients` / `course` SHALL default to empty without warning.
 
 #### Scenario: Missing optional field warns but passes
 
-- **WHEN** a recipe omits `protein` and `time_total` but has a valid `title` and `status`
+- **WHEN** a recipe omits `protein` and `time_total` but has a valid `title`
 - **THEN** the build prints a warning naming the missing fields and still exits successfully
 
 #### Scenario: Absent pairing and course fields do not warn
@@ -178,22 +183,12 @@ The system SHALL validate recipe frontmatter `protein` and `cuisine` against con
 
 ### Requirement: Ready-to-eat catalog structural validation
 
-The system SHALL structurally validate a member's `users/<username>/ready_to_eat.toml` — both in the Node validator (`scripts/build-indexes.mjs`, when run over a data checkout) and in the Worker's write-time structural subset (`src/validate.ts`). Validation SHALL hard-fail (Node: non-zero exit; Worker: structured error, no commit) when: the file does not parse as TOML; an item omits `name` or `slug`; an item's `meal` is outside the enum (`breakfast`, `lunch`, `dinner`); an item's `status` is outside the enum (`active`, `draft`, `rejected`); an item's `rating` is present but not an integer in the rating range; or two items in the file share the same `slug`.
+The system SHALL validate the per-tenant ready-to-eat catalog's structural shape, requiring each item's `meal` to be one of `breakfast`/`lunch`/`dinner` and `name` to be a non-empty string. It SHALL NOT validate a `status` or `rating` on ready-to-eat items (those are retired in favor of the favorite/reject disposition); a lingering `status`/`rating` is tolerated and ignored.
 
-#### Scenario: Unknown meal blocks the write
+#### Scenario: Ready-to-eat status/rating are not validated
 
-- **WHEN** a `ready_to_eat.toml` item declares `meal = "brunch"`
-- **THEN** validation hard-fails and reports the invalid `meal` and the offending item
-
-#### Scenario: Duplicate slug blocks the write
-
-- **WHEN** two items in a member's `ready_to_eat.toml` share the same `slug`
-- **THEN** validation hard-fails and names the duplicated `slug`
-
-#### Scenario: Well-formed catalog passes
-
-- **WHEN** every item carries a `name`, a unique `slug`, a valid `meal`, a valid `status`, and any `rating` is an integer in range
-- **THEN** validation passes for the catalog
+- **WHEN** a ready-to-eat item carries a stale `status` or `rating`
+- **THEN** validation ignores both and checks only `meal` and `name`
 
 ### Requirement: Controlled vocabulary for required equipment
 
