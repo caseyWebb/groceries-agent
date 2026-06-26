@@ -14,6 +14,19 @@ it once the list is cleared.
 > previously fell through to a tenant-wide delete. Branch is based on `chore/enable-caseywebb-plugins`
 > (the checked-out branch at the time), not `main` — rebase if a clean-main PR is wanted.
 
+> **➕ Batch 2 — completeness sweep (2026-06-26).** A post-batch-1 verification found that
+> the **live OpenSpec specs were never comprehensively reconciled** during the D1 migration /
+> status retirement — the reviews had only sampled the few specs batch 1 fixed. A second
+> 4-worktree pass reconciled the remaining ~20 specs (removed `read_*` tools subsumed into
+> `read_user_profile`; `set_recipe_status`/`rate_recipe`/`commit_changes` retired; `*.toml`/KV
+> as *live mechanism* → D1; `commit_sha` only on recipe-markdown writes), plus a straggler pass
+> over model-facing prose in `TOOLS.md`, two in-code tool descriptions, and `SCHEMAS.md`.
+> Verification: `aubr typecheck` clean · `aubr test` 560 pass · `openspec validate --all` **41/41**.
+> **Remaining (cosmetic, not from the reviews):** ~15 internal CODE COMMENTS (`src/matching.ts`,
+> `meal-plan.ts`, `order.ts`, `email.ts`, `kitchen.ts`, `cooking-log.ts`, `corpus-db.ts`,
+> `tenant.ts`, `flyer-warm.ts`) still use old `.toml` filenames as shape-labels / historical
+> notes — not model-facing, no functional impact. Optional separate sweep.
+
 **Process:** fixes go straight to the relevant file (no OpenSpec proposal per item), but
 **reconcile the affected `openspec/specs/*/spec.md` in the same commit** where a spec is
 listed under "Spec impact." Keep each change green: `aubr typecheck`, `aubr test`,
