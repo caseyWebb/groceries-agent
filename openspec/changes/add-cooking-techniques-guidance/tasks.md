@@ -38,9 +38,9 @@
 
 ## 7. Data repos (relocation + seed)
 
-- [ ] 7.1 In `groceries-agent-data` and `groceries-agent-data-template`: `git mv storage_guidance/ guidance/ingredient_storage/` (no content change).
-- [ ] 7.2 Create `guidance/cooking_techniques/` and seed `browning-meat.md` as the worked example (description + source + distilled prose).
-- [ ] 7.3 Update both data repos' `README.md` references from `storage_guidance/` to `guidance/`.
+- [x] 7.1 In `groceries-agent-data` and `groceries-agent-data-template`: `git mv storage_guidance/ guidance/ingredient_storage/` (no content change).
+- [x] 7.2 Create `guidance/cooking_techniques/` and seed `browning-meat.md` as the worked example (description + source + distilled prose).
+- [x] 7.3 Update both data repos' `README.md` references from `storage_guidance/` to `guidance/`.
 
 ## 8. Verify & land
 
