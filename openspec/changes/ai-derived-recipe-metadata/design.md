@@ -49,7 +49,10 @@ Rollback is a redeploy of the prior Worker + reinstating the contract field; the
 
 ## Open Questions
 
-- **Provisional seed at import?** Should `create_recipe` write a big-model description immediately (so a new recipe reads well before the reconcile ticks), with the reconcile as the ongoing authority that overwrites it on content change? Leaning yes — best of both — but it adds a second producer to reason about.
+- **First-description latency (the reconcile-lag window).** A just-created recipe has no description until the next reconcile tick. Three ways to handle it, weighed against the *consistency* goal (one voice is the whole point):
+  - **(a) Synchronous generation at import** — `create_recipe` calls the **same** `env.AI` model the reconcile uses (one internal subrequest, ~1–2s). No lag, one voice, no downgrade-on-edit. **Leaning option.**
+  - **(b) Accept the lag** — do nothing special; the recipe is briefly description-less, exactly as it is briefly unembedded today. Simplest; fine if imports aren't immediately read/planned.
+  - **(c) Big-model (agent) seed at import** — Claude, already in the loop at import, writes the first draft. Best prose, but reintroduces a *second voice* and a *downgrade-on-edit* (the reconcile's smaller model overwrites it when the body later changes), which needs a "don't overwrite unless content changed" rule. Only worth it if peak prose beats consistency. **Discouraged** for that reason.
 - **`perishable_ingredients` next?** It is already "derived at import." Moving it to D1 is the obvious second application of the rule — but it is consumed by the order/waste path; confirm no consumer needs it inline in the file before relocating. Captured for a follow-up.
 - **Facet auto-fill (separate change).** Should the reconcile *propose* missing/blank facets (not author them — they keep a human corrector)? That is the "self-healing for human edits" idea; it belongs with `obsidian-authoring-vault`'s dropdown-confirmation flow, especially for the safety fields (`dietary`), and is explicitly out of scope here.
 - **One reconcile vs two passes.** Generate-then-embed in a single tick (simplest; description ready and embedded together) vs. two independent gates. Leaning single pass over the co-located row.

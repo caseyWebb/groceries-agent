@@ -35,12 +35,12 @@ Obsidian native Properties (1.4+) have typed properties (text/list/number/checkb
 - **[Vendored plugins don't auto-update]** the shipped snapshot ages. **Mitigation:** re-bundle on a vocab/plugin change (the artifact is rebuilt anyway when vocab changes); the same maintenance tail the plugin bundle already has.
 - **[Plugin security]** community plugins have full filesystem access; shipping them asks authors to trust the bundle. **Mitigation:** small trusted group; documented; pin plugin versions.
 - **[Drift if generation is bypassed]** a hand-edited fileClass would desync from `vocab.js`. **Mitigation:** `build-vault --check` in CI; `vault-template/` (source) vs the built vault (generated) treated like the other generated artifacts.
-- **[Per-author R2 creds]** authors need write credentials to the shared bucket. **Mitigation:** documented; scoped R2 tokens per author considered (ties into `r2-recipe-corpus`).
+- **[Per-author R2 creds]** authors need write credentials to the shared bucket. **Mitigation:** scoped per-author R2 tokens (decided with `r2-recipe-corpus`) — revoking one author doesn't rotate the rest; entered per author, never shipped in the vault.
 
 ## Open Questions
 
 - **Plugin set:** Metadata Menu (certain) + Templater vs. QuickAdd for the new-recipe flow; whether Linter is worth bundling for frontmatter tidiness. Keep the set minimal.
 - **Mobile vs desktop:** Metadata Menu and Remotely Save both work on mobile; confirm the dropdown UX is acceptable on phones (authors may add recipes from a phone).
 - **Help-text mechanism:** Metadata Menu field tooltips vs. a pinned help note vs. template comments — likely a combination.
-- **Credential distribution:** one operator-managed sync identity vs. scoped per-author R2 tokens — decide with `r2-recipe-corpus`.
+- **Credential distribution — RESOLVED: scoped per-author R2 tokens** (decided with `r2-recipe-corpus`). The vault ships everything except the sync credential; each author pastes their own scoped Remotely Save token. Open sub-question: admin-panel-minted vs. dashboard-created.
 - **Cookbook reader for friends:** confirm the friend read-path is the cookbook site (not a shipped read-only vault), so this artifact stays author-only.
