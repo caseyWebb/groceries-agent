@@ -181,6 +181,35 @@ export function extractFacets(fm: Record<string, unknown>, aliases: Record<strin
   };
 }
 
+/**
+ * Synchronously classify + store one recipe's derived facets — the import-time seed
+ * (src/discovery-tools.ts `create_recipe`), mirroring `seedRecipeDescription`, so a new recipe
+ * is faceted before the classify pass's next tick. Uses the SAME classifier + gate hash the
+ * pass uses (over the body + the authored Tier-B overrides), so the reconcile sees the hash
+ * match and does not reclassify. Best-effort at the call site: a failure must NOT fail the
+ * already-committed import — the classify pass backfills.
+ */
+export async function seedRecipeFacets(
+  env: Env,
+  slug: string,
+  fm: Record<string, unknown>,
+  body: string,
+): Promise<void> {
+  const overrides: Record<string, unknown> = {};
+  for (const k of ["protein", "cuisine", "course", "season", "tags"]) if (fm[k] !== undefined) overrides[k] = fm[k];
+  const courseOverride = fm.course !== undefined ? normalizeFacetCourse(fm.course) : null;
+  const title = typeof fm.title === "string" ? fm.title : slug;
+  const result = await classifyRecipe(
+    env,
+    { title, content: body },
+    null,
+    CLASSIFY_MAX_RETRIES,
+    courseOverride && courseOverride.length ? { course: courseOverride } : undefined,
+  );
+  const facets = extractFacets(result.frontmatter, await readAliases(env));
+  await db(env).run(UPSERT_SQL, ...facetBinds(slug, facets, facetGateHash(body, overrides)));
+}
+
 /** Wire the real R2 corpus + Workers AI + D1 + aliases for the scheduled handler. */
 export function buildFacetDeps(env: Env, store: CorpusStore): DerivedFacetDeps {
   const d = db(env);

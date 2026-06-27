@@ -18,6 +18,7 @@ import type { CorpusStore } from "./corpus-store.js";
 import { ToolError, runTool } from "./errors.js";
 import { validateFile } from "./validate.js";
 import { seedRecipeDescription } from "./recipe-embeddings.js";
+import { seedRecipeFacets } from "./recipe-classify.js";
 import { fetchWithBrowserHeaders } from "./http.js";
 import { extractJsonLd, findRecipe, normalizeRecipe } from "./jsonld.js";
 import { buildNewRecipe, canonicalizeUrl, indexSourceToSlug } from "./discovery.js";
@@ -104,8 +105,11 @@ export function registerDiscoveryTools(
     "create_recipe",
     {
       description:
-        "Write a NEW recipe to the SHARED corpus, as a single R2 object. Slug derives from the title unless `slug` is given. An imported recipe lands AVAILABLE to every member by default — there is no `status` to set (the per-tenant status lifecycle is retired). The body MUST contain ## Ingredients and ## Instructions. " +
-          "EVERY system-consumed field is REQUIRED and must be PRESENT (the recipe is rejected with validation_failed otherwise) — use the explicit empty form where a value is genuinely empty. Required, non-empty: `title`; `ingredients_key` (the defining 5–7 ingredients); `course` (e.g. [main], [side], [main, side]). Required, value OR explicit `null` (never omit, never 'none'): `protein` (coarse bucket: chicken | beef | pork | lamb | turkey | fish | shellfish | egg | tofu | vegetarian | vegan | mixed — map specifics: shrimp→shellfish, salmon/cod/tuna→fish; `null` when there is no protein focus), `cuisine` (american | brazilian | cajun | caribbean | chinese | cuban | filipino | french | german | greek | indian | italian | japanese | korean | mediterranean | mexican | moroccan | peruvian | southwestern | spanish | thai | vietnamese; `null` if cuisine-agnostic), `time_total` (minutes or `null`), `source` (the URL or `null` if hand-entered; set discovered_at + discovery_source for discovery imports). Required, may be `[]`: `dietary`, `season` (controlled vocab: spring | summer | fall | winter — `[]` for year-round; an off-vocab value, incl. `autumn` or capitalized, is rejected), `tags`, `pairs_with`, `perishable_ingredients` (names that would spoil before use — the \"would the leftover rot\" test; skip fuzzy edges like eggs/potatoes), `requires_equipment` (ONLY truly-irreplaceable gear: pressure-cooker | sous-vide-circulator | blender | ice-cream-maker — a wrong tag silently hides a makeable recipe; an off-vocab slug is rejected). `side_search_terms` is REQUIRED: non-empty for a MAIN (phrases for the kind of side that completes it, e.g. [\"a bright acidic salad\", \"crusty bread for the sauce\"]), `[]` for non-mains. Other free-form fields pass through untouched. An off-vocabulary `protein`/`cuisine`/`season`/`requires_equipment` value, a `\"none\"` protein, or any missing/empty required field is rejected (validation_failed). Refuses to overwrite an existing slug (slug_exists), and refuses to duplicate a recipe whose `source` URL is already in the corpus (already_exists, with the existing slug — reuse it). The `description` is generated automatically from the recipe's facets (it is no longer authored) — any `description` you supply is ignored.",
+        "Write a NEW recipe to the SHARED corpus, as a single R2 object. Slug derives from the title unless `slug` is given. An imported recipe lands AVAILABLE to every member by default — there is no `status` to set. The body MUST contain ## Ingredients and ## Instructions. " +
+          "The DESCRIPTIVE facets are DERIVED on the cron from the body — you do NOT need to supply `protein`, `cuisine`, `course`, `season`, `tags`, `ingredients_key`, `perishable_ingredients`, `side_search_terms`, or `meal_preppable`; the classifier fills them and `create_recipe` seeds them at import. You MAY still pass `protein`/`cuisine`/`course`/`season`/`tags` as an OPTIONAL authored OVERRIDE (it wins over the classifier; `tags` is unioned with the classifier's). " +
+          "REQUIRED authored fields (rejected with validation_failed if missing) — the gates + identity: `title` (non-empty); `source` (the URL, or `null` if hand-entered; set discovered_at + discovery_source for discovery imports); `time_total` (minutes or `null`); `dietary` (array, may be `[]` — a hard diet/allergen gate, AUTHOR it, do not rely on the classifier); `requires_equipment` (array, may be `[]` — a hard makeability gate; ONLY truly-irreplaceable gear: pressure-cooker | sous-vide-circulator | blender | ice-cream-maker, a wrong tag silently hides a makeable recipe; off-vocab rejected); `pairs_with` (array of recipe slugs, may be `[]`). " +
+          "Override vocab when you do supply one: `protein` (chicken | beef | pork | lamb | turkey | fish | shellfish | egg | tofu | vegetarian | vegan | mixed — map shrimp→shellfish, salmon/cod/tuna→fish; `null` for no protein focus, never 'none'), `cuisine` (american | brazilian | cajun | caribbean | chinese | cuban | filipino | french | german | greek | indian | italian | japanese | korean | mediterranean | mexican | moroccan | peruvian | southwestern | spanish | thai | vietnamese; `null` if agnostic), `season` (spring | summer | fall | winter; `[]` year-round; off-vocab incl. `autumn`/capitalized is rejected). " +
+          "Refuses to overwrite an existing slug (slug_exists), and refuses to duplicate a recipe whose `source` URL is already in the corpus (already_exists, with the existing slug — reuse it). The `description` is generated automatically — any `description` you supply is ignored.",
       inputSchema: {
         frontmatter: z.record(z.string(), z.unknown()),
         body: z.string(),
@@ -143,6 +147,14 @@ export function registerDiscoveryTools(
           await seedRecipeDescription(env, finalSlug, facets);
         } catch (e) {
           console.error(`[create_recipe] description seed failed for ${finalSlug} (reconcile will backfill):`, e);
+        }
+        // Seed the derived FACETS synchronously too (recipe-facet-derivation), so a body-only
+        // import is faceted before the classify pass's next tick. Same classifier + gate hash,
+        // so the cron sees a match and does not reclassify. Best-effort, like the description seed.
+        try {
+          await seedRecipeFacets(env, finalSlug, frontmatter, body);
+        } catch (e) {
+          console.error(`[create_recipe] facet seed failed for ${finalSlug} (classify pass will backfill):`, e);
         }
         return { slug: finalSlug };
       }),

@@ -1,8 +1,8 @@
 ## 1. Agreement eval (gates Tier B + drives the migration)
 
-- [ ] 1.1 Write a spike script that runs the classifier over the current authored corpus and diffs each derived facet against the authored frontmatter value; emit per-field agreement rates and the disagreement set per field (existing authored facets are the ground-truth labels)
-- [ ] 1.2 Review agreement rates; confirm each Tier B facet (`protein`, `cuisine`, `course`, `season`, `tags`) clears the trust bar to default to derived — or escalate a low-agreement field back to authored-required; record the threshold + decision in design.md
-- [ ] 1.3 Emit the per-recipe strip plan from the eval: Tier A → strip unconditionally; Tier B → strip where classifier agrees, keep-as-override where it disagrees
+- [x] 1.1 Agreement-eval harness written (`scripts/eval-facet-agreement/run.mjs`): classifies a local corpus copy via Workers AI REST, reports per-field agreement vs authored frontmatter
+- [ ] 1.2 Review agreement rates; confirm each Tier B facet clears the trust bar — or escalate a low-agreement field back to authored-required — **deferred: run the eval in dev (needs corpus + CLOUDFLARE_API_TOKEN), then decide**
+- [x] 1.3 Strip plan emitted by the eval (`--plan <file>`): Tier A → strip unconditionally; Tier B → strip on agreement, keep-as-override on disagreement
 
 ## 2. Shared classifier
 
@@ -37,9 +37,9 @@
 
 ## 7. Authoring tools
 
-- [ ] 7.1 `create_recipe`: stop requiring agent-supplied Tier A/B facets; seed the classify pass synchronously into the facet table (best-effort, like the description seed) so agent imports are not facet-lagged
-- [ ] 7.2 `update_recipe`: accept Tier B overrides and Tier C authored edits, reject off-vocab overrides, and ensure an override edit re-triggers re-derivation via the change gate
-- [ ] 7.3 Update the `create_recipe`/`update_recipe` tool descriptions to reflect the param changes (the tool-description ownership boundary)
+- [x] 7.1 `create_recipe`: no longer requires Tier A/B facets (relaxed contract); seeds the facets synchronously via `seedRecipeFacets` (best-effort, like the description seed) so agent imports aren't facet-lagged
+- [x] 7.2 `update_recipe`: accepts Tier B overrides + Tier C authored edits, rejects off-vocab overrides (relaxed contract); a body edit re-triggers re-derivation via the `body_hash` gate
+- [x] 7.3 Updated the `create_recipe`/`update_recipe` tool descriptions to the new model (gates + identity required; descriptive facets derived/overrides)
 
 ## 8. Authoring vault
 
