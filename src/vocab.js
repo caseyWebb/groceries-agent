@@ -52,12 +52,21 @@ export const CUISINE_VOCAB = Object.freeze([
   "vietnamese",
 ]);
 
-// The four meteorological seasons. A recipe's `season` array draws from this
-// vocabulary (or is `[]` for year-round). Consumers that match a recipe's
-// `season` against a derived current season normalize first (case-fold +
-// `autumn` → `fall`), so legacy free-form values still match — see
-// normalizeSeason in src/retrospective.ts.
+// The four meteorological seasons — a CONTROLLED vocabulary like protein/cuisine.
+// A recipe's `season` array draws from this set (or is `[]` for year-round); an
+// off-vocab token is rejected at write AND build time (the contract below).
 export const SEASON_VOCAB = Object.freeze(["spring", "summer", "fall", "winter"]);
+
+// Canonicalize a `season` token: trim, lowercase, and fold the `autumn` synonym to
+// `fall`. Defined ONCE here so the read-side match (src/retrospective.ts) and the
+// source migration (scripts/migrate-season-vocab.mjs) agree on the canonical form.
+// Note: validation is strict (exact SEASON_VOCAB membership) — this normalizer is for
+// matching legacy values on read and for canonicalizing source data in the migration,
+// not a write-time coercion.
+export function normalizeSeason(value) {
+  const s = String(value).trim().toLowerCase();
+  return s === "autumn" ? "fall" : s;
+}
 
 // Equipment a dish is genuinely IMPOSSIBLE without — the "no recipe-preserving
 // workaround exists" test, deliberately small (it doubles as the onboarding

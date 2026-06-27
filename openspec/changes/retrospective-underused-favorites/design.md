@@ -15,7 +15,7 @@ The supporting signals already exist: `favorite`/`reject` are per-tenant overlay
 - Keep the contract (impl ↔ `docs/TOOLS.md` ↔ `cooking-history` spec) in lockstep; ship with no data migration.
 
 **Non-Goals:**
-- Hard write-time validation of `season` against the canonical vocab (a future change can add a `SEASON_VOCAB` gate to the validators the way `EQUIPMENT_VOCAB` is gated). This change normalizes on read so the feature ships immediately.
+- Auto-coercing a mistyped `season` on write. The write gate **rejects** an off-vocab token (consistent with `protein`/`cuisine`/`requires_equipment`) rather than silently rewriting it; canonicalization of pre-existing data is the migration's job, not the write path's.
 - Location/hemisphere-aware season derivation. A single self-hosted Worker serves one friend group; Northern-hemisphere months are a documented assumption.
 - Surfacing the communal "never cooked by me" discovery set — that is `search_recipes` / discovery territory, deliberately *not* `underused`.
 - Auto-starring a revealed favorite (the "graduate to a real favorite" idea is left as a future thread).
@@ -34,8 +34,8 @@ A behavioral love signal with a recency horizon. The trailing window ages out ol
 ### D4 — Season: derive current season from `now`, hard-exclude out-of-season
 `seasonOf(now)` via Northern-hemisphere meteorological months (Dec–Feb winter, Mar–May spring, Jun–Aug summer, Sep–Nov fall). A recipe with `season: []` is year-round and always passes; a non-empty `season` must include the current season or it is dropped. *Alternatives:* down-rank rather than exclude (the ask was "don't show out-of-season things" — a hard filter); surface "coming into season soon" (nice, but speculative and out of scope).
 
-### D5 — Pin a canonical `SEASON_VOCAB`, normalize on read, stage write enforcement
-Add `SEASON_VOCAB = [spring, summer, fall, winter]` to `src/vocab.js` (with `src/vocab.d.ts`). The retrospective season match normalizes both sides (case-fold, `autumn → fall`) so legacy free-text data matches with no migration. Write-side canonicalization (classifier guidance in `AGENT_INSTRUCTIONS.md`, an optional soft validator check) is a staged follow-on. *Alternative:* hard-gate `season` at write time now (matches the `EQUIPMENT_VOCAB` pattern, but would reject existing recipes carrying legacy tokens until migrated — exactly the migration we want to avoid).
+### D5 — `SEASON_VOCAB` is a controlled vocabulary enforced at write + build, with read normalization and a source migration
+Add `SEASON_VOCAB = [spring, summer, fall, winter]` and a shared `normalizeSeason` to `src/vocab.js` (+ `src/vocab.d.ts`). The shared required-field contract (`src/recipe-contract.js`, run by **both** the Worker write gate and the build) rejects an off-vocab `season` token exactly as it rejects an off-vocab `requires_equipment` slug — so the two gates can't drift (the contract's load-bearing invariant). The retrospective season match still normalizes (case-fold, `autumn → fall`) so pre-migration data matches, and `scripts/migrate-season-vocab.mjs` canonicalizes legacy source frontmatter (surgical `season`-line rewrite; unmappable tokens like `monsoon` are flagged for manual repair, never guessed). *Why strict-and-migrate over normalize-on-write:* it keeps `season` consistent with the existing `protein`/`cuisine`/`requires_equipment` pattern (authored canonical, exact-match) rather than inventing a write-time coercion the other vocabs don't have; the one-time, reviewed migration is the step the operator explicitly opted into.
 
 ### D6 — One tagged list + a total count + a top-15 cap
 Return a single `underused` list, each item tagged `why: "favorite" | "revealed"` and `cook_count` (all-time) so the skill can phrase "you starred this but never made it" vs "you used to make this all the time" differently. `underused_count` carries the pre-cap total; the list is capped to the 15 stalest. The cap is defense-in-depth against a power user who has favorited or revealed hundreds — the original bug's ghost. *Alternative:* two separate lists (`favorites` / `revealed`) — more surface for no real gain, since the skill treats them the same way.
@@ -52,7 +52,7 @@ The number surfaced for the nudge is the caller's all-time cook count ("you've m
 
 ## Migration Plan
 
-Pure-function rewrite plus a shared-constant addition — no schema or data migration. Read-side season normalization means existing recipes (including any legacy `season` values) work on first deploy. Ships via the normal path: merge to `main` → `ci.yml` dispatches the data repo's deploy. Rollback is a straight revert of `src/retrospective.ts` (and the `SEASON_VOCAB` addition, which nothing else depends on yet). The `cooking-retrospective` skill and `docs/TOOLS.md` update in the same pass; rebuild the plugin (`aubr build:plugin`).
+No D1 schema migration, but a one-time **data migration** of `season` frontmatter, because the build now hard-fails on an off-vocab `season`. Ordering matters for an operator with legacy values: run `scripts/migrate-season-vocab.mjs --root <data-repo>` (verify first with `--check`), commit the canonicalized recipes, **then** deploy. Read-side normalization keeps the retrospective correct in the interim and protects any tenant whose D1 was projected before the migration ran. Code ships via the normal path: merge to `main` → `ci.yml` dispatches the data repo's deploy. Rollback is a straight revert of the `src/recipe-contract.js` season check and `src/retrospective.ts`; the canonicalized data needs no rollback (canonical tokens were always valid). The `cooking-retrospective` skill, contract docs, and the plugin rebuild ride the same pass.
 
 ## Open Questions
 

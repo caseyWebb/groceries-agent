@@ -6,3 +6,5 @@ export const PROTEIN_VOCAB: readonly string[];
 export const CUISINE_VOCAB: readonly string[];
 export const SEASON_VOCAB: readonly string[];
 export const EQUIPMENT_VOCAB: readonly string[];
+/** Canonicalize a `season` token: trim, lowercase, fold `autumn` -> `fall`. */
+export function normalizeSeason(value: string): string;

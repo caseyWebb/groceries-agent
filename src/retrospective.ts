@@ -12,6 +12,10 @@
 
 import type { CookingLogEntry } from "./cooking-log.js";
 import type { RecipeIndex } from "./recipes.js";
+import { normalizeSeason } from "./vocab.js";
+
+// Re-exported so callers and tests reach the shared season canonicalizer from here.
+export { normalizeSeason };
 
 export interface RetrospectiveResult {
   period: string;
@@ -74,12 +78,6 @@ export function seasonOf(d: Date): Season {
   if (m <= 4) return "spring"; // Mar, Apr, May
   if (m <= 7) return "summer"; // Jun, Jul, Aug
   return "fall"; // Sep, Oct, Nov
-}
-
-/** Normalize a recipe `season` token for comparison: case-fold + `autumn` -> `fall`. */
-export function normalizeSeason(value: string): string {
-  const s = value.trim().toLowerCase();
-  return s === "autumn" ? "fall" : s;
 }
 
 /** In season when the season list is empty (year-round) or includes the current season. */
