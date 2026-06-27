@@ -196,14 +196,19 @@ export async function revoke(
 ): Promise<{ username: string; revoked: true; invites_removed: number }> {
   const id = normalizeTenantId(username);
   if (!id) throw new ToolError("validation_failed", "A username is required");
-  await deps.tenantKv.delete(`${TENANT_PREFIX}${id}`);
-  const invitesRemoved = await deleteInvitesFor(deps.tenantKv, id);
-  await deps.krogerKv.delete(`kroger:refresh:${id}`);
+  // Purge per-tenant D1 FIRST. `db.batch` maps any D1 failure to a thrown storage_error,
+  // so doing it before we delist means a purge failure aborts here — leaving the member
+  // consistently present and the whole revoke safe to retry — rather than locking them
+  // off the allowlist while their rows linger orphaned.
   const stmts = [
     ...TENANT_TABLES.map((t) => deps.db.prepare(`DELETE FROM ${t} WHERE tenant = ?1`, id)),
     ...AUTHOR_TABLES.map((t) => deps.db.prepare(`DELETE FROM ${t} WHERE author = ?1`, id)),
   ];
   await deps.db.batch(stmts);
+  // Then the lock-out: drop the allowlist entry, every invite, and the Kroger token.
+  await deps.tenantKv.delete(`${TENANT_PREFIX}${id}`);
+  const invitesRemoved = await deleteInvitesFor(deps.tenantKv, id);
+  await deps.krogerKv.delete(`kroger:refresh:${id}`);
   return { username: id, revoked: true, invites_removed: invitesRemoved };
 }
 

@@ -5,15 +5,15 @@
 > purpose** — it must follow a deployed, Access-configured, end-to-end-verified
 > panel, or there would be no way to onboard during the gap.
 
-> **Status (apply session):** groups 1–6 implemented and verified locally
-> (`typecheck`, full `vitest`, `test:tooling`, `openspec validate --strict`, and a
-> `wrangler deploy --dry-run` confirming the `assets` + `run_worker_first` config).
-> **Two items are blocked by the sandbox, not by code:**
-> (a) the committed `admin/dist/` bundle (3.3) and `build:admin --check` (8.1) need
-> Elm's package registry (`package.elm-lang.org`), which the sandbox network policy
-> blocks — run `aubr build:admin` in CI / a connected dev box; (b) group 7 + the
-> post-deploy checks (8.2 full run, 8.3) are gated on a real deploy + Cloudflare
-> Access setup.
+> **Status:** groups 1–6 implemented and verified — `typecheck`, full `vitest`,
+> `test:tooling`, `openspec validate --strict`, `aubr build:admin --check`, a
+> `wrangler deploy --dry-run` of the `assets` config, and a live `wrangler dev`
+> smoke (onboard/rotate/revoke against local D1 + the ASSETS-served shell + open
+> `/health`) — which caught and fixed a `/admin` shell redirect loop. The code-review
+> findings are addressed (deploy-trigger filter, revoke purge-before-delist, doc
+> accuracy). The Elm app was refactored to RemoteData / "impossible states impossible"
+> (see `admin/CLAUDE.md`) and the bundle rebuilt. **Only group 7 (retire the Actions)
+> and 8.3 (post-deploy checks) remain — both gated on the live deploy + Access setup.**
 
 ## 1. Access gate (Worker)
 - [x] 1.1 `jose` (Web-Crypto build) is a dependency (already in `package.json`).
@@ -33,7 +33,7 @@
 ## 3. Admin SPA (Elm) + build
 - [x] 3.1 `admin/` Elm source: `elm.json`, `src/Main.elm` (list / onboard / revoke / rotate; show the code once), `index.html`.
 - [x] 3.2 `scripts/build-admin.mjs` — deterministic, `--check` mode (mirrors `build-plugin.mjs`); `build:admin` npm script; outputs `admin/dist/admin/{elm.js,index.html}`.
-- [ ] 3.3 **(blocked: Elm registry)** Commit `admin/dist/**` (gitignore re-include added; Elm cache ignored). Run `aubr build:admin` where `package.elm-lang.org` is reachable, then commit the bundle.
+- [x] 3.3 Commit `admin/dist/**` (gitignore re-include added; Elm cache ignored). Built via `aubr build:admin` and committed; `build:admin --check` passes.
 
 ## 4. wrangler + config merge
 - [x] 4.1 `wrangler.jsonc`: `assets` binding (`directory: ./admin/dist`, `run_worker_first: ["/admin","/admin/*"]`) + `workers_dev: false`. Confirmed valid via `wrangler deploy --dry-run`.
@@ -54,7 +54,7 @@
 - [ ] 7.3 **(deploy-gated)** Template repo (`groceries-agent-data-template`): delete the callers; clean the SELF_HOSTING control-plane workflow table + the lines 11/37–48 "private repo keeps invite codes secret" framing.
 
 ## 8. Verify
-- [x] 8.1 `typecheck`, `vitest` (659 pass), `test:tooling` (117 pass) green. **`build:admin --check` blocked** on Elm registry access (run in CI/dev).
-- [ ] 8.2 **(needs the built bundle)** Local `wrangler dev` with `ADMIN_DEV_BYPASS=1`: onboard/rotate/revoke a test member, confirm KV + local D1 effects and the code shows once; `/health` answers with no token and no raw `d1.error`. (Unit-tested now; full local run pending the dist build.)
+- [x] 8.1 `typecheck`, `vitest`, `test:tooling`, and `aubr build:admin --check` all green.
+- [x] 8.2 Local `wrangler dev` (`ADMIN_DEV_BYPASS=1`): onboarded/rotated/revoked a member (revoke hit local D1), the shell served via ASSETS, `/health` answered with no token and a coarsened `d1`. Caught + fixed the `/admin` shell redirect loop here.
 - [ ] 8.3 **(deploy-gated)** Post-deploy: `/admin` requires an Access session, `*.workers.dev` is closed, `/mcp` unaffected; onboard/rotate/revoke a real member end-to-end before group 7.
 - [x] 8.4 `openspec validate operator-admin-panel --strict` passes.
