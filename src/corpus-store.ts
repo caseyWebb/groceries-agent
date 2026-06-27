@@ -30,6 +30,12 @@ export interface CorpusStore {
   getFile(path: string): Promise<string | null>;
   /** List the immediate children of a directory prefix; `[]` when the prefix has none. */
   listDir(path: string): Promise<DirEntry[]>;
+  /**
+   * Recursively list every object key under a prefix (no delimiter) — the whole-tree read
+   * the reconcile needs to project the index over the entire `recipes/` corpus. `[]` when
+   * the prefix has no objects.
+   */
+  list(prefix: string): Promise<string[]>;
   /** Write an object's full content (single-object atomic). */
   put(path: string, content: string): Promise<void>;
   /** Delete an object; a no-op when it is already absent. */
@@ -85,6 +91,23 @@ export function createR2CorpusStore(bucket: R2Bucket): CorpusStore {
     return out;
   }
 
+  async function list(prefix: string): Promise<string[]> {
+    // No delimiter → every object at any depth under the prefix (the whole-tree read).
+    const keys: string[] = [];
+    let cursor: string | undefined;
+    try {
+      for (;;) {
+        const res = await bucket.list({ prefix, cursor });
+        for (const o of res.objects) keys.push(o.key);
+        if (!res.truncated) break;
+        cursor = res.cursor;
+      }
+    } catch (e) {
+      throw new ToolError("upstream_unavailable", `R2 list failed for ${prefix}: ${msg(e)}`, { prefix });
+    }
+    return keys;
+  }
+
   async function put(path: string, content: string): Promise<void> {
     try {
       await bucket.put(path, content);
@@ -101,7 +124,7 @@ export function createR2CorpusStore(bucket: R2Bucket): CorpusStore {
     }
   }
 
-  return { getFile, listDir, put, delete: del };
+  return { getFile, listDir, list, put, delete: del };
 }
 
 /**

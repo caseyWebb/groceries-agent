@@ -10,9 +10,9 @@
 - [x] 1.3 Wire reads (`read_recipe` in `src/tools.ts`, `src/guidance.ts`) through the store. (Single-PR cutover: the store is the sole corpus path — no transient dual-read git fallback to add-then-remove; the operator's one-time git→R2 copy + parity check is the cutover mechanism, see §3.)
 
 ## 2. Reconcile owns projection + validation
-- [ ] 2.1 Extend the scheduled reconcile to read the R2 corpus, validate each recipe with the shared contract (`recipe-contract.js`/`validate.ts`) **plus** `pairs_with` cross-resolution (whole-corpus), and project the D1 `recipes` table.
-- [ ] 2.2 `reconcile_errors`: a D1 record of skipped (invalid) recipes; expose via `/health` and an agent-readable read path; ntfy on failure (reuse `notifyFailure`).
-- [ ] 2.3 Unit-test projection + validation with injected deps (in-memory R2/D1 fakes), mirroring the existing reconcile tests: valid corpus projects; invalid recipe is skipped + recorded; dangling `pairs_with` flagged.
+- [x] 2.1 Extend the scheduled reconcile to read the R2 corpus, validate each recipe with the shared contract (`recipe-contract.js`/`validate.ts`) **plus** `pairs_with` cross-resolution (whole-corpus), and project the D1 `recipes` table. (New `src/recipe-projection.ts` — the workerd port of the retired build's projection; wired into `scheduled()` BEFORE the derived reconcile.)
+- [x] 2.2 `reconcile_errors`: a D1 record of skipped (invalid) recipes (migration 0014); expose via `/health` (new `recipe-index` job) and an agent-readable read path (`read_reconcile_errors` tool); ntfy on a hard failure AND on each NEW invalid recipe (de-spammed via prior-slug diff), reusing `notifyFailure`.
+- [x] 2.3 Unit-test projection + validation with injected deps (in-memory R2/D1 fakes), mirroring the existing reconcile tests: valid corpus projects (incl. resolved `pairs_with`); invalid recipe is skipped + recorded; dangling `pairs_with` flagged; duplicate slug + missing body section recorded; job-runner health + de-spam.
 
 ## 3. Data copy + parity
 - [ ] 3.1 One-time copy of the git corpus → R2 (`rclone`/script). Document the `rclone sync` round-trip for operator bulk edits.

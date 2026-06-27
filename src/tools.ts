@@ -24,6 +24,7 @@ import { registerStoreTools } from "./stores-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
+import { readReconcileErrors } from "./recipe-projection.js";
 import { embedTexts } from "./embedding.js";
 import {
   rankCandidates,
@@ -463,6 +464,16 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
           throw e;
         }
       }),
+  );
+
+  server.registerTool(
+    "read_reconcile_errors",
+    {
+      description:
+        "List recipes the index reconcile SKIPPED because they failed validation — the shared corpus's current indexing failures ({ errors: [{ slug, path, message, recorded_at }] }). The recipe index is rebuilt from the R2 corpus by a background reconcile; a recipe whose frontmatter breaks the required-field/vocabulary contract, is missing a `## Ingredients`/`## Instructions` body section, duplicates another slug, or has a dangling `pairs_with` is NOT indexed (so it won't appear in search_recipes) and is recorded here with the first actionable error. An empty list means every recipe indexed cleanly. Use it when a member reports a recipe they authored/edited (e.g. via Obsidian) isn't showing up, or proactively after a bulk edit — then relay the specific fix (e.g. \"`thai-curry`: `protein: poltry` isn't a valid value\") so they can correct the source. Shared across the group; takes no parameters.",
+      inputSchema: {},
+    },
+    () => runTool(async () => ({ errors: await readReconcileErrors(env) })),
   );
 
   server.registerTool(
