@@ -3,7 +3,7 @@ module Main exposing (main)
 {-| The grocery-agent operator admin shell (operator-admin capability).
 
 A client-routed `Browser.application` served under `/admin` behind Cloudflare Access. The
-panel is split into three top-level areas so it grows by adding routed pages, not by stacking
+panel is split into top-level areas so it grows by adding routed pages, not by stacking
 cards on one view:
 
   - **Status** — the service-health home view (`/health`: jobs, D1, admin-gate posture), in
@@ -11,6 +11,11 @@ cards on one view:
   - **Members** — member management (onboard / list / rotate / revoke), in `Admin.Members`.
   - **Dev** — the MCP tool console (inspect + run tools as a chosen member), in
     `Dev.ToolConsole`.
+  - **Logs** — operator-auditable activity logs (a left submenu of sources, master/detail), in
+    `Logs`. The selected source rides the route (`/admin/logs/discovery`).
+  - **Config** — operator configuration, in `Config`.
+  - **Data** — the read-only data explorer over D1 and the R2 corpus (five entity views), in
+    `Data`. The selected recipe/member rides the route (`/admin/data/recipes/<slug>`).
 
 The current page **and its sub-model** are one `Page` union (a page owns its state), so
 being "on the Tools page holding Members' state" is unrepresentable. Navigation is by real
@@ -23,12 +28,14 @@ import Admin.Members as Members
 import Browser
 import Browser.Dom as Dom
 import Browser.Navigation as Nav
+import Config
 import Data
 import Dev.ToolConsole as ToolConsole
 import Html exposing (Html, a, button, div, h1, nav, section, text)
 import Html.Attributes exposing (class, classList, id)
 import Html.Events exposing (onClick)
-import Route exposing (Route)
+import Logs
+import Route exposing (LogSource(..), Route)
 import Status
 import Task
 import Url exposing (Url)
@@ -85,6 +92,8 @@ type Page
     = HealthPage Status.Model
     | MembersPage Members.Model
     | ToolsPage ToolConsole.Model
+    | LogsPage Logs.Model
+    | ConfigPage Config.Model
     | DataPage Data.Model
     | NotFoundPage
 
@@ -105,6 +114,8 @@ type Msg
     | HealthMsg Status.Msg
     | MembersMsg Members.Msg
     | ToolsMsg ToolConsole.Msg
+    | LogsMsg Logs.Msg
+    | ConfigMsg Config.Msg
     | DataMsg Data.Msg
     | ScrollToSection DevSection
     | NoOp
@@ -149,6 +160,20 @@ update msg model =
             in
             ( { model | page = ToolsPage subModel2 }, Cmd.map ToolsMsg cmd )
 
+        ( LogsMsg subMsg, LogsPage subModel ) ->
+            let
+                ( subModel2, cmd ) =
+                    Logs.update subMsg subModel
+            in
+            ( { model | page = LogsPage subModel2 }, Cmd.map LogsMsg cmd )
+
+        ( ConfigMsg subMsg, ConfigPage subModel ) ->
+            let
+                ( subModel2, cmd ) =
+                    Config.update subMsg subModel
+            in
+            ( { model | page = ConfigPage subModel2 }, Cmd.map ConfigMsg cmd )
+
         ( DataMsg subMsg, DataPage subModel ) ->
             let
                 ( subModel2, cmd ) =
@@ -164,6 +189,12 @@ update msg model =
             ( model, Cmd.none )
 
         ( ToolsMsg _, _ ) ->
+            ( model, Cmd.none )
+
+        ( LogsMsg _, _ ) ->
+            ( model, Cmd.none )
+
+        ( ConfigMsg _, _ ) ->
             ( model, Cmd.none )
 
         ( DataMsg _, _ ) ->
@@ -184,10 +215,20 @@ stepTo route model =
             in
             ( { model | route = route, page = ToolsPage subModel2 }, Cmd.map ToolsMsg cmd )
 
+        ( Route.Logs selected, LogsPage subModel ) ->
+            let
+                ( subModel2, cmd ) =
+                    Logs.selectSource (logSourceOr selected) subModel
+            in
+            ( { model | route = route, page = LogsPage subModel2 }, Cmd.map LogsMsg cmd )
+
         ( Route.Members, MembersPage _ ) ->
             ( { model | route = route }, Cmd.none )
 
         ( Route.Health, HealthPage _ ) ->
+            ( { model | route = route }, Cmd.none )
+
+        ( Route.Config, ConfigPage _ ) ->
             ( { model | route = route }, Cmd.none )
 
         ( Route.Data dataRoute, DataPage subModel ) ->
@@ -199,6 +240,13 @@ stepTo route model =
 
         _ ->
             enter route Nothing model
+
+
+{-| The selected log source for a `Logs` route, defaulting the bare `/admin/logs` (no source
+chosen) to the first source so the area always shows a log. -}
+logSourceOr : Maybe LogSource -> LogSource
+logSourceOr selected =
+    Maybe.withDefault Discovery selected
 
 
 {-| Build a route's page from scratch. For Tools, `actingAs` seeds the persona (only ever
@@ -226,6 +274,20 @@ enter route actingAs model =
                     ToolConsole.init { persona = actingAs, tool = selected }
             in
             ( { model | route = route, page = ToolsPage subModel }, Cmd.map ToolsMsg cmd )
+
+        Route.Logs selected ->
+            let
+                ( subModel, cmd ) =
+                    Logs.init (logSourceOr selected)
+            in
+            ( { model | route = route, page = LogsPage subModel }, Cmd.map LogsMsg cmd )
+
+        Route.Config ->
+            let
+                ( subModel, cmd ) =
+                    Config.init
+            in
+            ( { model | route = route, page = ConfigPage subModel }, Cmd.map ConfigMsg cmd )
 
         Route.Data dataRoute ->
             let
@@ -273,11 +335,18 @@ view model =
     }
 
 
-{-| The tool console is two-column and wants a wider page than the member-management forms. -}
+{-| The two-column areas (the tool console and the logs master/detail) want a wider page than
+the member-management forms. -}
 wrapClass : Route -> String
 wrapClass route =
     case route of
         Route.Tools _ ->
+            "wrap wrap-wide"
+
+        Route.Logs _ ->
+            "wrap wrap-wide"
+
+        Route.Config ->
             "wrap wrap-wide"
 
         Route.Data _ ->
@@ -293,6 +362,8 @@ viewNav route =
         [ navLink "Status" Route.Health (isStatus route)
         , navLink "Members" Route.Members (isMembers route)
         , navLink "Dev · Tools" (Route.Tools Nothing) (isDev route)
+        , navLink "Logs" (Route.Logs Nothing) (isLogs route)
+        , navLink "Config" Route.Config (isConfig route)
         , navLink "Data" (Route.Data (Route.DataRecipes Nothing)) (isData route)
         ]
 
@@ -332,6 +403,26 @@ isDev route =
             False
 
 
+isLogs : Route -> Bool
+isLogs route =
+    case route of
+        Route.Logs _ ->
+            True
+
+        _ ->
+            False
+
+
+isConfig : Route -> Bool
+isConfig route =
+    case route of
+        Route.Config ->
+            True
+
+        _ ->
+            False
+
+
 isData : Route -> Bool
 isData route =
     case route of
@@ -359,6 +450,12 @@ viewPage model =
                 , section [ id (sectionId McpInspector), class "dev-section" ]
                     [ Html.map ToolsMsg (ToolConsole.view subModel) ]
                 ]
+
+        LogsPage subModel ->
+            Html.map LogsMsg (Logs.view subModel)
+
+        ConfigPage subModel ->
+            Html.map ConfigMsg (Config.view subModel)
 
         DataPage subModel ->
             Html.map DataMsg (Data.view subModel)

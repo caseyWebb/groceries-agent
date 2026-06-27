@@ -218,11 +218,11 @@ The tool console SHALL make the acting persona visible whenever a tool can be in
 
 ### Requirement: Admin panel is organized into top-level areas with client-side routing
 
-The admin SPA SHALL organize its surfaces into top-level areas — a **Status** area (the operator-facing background-job health view), a **Members** area (member management), a **Dev** area (the tool console and future developer surfaces), and a **Data** area (the read-only data explorer over D1 and the R2 corpus) — navigable by client-side routing so each surface has its own URL and a new surface is added as its own routed module rather than another card on a single page. The panel's **home** route (`/admin`) SHALL be the Status view; member management SHALL be reached at its own route (`/admin/members`), and the data explorer at its own routes under `/admin/data/*`, not at the panel root. Navigating between surfaces SHALL update the browser URL, and a deep link or refresh to a surface's URL SHALL load that surface directly.
+The admin SPA SHALL organize its surfaces into top-level areas — a **Status** area (the operator-facing background-job health view), a **Members** area (member management), a **Dev** area (the tool console and future developer surfaces), a **Logs** area (operator-auditable activity logs, organized by a left submenu of log sources; see "Logs area with a left submenu and a detail dialog"), a **Config** area (operator-editable configuration; its first occupant is the discovery calibration console — see "Config area hosts the discovery calibration console"), and a **Data** area (the read-only data explorer over D1 and the R2 corpus — see the operator-data-explorer capability) — navigable by client-side routing so each surface has its own URL and a new surface is added as its own routed module rather than another card on a single page. The panel's **home** route (`/admin`) SHALL be the Status view; member management SHALL be reached at its own route (`/admin/members`), the tool console under `/admin/dev`, the logs under `/admin/logs` (with the selected log source as a sub-route, e.g. `/admin/logs/discovery`), configuration under `/admin/config`, and the data explorer under `/admin/data/*`, not at the panel root. Navigating between surfaces SHALL update the browser URL, and a deep link or refresh to a surface's URL SHALL load that surface directly.
 
 #### Scenario: Navigation updates the URL
 
-- **WHEN** the operator switches from one area to another (e.g. from Status to member management, the tool console, or the data explorer)
+- **WHEN** the operator switches from one area to another (e.g. from Status to member management, to the tool console, to the logs, or to config)
 - **THEN** the browser URL changes to that surface's route and the surface renders, without a full-page server reload
 
 #### Scenario: Home route shows the Status view
@@ -239,6 +239,16 @@ The admin SPA SHALL organize its surfaces into top-level areas — a **Status** 
 
 - **WHEN** the operator opens `/admin/dev/tools/<tool>` directly (or refreshes there)
 - **THEN** the Worker serves the SPA shell and the app routes to that tool's view
+
+#### Scenario: Deep link to a log
+
+- **WHEN** the operator opens `/admin/logs/discovery` directly (or refreshes there)
+- **THEN** the Worker serves the SPA shell and the app routes to the Logs area with the Discovery log selected
+
+#### Scenario: Deep link to config
+
+- **WHEN** the operator opens `/admin/config` directly (or refreshes there)
+- **THEN** the Worker serves the SPA shell and the app routes to the Config area
 
 #### Scenario: Deep link to a data view
 
@@ -317,4 +327,82 @@ The generated example SHALL be valid after stripping: submitting it unmodified S
 
 - **WHEN** the operator edits the argument input and then selects a different tool
 - **THEN** their edited text is preserved while that tool stays selected, and selecting another tool reseeds the input from the newly selected tool's schema
+
+### Requirement: Logs area with a left submenu and a detail dialog
+
+The admin SPA SHALL provide a top-level **Logs** area (a fourth area beside Status, Members, and Dev) for operator-auditable activity logs. The Logs area SHALL render a **left submenu** of log sources and, on the right, the entries for the selected source — the master/detail layout of the MCP-inspector tool console. Its first (and initially only) submenu item SHALL be **Discovery**, showing the background discovery sweep's per-candidate outcome log. The area SHALL be **extensible by adding a submenu item**, not by restructuring — a future log source becomes another entry in the left submenu. The Logs area and its submenu selection SHALL be client-routed (`/admin/logs` for the area, `/admin/logs/discovery` for the Discovery log) so a deep link or refresh loads the selected log directly. When an individual entry carries more than a row's worth of detail, the entry SHALL be expandable into a **dialog** showing its full detail (rather than inlining every field into the list).
+
+The Logs surfaces SHALL be modeled per the panel's data-modeling standard: the loaded entries SHALL be `RemoteData` (the four-state load), the selected submenu item SHALL be a custom type (not a stringly-typed route), and the open-dialog state SHALL be modeled so "a dialog is open for entry X" cannot contradict the loaded list.
+
+#### Scenario: Logs area shows the Discovery submenu and its entries
+
+- **WHEN** the operator opens the Logs area
+- **THEN** the left submenu lists **Discovery**, and selecting it shows the discovery sweep's log entries on the right
+
+#### Scenario: A log source is reachable by deep link
+
+- **WHEN** the operator opens `/admin/logs/discovery` directly (or refreshes there)
+- **THEN** the Worker serves the SPA shell and the app routes to the Logs area with the Discovery log selected
+
+#### Scenario: Entry detail opens in a dialog
+
+- **WHEN** the operator activates a discovery log entry that has expandable detail (e.g. an import's attribution, or a parked error's validation failure)
+- **THEN** the app opens a dialog showing that entry's full detail and the list stays intact behind it
+
+#### Scenario: A new log source is added as a submenu item
+
+- **WHEN** a future log source is introduced
+- **THEN** it appears as an additional left-submenu item under Logs without restructuring the area
+
+### Requirement: Discovery log is served cross-tenant under Access
+
+The admin surface SHALL expose a read endpoint (e.g. `GET /admin/api/logs/discovery`) returning the background discovery sweep's per-candidate outcome log — each entry's timestamp, source URL and title, discovery source, outcome (imported / skipped-duplicate / skipped-no-match / skipped-rejected-source / dietary-gated / parked-error), and outcome-specific detail (import slug + matched-member attribution, the matched corpus recipe for a duplicate, the validation failure for a parked error). The endpoint SHALL read the sweep's log (see the `discovery-sweep` capability) and SHALL present the group-wide log (the operator sees every member's attributions — the same cross-tenant operator reach the rest of `/admin` has). It SHALL be gated by Cloudflare Access exactly like the rest of `/admin*`, including the opt-in rule: when the Access configuration is unset, the endpoint SHALL respond `404`. The endpoint SHALL bound the number of entries returned (most-recent-first) so the response stays manageable.
+
+#### Scenario: Operator reads the discovery log
+
+- **WHEN** an Access-authenticated operator opens the Discovery log
+- **THEN** `GET /admin/api/logs/discovery` returns the recent sweep outcomes (imports with attribution, skips with reasons, parked errors), most-recent-first
+
+#### Scenario: Discovery log is disabled when the admin surface is
+
+- **WHEN** `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` is unset
+- **THEN** `GET /admin/api/logs/discovery` responds `404`, exposing no log
+
+#### Scenario: Log read is bounded
+
+- **WHEN** the discovery log contains more entries than the response cap
+- **THEN** the endpoint returns the most recent entries up to the cap, not the entire history
+
+### Requirement: Config area hosts the discovery calibration console
+
+The admin SPA SHALL provide a top-level **Config** area (routed at `/admin/config`) hosting the discovery calibration console: the sweep's tunable knobs (τ, triage threshold, δ, classify cap, rate cap) as a form, an **Analyze** action and a **Dry-run** action, and a results panel — laid out so the projected effect of the current knob values is visible on the **same screen** before the operator saves. Editing a knob and running Analyze/Dry-run SHALL NOT persist anything; only an explicit Save writes the config. The form SHALL show the projected effect (the Analyze/Dry-run results) before Save, and a value past a hard floor SHALL require an explicit confirmation step in the UI (mirroring the server-side guard). The surfaces SHALL be modeled per `admin/CLAUDE.md`: the loaded config and the Analyze/Dry-run results as `RemoteData`, and a dirty-vs-saved form state as a custom type (so "unsaved edits" cannot be confused with "saved").
+
+#### Scenario: Operator previews then saves a knob change
+
+- **WHEN** the operator opens `/admin/config`, changes τ, and runs Analyze
+- **THEN** the projected per-member match counts render without persisting anything, and the new τ is stored only when the operator explicitly Saves
+
+#### Scenario: A floor-breaching value requires confirmation in the UI
+
+- **WHEN** the operator drags τ below the hard floor and tries to Save
+- **THEN** the console requires an explicit confirmation before sending the write
+
+#### Scenario: Config area deep-links
+
+- **WHEN** the operator opens `/admin/config` directly (or refreshes there)
+- **THEN** the Worker serves the SPA shell and the app routes to the Config area
+
+### Requirement: Discovery calibration endpoints served cross-tenant under Access
+
+The admin surface SHALL expose, gated by Cloudflare Access exactly like the rest of `/admin*` (404 when Access is unconfigured): `GET /admin/api/discovery/config` (the current merged knobs), `PUT /admin/api/discovery/config` (write the operator overrides, with the footgun-floor guard and range validation enforced server-side), `POST /admin/api/discovery/analyze` (the cheap no-AI δ/τ analysis at given knob values), and `POST /admin/api/discovery/dry-run` (the no-write full-pipeline preview). These are operator/cross-tenant operations (they read all members to set a global knob) and SHALL NOT be exposed as MCP tools.
+
+#### Scenario: Analyze and dry-run are reachable only under Access
+
+- **WHEN** Access is configured and an authenticated operator calls `POST /admin/api/discovery/analyze`
+- **THEN** the analysis is returned; and when Access is unconfigured the endpoint responds `404` like the rest of `/admin*`
+
+#### Scenario: A config write past a floor is rejected without confirm
+
+- **WHEN** `PUT /admin/api/discovery/config` sends a below-floor τ without the explicit-confirm flag
+- **THEN** the endpoint returns a structured error and writes nothing
 
