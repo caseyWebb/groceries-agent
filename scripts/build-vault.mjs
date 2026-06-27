@@ -89,13 +89,16 @@ export function vocabValues(key, vocab) {
 // Deterministic 6-char base36 field id (FNV-1a over the field name). Metadata Menu
 // needs a per-field id; deriving it from the name keeps the built fileClass
 // byte-identical across rebuilds (a random id would defeat the --check drift gate).
+// Reduce into the 6-char base36 space (36**6 ≈ 2.18e9) so the value always encodes
+// to exactly 6 chars — never tail-truncating a 7-char hash (which would silently
+// discard a digit of keyspace and make future field names more collision-prone).
 export function fieldId(name) {
   let h = 0x811c9dc5;
   for (let i = 0; i < name.length; i++) {
     h ^= name.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return h.toString(36).padStart(6, "0").slice(0, 6);
+  return (h % 36 ** 6).toString(36).padStart(6, "0");
 }
 
 // Minimal YAML scalar: quote only when a bare token would be misread (empty, leading
@@ -314,7 +317,7 @@ async function writeOut(files, outRoot, { fetchPlugins }) {
   }
   console.log(
     `vault built: ${files.size} file(s) → ${path.relative(REPO_ROOT, outRoot) || outRoot}` +
-      (fetchPlugins ? " (with vendored plugins)" : " (config only; run --fetch-plugins to vendor binaries)"),
+      (fetchPlugins ? " (with vendored plugins)" : " (did not re-fetch plugin binaries; use --fetch-plugins to (re)vendor them)"),
   );
 }
 

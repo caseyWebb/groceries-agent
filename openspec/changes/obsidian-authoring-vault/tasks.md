@@ -1,7 +1,7 @@
 # Tasks
 
 > Depends on `r2-recipe-corpus` for the sync target; composes with
-> `ai-derived-recipe-metadata` (the vault schema omits derived fields).
+> `derived-recipe-metadata` (the vault schema omits derived fields).
 
 ## 1. Vault source + generator
 - [x] 1.1 `vault-template/`: authored source — the `.obsidian/` config template, a Metadata Menu `fileClass` for `recipe`, a Templater/QuickAdd "New recipe" template (human-authored fields + body scaffold, no `description`), a "How to add a recipe" help note, CSS snippet(s).

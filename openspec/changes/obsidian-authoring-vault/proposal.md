@@ -10,7 +10,7 @@ Critically, the dropdown options must come from the **same source of truth** as 
 
 - **A new `vault-template/` source tree + `scripts/build-vault.mjs`** (deterministic, `--check`) that emits a committed, distributable Obsidian vault with `.obsidian/` preconfigured:
   - **Metadata Menu** `fileClass` for `recipe`: each vocab-bound field a `Select`/`Multi` whose options are **generated from `src/vocab.js`** (`PROTEIN_VOCAB`, `CUISINE_VOCAB`, `SEASON_VOCAB`, `EQUIPMENT_VOCAB`, the open `course` set);
-  - a **Templater/QuickAdd** "New recipe" command inserting the human-authored frontmatter skeleton + body scaffold (only the fields a human authors — derived fields like `description` are deliberately **absent**, per `ai-derived-recipe-metadata`);
+  - a **Templater/QuickAdd** "New recipe" command inserting the human-authored frontmatter skeleton + body scaffold (only the fields a human authors — derived fields like `description` are deliberately **absent**, per `derived-recipe-metadata`);
   - a **help note** ("How to add a recipe") and CSS snippets for the editing surface;
   - bundled (vendored) plugins so the vault works on open.
 - **`vocab.js` is the single source** for the dropdown options; CI runs `build-vault --check` to fail on drift, so the vault's dropdowns can never disagree with the server validator.
@@ -26,5 +26,5 @@ Critically, the dropdown options must come from the **same source of truth** as 
 
 - **New (code repo):** `vault-template/**` (authored source: the `.obsidian/` config template, the Metadata Menu fileClass template, the recipe template, the help note, CSS), `scripts/build-vault.mjs`, the committed built vault output, an `aubr` script (`build:vault`), a build-tooling test.
 - **Edited:** CI runs `build-vault --check` (drift gate, mirroring the plugin/admin build checks); `docs/SELF_HOSTING.md` gains an "authoring in Obsidian" section; `docs/ARCHITECTURE.md` notes the third generated artifact and the client-side-validation role.
-- **Dependencies/relationships:** requires `r2-recipe-corpus` (the sync target) to be useful; composes with `ai-derived-recipe-metadata` (the vault schema **omits** derived fields — they are D1-owned — and, if a later change adds AI facet *proposal*, the dropdowns become the human *confirmation/correction* surface, especially for the safety field `dietary`).
+- **Dependencies/relationships:** requires `r2-recipe-corpus` (the sync target) to be useful; composes with `derived-recipe-metadata` (the vault schema **omits** derived fields — they are D1-owned — and, if a later change adds AI facet *proposal*, the dropdowns become the human *confirmation/correction* surface, especially for the safety field `dietary`).
 - **Out of scope:** a non-Obsidian web authoring UI; AI facet proposal/repair (a separate change); per-author R2 credential provisioning beyond documenting it.

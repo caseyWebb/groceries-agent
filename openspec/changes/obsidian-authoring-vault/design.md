@@ -9,7 +9,7 @@ Obsidian native Properties (1.4+) have typed properties (text/list/number/checkb
 **Goals**
 - A turnkey, shippable Obsidian vault that makes corpus authoring easy and **valid-by-construction** for vocab-bound fields.
 - Dropdown options generated from `src/vocab.js` (single source of truth), with a `--check` drift gate.
-- A vault schema that contains **only human-authored fields** — derived fields (`description`, and any future derived field) are absent, per the placement rule in `ai-derived-recipe-metadata`.
+- A vault schema that contains **only human-authored fields** — derived fields (`description`, and any future derived field) are absent, per the placement rule in `derived-recipe-metadata`.
 
 **Non-Goals**
 - A friend-group-wide tool — this is for the few corpus authors. Friends read via the agent/cookbook.
@@ -23,7 +23,7 @@ Obsidian native Properties (1.4+) have typed properties (text/list/number/checkb
 
 2. **Generate the vault from `vocab.js`; never hand-maintain options.** `build-vault.mjs` reads the vocab modules and emits the Metadata Menu fileClass options, so the dropdowns and the server validator share one source. CI `build-vault --check` fails on drift — the exact discipline `plugin/` and `admin/dist/` already use. This is the load-bearing decision: it is what makes client-side and server-side validation provably agree.
 
-3. **The vault schema is human-authored fields only.** It exposes `title`, `ingredients_key`, `course`, `protein`, `cuisine`, `time_total`, `source`, `dietary`, `season`, `tags`, `pairs_with`, `perishable_ingredients`, `requires_equipment`, `side_search_terms` — and **omits** `description` (derived, D1-owned per `ai-derived-recipe-metadata`). A derived field has no authoring control because no human authors it. This keeps the two changes coherent: change 1 decides *what is derived*; this change simply doesn't offer those fields.
+3. **The vault schema is human-authored fields only.** It exposes `title`, `ingredients_key`, `course`, `protein`, `cuisine`, `time_total`, `source`, `dietary`, `season`, `tags`, `pairs_with`, `perishable_ingredients`, `requires_equipment`, `side_search_terms` — and **omits** `description` (derived, D1-owned per `derived-recipe-metadata`). A derived field has no authoring control because no human authors it. This keeps the two coherent: the `derived-recipe-metadata` capability decides *what is derived*; this change simply doesn't offer those fields.
 
 4. **Committed built artifact, not a build step for the author.** The author downloads a ready vault; they need no Node/Elm/build toolchain. Treat the built vault like `plugin/`/`admin/dist/` — generated, committed, never hand-edited; the authored source is `vault-template/`.
 
