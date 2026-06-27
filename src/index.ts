@@ -16,7 +16,7 @@ import { handleAuthorize } from "./authorize.js";
 import { handleInboundEmail, rejectReasonFor, type InboundMessage } from "./email.js";
 import { buildWarmDeps, runWarmJob } from "./flyer-warm.js";
 import { buildEmbedDeps, runEmbedJob } from "./recipe-embeddings.js";
-import { handleHealthRequest, writeJobHealth, notifyFailure } from "./health.js";
+import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, notifyFailure } from "./health.js";
 import { handleAdmin } from "./admin.js";
 import type { KvStore } from "./kroger-user.js";
 
@@ -57,6 +57,7 @@ const defaultHandler = {
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname.startsWith("/oauth/")) return handleOAuth(env, url);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
+    if (url.pathname === "/health.svg") return handleHealthSvgRequest(env);
     if (url.pathname === "/health") return handleHealthRequest(env);
     return new Response("Not found", { status: 404 });
   },

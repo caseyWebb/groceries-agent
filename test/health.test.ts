@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   buildHealthPayload,
   handleHealthRequest,
+  handleHealthSvgRequest,
   notifyFailure,
   probeD1,
   readJobHealth,
+  renderHealthSvg,
   writeJobHealth,
   type JobHealth,
 } from "../src/health.js";
@@ -155,6 +157,74 @@ describe("handleHealthRequest", () => {
     const text = await res.text();
     // The summary we stored is gate-outcome only; no address/tenant id should appear.
     expect(text).not.toMatch(/@/);
+  });
+});
+
+describe("handleHealthSvgRequest", () => {
+  it("200s with an SVG card listing every job + d1 when healthy (open, no token)", async () => {
+    const kv = fakeKv();
+    await writeJobHealth(kv, "flyer-warm", rec(true));
+    await writeJobHealth(kv, "recipe-embed", rec(true));
+    await writeJobHealth(kv, "email", rec(true));
+    const e = { KROGER_KV: kv, DB: fakeD1() } as unknown as Env;
+    const res = await handleHealthSvgRequest(e);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/image\/svg\+xml/);
+    expect(res.headers.get("cache-control")).toMatch(/max-age=\d+/);
+    const body = await res.text();
+    expect(body.startsWith("<svg")).toBe(true);
+    for (const name of ["flyer-warm", "recipe-embed", "email", "d1"]) expect(body).toContain(name);
+    expect(body).toContain("healthy");
+    expect(body).not.toContain("#d29922"); // no amber when nothing is never-run
+  });
+
+  it("still 200s (never 503) when degraded, showing the degraded headline", async () => {
+    const kv = fakeKv();
+    await writeJobHealth(kv, "flyer-warm", rec(false, { error: "boom" }));
+    const e = { KROGER_KV: kv, DB: fakeD1() } as unknown as Env;
+    const res = await handleHealthSvgRequest(e);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("degraded");
+  });
+
+  it("renders a never-run job in the distinct amber/pending style (not as broken)", async () => {
+    const kv = fakeKv();
+    await writeJobHealth(kv, "flyer-warm", rec(true)); // recipe-embed + email never run
+    const e = { KROGER_KV: kv, DB: fakeD1() } as unknown as Env;
+    const res = await handleHealthSvgRequest(e);
+    const body = await res.text();
+    expect(res.status).toBe(200);
+    expect(body).toContain("#d29922"); // amber present for the never-run rows
+    expect(body).toContain("never");
+    expect(body).toContain("healthy"); // a never-run job does NOT make the card read degraded
+  });
+
+  it("renders only aggregate data (no per-tenant identifiers)", async () => {
+    const kv = fakeKv();
+    await writeJobHealth(kv, "email", rec(true, { accepted: true, reason: "sender_dkim", written: true }));
+    const e = { KROGER_KV: kv, DB: fakeD1() } as unknown as Env;
+    const res = await handleHealthSvgRequest(e);
+    const body = await res.text();
+    expect(body).not.toMatch(/@/); // no email addresses
+    expect(body).not.toContain("sender_dkim"); // summary fields are never rendered
+  });
+});
+
+describe("renderHealthSvg", () => {
+  it("formats relative last-run ages and reflects a degraded headline", () => {
+    const now = 1_700_000_000_000;
+    const svg = renderHealthSvg({
+      ok: false,
+      generated_at: now,
+      jobs: [
+        { name: "flyer-warm", ok: true, last_run_at: now - 2 * 3_600_000 },
+        { name: "email", ok: false, last_run_at: now - 30_000 },
+      ],
+      d1: { ok: true },
+    });
+    expect(svg).toContain("2h ago");
+    expect(svg).toContain("just now");
+    expect(svg).toContain("degraded");
   });
 });
 

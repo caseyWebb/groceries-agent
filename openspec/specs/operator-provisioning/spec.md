@@ -123,3 +123,46 @@ The operator's `CLOUDFLARE_API_TOKEN` SHALL carry D1 edit permission in addition
 - **WHEN** the config merge runs
 - **THEN** the maintainer's `database_id` from the code repo's `wrangler.jsonc` is stripped, and only the operator's own id (or none → auto-provision) is used
 
+### Requirement: Deploy optionally stamps the README health badge
+
+When the operator has set the `WORKER_HOST` repo variable, the deploy SHALL render a health-badge markdown snippet pointing at the Worker's open `https://<WORKER_HOST>/health.svg` card (no token — `/health.svg` is open and tenant-clean, so the badge is a plain anonymously-fetchable public URL) and SHALL maintain it in the data-repo README inside an **idempotent marker block**. The deploy SHALL replace the content between existing badge markers when present, and SHALL otherwise insert the marker block immediately after the README's first heading (so a repo created from an older template gains the badge without a manual paste). `WORKER_HOST` SHALL be passed into the reusable deploy workflow by the thin caller (mirroring how the plugin build passes its connector host), not resolved by guessing. When `WORKER_HOST` is absent, the deploy SHALL skip stamping and still succeed (the badge is opt-in).
+
+#### Scenario: Badge is stamped when configured
+
+- **WHEN** `WORKER_HOST` is set and the deploy can write back to the repo
+- **THEN** the README contains the marker block with the correct open `/health.svg` URL
+
+#### Scenario: Re-stamp is idempotent
+
+- **WHEN** the badge markers already exist and the deploy runs again with an unchanged URL
+- **THEN** only the content between the markers is updated and the README is otherwise unchanged
+
+#### Scenario: Existing repo gains the badge
+
+- **WHEN** the README has no badge markers
+- **THEN** the deploy inserts the marker block immediately after the first heading
+
+#### Scenario: Skipped when not opted in
+
+- **WHEN** `WORKER_HOST` is unset
+- **THEN** the deploy does not modify the README and still completes successfully
+
+### Requirement: Pin-back is optional with a manual fallback
+
+Persisting deploy-time values back into the operator's data repo — the README health badge **and** the auto-provisioned KV/D1 ids — SHALL be optional and SHALL NOT be required for a successful deploy. When the deploy lacks `contents: write` (or the operator prefers manual setup), it SHALL NOT fail; it SHALL instead surface what the operator needs to apply by hand. In particular, when `WORKER_HOST` is set, the deploy SHALL **always** write the ready-to-paste health-badge snippet to the workflow job summary, regardless of whether it could commit the change. An operator SHALL be able to run the deploy without granting `contents: write` and complete badge setup (and id pinning) manually.
+
+#### Scenario: Deploy without write permission still succeeds
+
+- **WHEN** the deploy cannot push back because the caller did not grant `contents: write`
+- **THEN** the deploy completes successfully and warns, rather than failing
+
+#### Scenario: The badge snippet is always surfaced
+
+- **WHEN** the deploy runs with `WORKER_HOST` set
+- **THEN** the ready-to-paste badge snippet appears in the job summary whether or not it was committed back
+
+#### Scenario: Manual setup is supported end to end
+
+- **WHEN** an operator declines `contents: write` and pastes the badge snippet from the job summary into their README once
+- **THEN** the badge renders and keeps working, because the token and host are stable (no recurring pin-back needed)
+

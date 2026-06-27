@@ -1,0 +1,61 @@
+// Tests for scripts/stamp-readme-badge.mjs — the deploy's README health-badge stamper.
+// Covers the idempotent marker replace, the insert-after-first-heading path for repos
+// created from an older template, and the (tokenless, open) badge URL shape.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { badgeSnippet, stampReadmeBadge } from "../scripts/stamp-readme-badge.mjs";
+
+const START = "<!-- health-badge:start -->";
+const END = "<!-- health-badge:end -->";
+
+test("badgeSnippet builds an open /health.svg URL, normalizing the host", () => {
+  assert.equal(
+    badgeSnippet("grocery-mcp.me.workers.dev"),
+    "![grocery-mcp health](https://grocery-mcp.me.workers.dev/health.svg)",
+  );
+  // Tolerates a scheme / trailing slash on the host.
+  assert.equal(
+    badgeSnippet("https://grocery.example.com/"),
+    "![grocery-mcp health](https://grocery.example.com/health.svg)",
+  );
+});
+
+test("stampReadmeBadge inserts the block after the first heading when markers are absent", () => {
+  const readme = "# My data repo\n\nIntro text.\n";
+  const out = stampReadmeBadge(readme, "![b](u)");
+  const lines = out.split("\n");
+  assert.equal(lines[0], "# My data repo");
+  assert.ok(out.includes(`${START}\n![b](u)\n${END}`));
+  // The block sits above the intro, after the heading.
+  assert.ok(out.indexOf(START) < out.indexOf("Intro text."));
+  assert.ok(out.indexOf("# My data repo") < out.indexOf(START));
+});
+
+test("stampReadmeBadge replaces between existing markers and is idempotent", () => {
+  const seeded = stampReadmeBadge("# T\n\nbody\n", badgeSnippet("h1.example.com"));
+  const updated = stampReadmeBadge(seeded, badgeSnippet("h2.example.com"));
+  // Only one marker block ever exists, and it now points at the new host.
+  assert.equal(updated.match(new RegExp(START, "g")).length, 1);
+  assert.ok(updated.includes("h2.example.com"));
+  assert.ok(!updated.includes("h1.example.com"));
+  // Re-stamping with the same snippet changes nothing (true no-op).
+  assert.equal(stampReadmeBadge(updated, badgeSnippet("h2.example.com")), updated);
+});
+
+test("stampReadmeBadge prepends when the README has no heading", () => {
+  const out = stampReadmeBadge("just text, no heading\n", "![b](u)");
+  assert.ok(out.startsWith(`${START}\n![b](u)\n${END}`));
+  assert.ok(out.includes("just text, no heading"));
+});
+
+test("stampReadmeBadge handles an empty README (missing-file path → fresh block)", () => {
+  // The CLI maps a missing README to "" before calling this, so empty must not throw.
+  const out = stampReadmeBadge("", "![b](u)");
+  assert.ok(out.startsWith(`${START}\n![b](u)\n${END}`));
+});
+
+test("stampReadmeBadge leaves a $-bearing snippet literal (no regex replacement codes)", () => {
+  const seeded = stampReadmeBadge("# T\n\nbody\n", "![b](u1)");
+  const out = stampReadmeBadge(seeded, "![b]($&$1$$)");
+  assert.ok(out.includes("![b]($&$1$$)"));
+});
