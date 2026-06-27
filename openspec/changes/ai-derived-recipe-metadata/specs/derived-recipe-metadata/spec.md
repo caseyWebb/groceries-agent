@@ -16,7 +16,7 @@ A recipe field that is **purely derived** from the recipe's human-authored conte
 
 ### Requirement: Derived fields regenerate on a content-change gate
 
-The Worker SHALL detect changes to a recipe's human-authored content via a content hash and SHALL regenerate the recipe's derived fields when that hash changes, on the scheduled reconcile. The content hash SHALL cover only human-authored input (the recipe body and the authored frontmatter the field is derived from) and SHALL NOT include any derived field, so that regenerating a derived field cannot itself trigger further regeneration. A steady corpus (no content changes) SHALL perform no regeneration work.
+The Worker SHALL detect changes to a recipe's human-authored content via a content hash and SHALL regenerate the recipe's derived fields when that hash changes, on the scheduled reconcile. The content hash SHALL cover only the authored frontmatter facets the description is derived from (title, ingredients_key, course, protein, cuisine, time_total, dietary, season — not the recipe body; the reconcile stays pure D1 + AI and does not read the body) and SHALL NOT include any derived field, so that regenerating a derived field cannot itself trigger further regeneration. A steady corpus (no content changes) SHALL perform no regeneration work.
 
 #### Scenario: Editing recipe content regenerates the description
 
