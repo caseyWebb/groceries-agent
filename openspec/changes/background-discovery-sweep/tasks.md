@@ -66,9 +66,10 @@
 - [x] 8.3 `aubr build:plugin` rebuilt the bundle (v0.1.127); regenerated `plugin/` carries `list_new_for_me`, no retired tools. Full suite 739 green.
 
 ## 9. Docs (lockstep)
-- [ ] 9.1 `docs/ARCHITECTURE.md`: determinism boundary (capture relocates to the cron); new §discovery-sweep beside the other crons; "three crons" → "four"; rewrite the Discovery and disposition section; admin §gains the Logs area.
-- [ ] 9.2 `docs/TOOLS.md`: remove `fetch_rss_discoveries`/`read_discovery_inbox`; add `list_new_for_me` + `read_discovery_errors`; reframe `reject_discovery`.
-- [ ] 9.3 `docs/SCHEMAS.md`: `discovered_at` column; attribution / sweep-log / taste-vector tables; `last_planned_at`.
+- [x] 9.1 `docs/ARCHITECTURE.md`: determinism boundary now names the cron classifier (mistral-small) + capture-on-a-schedule; new "discovery sweep" scheduled-capture subsection; "three crons" → four everywhere; "Discovery and disposition" rewritten (autonomous, RSS+email feed it, agent reads `list_new_for_me`); operator-admin gains the Logs area.
+- [x] 9.2 `docs/TOOLS.md`: removed `fetch_rss_discoveries`/`read_discovery_inbox`; added `list_new_for_me` + `read_discovery_errors`; reframed `reject_discovery` (source suppression); `update_feeds`/`update_meal_plan` notes; the "no scheduled triggers" line corrected. (Tool-desc nit reconciled: `read_discovery_errors` row shape now matches the actual return.)
+- [x] 9.3 `docs/SCHEMAS.md`: `recipes.discovered_at` column + index; new `taste_derived`, `discovery_matches`, `discovery_log` tables; `profile.last_planned_at`; feeds/discovery_candidates reframed as sweep-driven; health-job list updated.
+- [x] 9.4 `docs/SELF_HOSTING.md` (beyond the original scope): step-8 newsletter flow rewritten — the sweep drains the inbox + auto-imports; members read via `list_new_for_me`.
 
 ## 10. Verify
 - [x] 10.1 `aubr typecheck` clean, `aubr test` 739 passing (+47 new), `aubr test:tooling` 66 passing — all green.

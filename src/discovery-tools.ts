@@ -227,7 +227,7 @@ export function registerDiscoveryTools(
     "read_discovery_errors",
     {
       description:
-        "Read the SHARED discovery-sweep error surface: candidates the background sweep could not classify into a valid recipe after retries, parked for an operator/author to look at (mirrors read_reconcile_errors). Each carries { url, title, source, detail, created_at }. An empty list means the sweep is importing cleanly. Read-only; does not retry or import.",
+        "Read the SHARED discovery-sweep error surface: candidates the background sweep could not classify into a valid recipe after retries, parked for an operator/author to look at (mirrors read_reconcile_errors). Each carries { url, title, source, outcome, slug, detail, created_at } (outcome is 'error'; detail holds the validation failure). An empty list means the sweep is importing cleanly. Read-only; does not retry or import.",
       inputSchema: {},
     },
     () => runTool(async () => ({ errors: await readDiscoveryErrors(env) })),
