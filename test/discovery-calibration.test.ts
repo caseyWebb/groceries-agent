@@ -158,6 +158,7 @@ function makeFakeDeps(opts: {
     loadMembers: async () => opts.members,
     loadCorpusVectors: async () => opts.corpus ?? [],
     embed: async (text) => vec(text),
+    embedMany: async (texts) => texts.map(vec),
     acquireContent: async (c) => ({
       title: c.title,
       ingredients: ["1 thing"],
