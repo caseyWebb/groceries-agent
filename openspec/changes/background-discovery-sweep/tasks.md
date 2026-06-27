@@ -24,8 +24,8 @@
 - [x] 1.6 Sweep-owned tables are siblings of `recipes` (projection can't clobber them); `discovered_at` is the lone projection-owned promotion. Local `wrangler d1 migrations apply DB --local` green; projection + index tests updated and passing (20).
 
 ## 2. env.AI helpers
-- [ ] 2.1 `src/discovery-classify.ts` (or beside `description.ts`): `classifyRecipe(env, pageOrBody) → frontmatter`, structured-error mapped, output run through `validateFile` before use; retry-with-corrective-reprompt budget.
-- [ ] 2.2 Taste-vector derivation: embed `profile.taste` via `env.AI`, `content_hash`-gated like `recipe_derived`; a reconcile/sweep pass that refreshes on taste change and is a no-op in steady state.
+- [x] 2.1 `src/discovery-classify.ts`: `classifyRecipe(env, input, source)` ports the spike-validated prompt (vocab from `src/vocab.js`, Run-2 few-shot/guardrails), validates each output against `validateRecipeContract`, and retries with a corrective reprompt (echoing the validator's complaints) up to `CLASSIFY_MAX_RETRIES`, then throws structured `validation_failed` (the sweep parks it). Handles object-or-string AI responses; AI failure → `storage_error`. Unit-tested (`test/discovery-classify.test.ts`): valid / string-with-fences / retry-then-succeed / park / AI-failure / no-JSON-retry.
+- [x] 2.2 `src/taste-vector.ts`: `reconcileTasteVectors` (injected `TasteDeps`) embeds `profile.taste` via `env.AI`, `tasteHash`-gated (steady state ≈ 0), prunes members with no taste text; `readTasteVectors` is the matcher's read. Unit-tested (`test/taste-vector.test.ts`): new / steady / changed / prune / no-text.
 
 ## 3. The sweep core (`src/discovery-sweep.ts`)
 - [ ] 3.1 Sweep core over injected `DiscoveryDeps` (mirror `flyer-warm.ts`'s testable shape): cursor + persisted plan, bounded batch on the external fetch leg AND per-tick caps on the `env.AI` leg, idempotent publish, advance-after-publish, refresh gate.
