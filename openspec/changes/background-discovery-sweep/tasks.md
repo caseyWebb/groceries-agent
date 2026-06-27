@@ -71,6 +71,6 @@
 - [ ] 9.3 `docs/SCHEMAS.md`: `discovered_at` column; attribution / sweep-log / taste-vector tables; `last_planned_at`.
 
 ## 10. Verify
-- [ ] 10.1 `aubr typecheck`, `aubr test`, `aubr test:tooling` green.
-- [ ] 10.2 `openspec validate background-discovery-sweep --strict` passes.
-- [ ] 10.3 (Needs live `env.AI` + corpus) end-to-end: seed feeds/inbox → run the sweep → matched recipe imports with attribution + a log entry → `list_new_for_me` surfaces it for the matched member only → admin Logs/Discovery shows the outcome; a near-dup and a no-match are skipped-and-logged; a malformed candidate parks. Deferred to a deployed Worker.
+- [x] 10.1 `aubr typecheck` clean, `aubr test` 739 passing (+47 new), `aubr test:tooling` 66 passing — all green.
+- [x] 10.2 `openspec validate background-discovery-sweep --strict` passes.
+- [ ] 10.3 (Needs live `env.AI` + corpus) end-to-end: seed feeds/inbox → run the sweep → matched recipe imports with attribution + a log entry → `list_new_for_me` surfaces it for the matched member only → admin Logs/Discovery shows the outcome; a near-dup and a no-match are skipped-and-logged; a malformed candidate parks. **Deferred to a deployed Worker** (the spike proved the classifier live; this is the full-pipeline run).
