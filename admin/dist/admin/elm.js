@@ -8871,7 +8871,7 @@ var $author$project$Dev$ToolConsole$viewBody = function (model) {
 								]),
 							_List_fromArray(
 								[
-									$elm$html$Html$text('No members yet — onboard one under the Admin area first.')
+									$elm$html$Html$text('No members yet — onboard one on the Members tab first.')
 								]));
 					} else {
 						break _v1$3;
@@ -9176,7 +9176,8 @@ var $author$project$Status$summaryBlock = function (pairs) {
 		A2($elm$core$List$map, $author$project$Status$summaryItem, pairs));
 };
 var $author$project$Status$viewAdminRow = function (posture) {
-	var detail = (($author$project$Status$gateState(posture) === 1) && posture.a2) ? _List_fromArray(
+	var gs = $author$project$Status$gateState(posture);
+	var detail = ((gs === 1) && posture.a2) ? _List_fromArray(
 		[
 			$author$project$Status$summaryBlock(
 			_List_fromArray(
@@ -9184,8 +9185,7 @@ var $author$project$Status$viewAdminRow = function (posture) {
 					_Utils_Tuple2('email allowlist', 'on')
 				]))
 		]) : _List_Nil;
-	var _v0 = $author$project$Status$gateStateClassWord(
-		$author$project$Status$gateState(posture));
+	var _v0 = $author$project$Status$gateStateClassWord(gs);
 	var cls = _v0.a;
 	var word = _v0.b;
 	return A5($author$project$Status$statusRow, 'admin gate', cls, word, '', detail);

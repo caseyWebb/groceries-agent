@@ -346,11 +346,14 @@ viewD1Row ok =
 viewAdminRow : AdminPosture -> Html Msg
 viewAdminRow posture =
     let
+        gs =
+            gateState posture
+
         ( cls, word ) =
-            gateStateClassWord (gateState posture)
+            gateStateClassWord gs
 
         detail =
-            if gateState posture == Gated && posture.emailAllowlist then
+            if gs == Gated && posture.emailAllowlist then
                 [ summaryBlock [ ( "email allowlist", "on" ) ] ]
 
             else
