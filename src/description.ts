@@ -7,7 +7,7 @@
 // table, never in frontmatter.
 //
 // Prompt + model are the spike's conclusion (see the change's design.md, Runs 1-3):
-// mistral-small-24b, an anti-cliché one-sentence prompt with 3 few-shot exemplars, plus
+// mistral-small-3.1-24b, an anti-cliché one-sentence prompt with 3 few-shot exemplars, plus
 // the two guardrails (low-signal → stay general, don't invent; many-ingredient → name
 // the single distinctive element). Same `env.AI` binding and structured-error discipline
 // as src/embedding.ts.
