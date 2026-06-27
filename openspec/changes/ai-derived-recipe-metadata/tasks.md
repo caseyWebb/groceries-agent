@@ -30,7 +30,7 @@
 - [ ] 5.3 `docs/TOOLS.md`: update `create_recipe`/`update_recipe` (no description arg) and `read_recipe` (returns derived description).
 
 ## 6. Quality eval
-- [ ] 6.1 Held-out eval: compare candidate Workers AI models' descriptions against current human descriptions (a small rubric + spot embedding-recall check). Pick the model; record the choice. Cheap to re-run on a model upgrade.
+- [ ] 6.1 Held-out eval: compare candidate Workers AI models' descriptions against current human descriptions (a small rubric + spot embedding-recall check). **Start from the spike's conclusion** (design Run 1–3): lead candidate `mistral-small-3.1-24b-instruct`, the anti-cliché + 3-shot prompt, temp ≈ 0.3, with the two guardrails (low-signal → stay general; overloaded → one distinctive trait). **Include deliberately sparse recipes** — that is where the smaller models hallucinate (the 8B invented vegetables under near-zero signal). Pick the model; record the choice. Cheap to re-run on a model upgrade.
 
 ## 7. Verify
 - [ ] 7.1 `aubr typecheck`, `aubr test`, `aubr test:tooling` green.
