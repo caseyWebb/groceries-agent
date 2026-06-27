@@ -1,9 +1,5 @@
-# cloudflare-data-platform Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Defines the Cloudflare D1 storage tier and its access discipline: D1 (`env.DB`) is the system of record for all domain and operational data, tools reach it only through the `src/db.ts` data-access layer (structured errors, never throws), and the schema is evolved by a single schema-only migration track (`migrations/d1/*.sql` applied by `wrangler d1 migrations apply`). This is the storage boundary the `d1-*` slices migrated onto.
-## Requirements
 ### Requirement: D1 is the system of record for domain data
 
 The Worker SHALL bind a Cloudflare D1 database as `DB` (`env.DB`). D1 is the storage tier for domain and operational data — data that is queried, related, admin-editable, or requires read-after-write consistency. The three-tier boundary is:
@@ -34,20 +30,6 @@ Authored markdown SHALL NOT be stored in D1 — D1 is the relational/derived tie
 - **WHEN** a recipe or guidance document is created or edited
 - **THEN** it is persisted as a markdown object in R2 (editable by a file-based tool), and only its derived projection (the index) is written to D1
 
-### Requirement: Tools access D1 only through the data-access layer
-
-Worker tools SHALL access D1 exclusively through `src/db.ts`, never the raw `env.DB` API. The layer SHALL expose prepared-statement helpers (`first`, `all`, `run`) and a transactional `batch` (plus `prepare` for building batched statements), and SHALL map D1 failures to structured `ToolError`s (`storage_error`) rather than throwing — consistent with the repo's "tools return structured errors, not throws" rule.
-
-#### Scenario: A query failure becomes a structured error
-
-- **WHEN** a D1 statement fails (e.g. constraint violation, malformed SQL)
-- **THEN** the access layer returns/raises a structured `ToolError` (`storage_error`), and no raw D1 exception escapes to the tool surface
-
-#### Scenario: Multi-row writes are transactional
-
-- **WHEN** a tool applies a multi-row write (e.g. a meal-plan upsert plus a cooking-log insert)
-- **THEN** the statements are committed together through the layer's `batch`, so a partial failure leaves no half-applied state
-
 ### Requirement: Schema-only migration track
 
 D1 schema changes SHALL be applied by Cloudflare-native migrations: declarative SQL files under `migrations/d1/*.sql`, applied by `wrangler d1 migrations apply DB` (`--local` to seed the dev SQLite, `--remote` on deploy), and tracked in D1's own `d1_migrations` table (created automatically on first apply). This SHALL be the only standing migration track — a schema change is a `.sql` file under `migrations/d1/`; there is no other migration mechanism.
@@ -68,4 +50,3 @@ D1 schema changes SHALL be applied by Cloudflare-native migrations: declarative 
 
 - **WHEN** the recipe corpus changes in R2
 - **THEN** the Worker reconcile projects the updated index into D1, and no CI script writes to D1
-

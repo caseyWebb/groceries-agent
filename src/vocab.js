@@ -1,12 +1,11 @@
 // Single source of truth for the recipe controlled vocabularies (variety +
-// makeability dimensions). Imported by BOTH the Worker write-time validator
-// (src/validate.ts, src/kitchen.ts) and the Node index-build validator
-// (scripts/build-indexes.mjs), so the write-time gate and the build-time gate
-// can never disagree about what a legal value is.
+// makeability dimensions). Imported by the Worker write-time validator
+// (src/validate.ts, src/kitchen.ts) and the recipe-index reconcile
+// (src/recipe-projection.ts, via src/recipe-contract.js), so the write-time gate and the
+// reconcile gate can never disagree about what a legal value is.
 //
-// Plain JS (not .ts) on purpose: scripts/build-indexes.mjs runs UNCOMPILED under
-// node, so it cannot import a .ts module — but it can import this .js at runtime.
-// src/vocab.d.ts gives the TypeScript side (Worker + vitest + tsc) its types.
+// Plain JS (not .ts) with a src/vocab.d.ts sidecar that gives the TypeScript side
+// (Worker + vitest + tsc) its types — kept JS as a single shared no-compile module.
 //
 // Coarse buckets by design (`fish` not `salmon`, `shellfish` not `shrimp`) so
 // variety reasoning stays reliable. Extending a vocabulary is a deliberate edit

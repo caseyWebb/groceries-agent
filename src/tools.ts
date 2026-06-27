@@ -9,9 +9,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import type { Tenant } from "./tenant.js";
 import { directoryFromEnv } from "./tenant.js";
-import { createGitHubClient, GitHubError } from "./github.js";
-import { createInstallationAuth } from "./github-app.js";
-import { readFile } from "./gh-read.js";
+import { createR2CorpusStore, readCorpusFile } from "./corpus-store.js";
 import { parseMarkdown } from "./parse.js";
 import { readAliases, readSkuCache } from "./corpus-db.js";
 import { ToolError, runTool } from "./errors.js";
@@ -24,6 +22,8 @@ import { registerStoreTools } from "./stores-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
+import { readReconcileErrors } from "./recipe-projection.js";
+import { recordBugReport } from "./bug-reports.js";
 import { embedTexts } from "./embedding.js";
 import {
   rankCandidates,
@@ -154,20 +154,14 @@ function productRow(c: KrogerCandidate): Record<string, unknown> {
   };
 }
 
-export function buildServer(env: Env, tenant: Tenant): McpServer {
+export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServer {
   const server = new McpServer({ name: "grocery-mcp", version: "0.1.0" });
 
-  // Repo access is authenticated with a short-lived GitHub App installation token
-  // (D3) against the single data repo. After slice 6 the ONLY data the Worker reads
-  // from GitHub is recipe markdown (everything else — profile, session, shared corpus
-  // — is D1), so `sharedGh` (root paths: `recipes/`) is the only client needed.
-  const installationAuth = createInstallationAuth(
-    env.GITHUB_APP_ID,
-    env.GITHUB_APP_PRIVATE_KEY,
-    { id: tenant.installationId, owner: tenant.dataRepo.owner, repo: tenant.dataRepo.repo },
-  );
-  const dataGh = createGitHubClient(tenant.dataRepo, installationAuth);
-  const sharedGh = dataGh;
+  // The authored corpus (recipes/ + guidance/) is read/listed/written through the R2
+  // corpus store — no GitHub App, installation token, or GitHub API call on the data
+  // path. `report_bug` writes D1 and `recipe_site_url` resolves the Worker-hosted
+  // cookbook, so GitHub is no longer on the tool surface at all.
+  const corpus = createR2CorpusStore(env.CORPUS);
   const kroger = createKrogerClient(env);
 
   // Per-request lazy caches backed by the D1 profile tables (the profile left KV
@@ -444,23 +438,27 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
     "recipe_site_url",
     {
       description:
-        "Resolve the URL of the hosted recipe site (the static browse view of the shared corpus), via the data repo's GitHub Pages config. Returns { url, enabled }: enabled:true with the published url (honoring a custom domain) when Pages is on, or enabled:false (url:null) when it isn't — in which case tell the user their operator/admin needs to enable GitHub Pages on the data repo. Use it during onboarding to point a new member at the full collection.",
+        "Resolve the URL of the hosted cookbook (the browse view of the shared corpus), served by the grocery-mcp Worker itself (no GitHub Pages, no GitHub Pro). Returns { url, enabled }: enabled:true with the cookbook URL (`<host>/cookbook`) when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. Use it during onboarding to point a new member at the full collection.",
       inputSchema: {},
     },
     () =>
       runTool(async () => {
-        try {
-          return await sharedGh.getPagesUrl();
-        } catch (e) {
-          if (e instanceof GitHubError && e.status === 403) {
-            throw new ToolError(
-              "insufficient_permission",
-              "the GitHub App lacks the 'Pages: read' permission needed to resolve the recipe-site URL — ask the operator to grant it",
-            );
-          }
-          throw e;
-        }
+        // The cookbook is served by THIS Worker at `/cookbook`, built from the D1 index +
+        // R2 bodies (src/cookbook.ts) — no GitHub. `origin` is the request host the member
+        // connected to (the operator's domain), threaded in from the MCP handler.
+        if (!origin) return { url: null, enabled: false };
+        return { url: `${origin}/cookbook`, enabled: true };
       }),
+  );
+
+  server.registerTool(
+    "read_reconcile_errors",
+    {
+      description:
+        "List recipes the index reconcile SKIPPED because they failed validation — the shared corpus's current indexing failures ({ errors: [{ slug, path, message, recorded_at }] }). The recipe index is rebuilt from the R2 corpus by a background reconcile; a recipe whose frontmatter breaks the required-field/vocabulary contract, is missing a `## Ingredients`/`## Instructions` body section, duplicates another slug, or has a dangling `pairs_with` is NOT indexed (so it won't appear in search_recipes) and is recorded here with the first actionable error. An empty list means every recipe indexed cleanly. Use it when a member reports a recipe they authored/edited (e.g. via Obsidian) isn't showing up, or proactively after a bulk edit — then relay the specific fix (e.g. \"`thai-curry`: `protein: poltry` isn't a valid value\") so they can correct the source. Shared across the group; takes no parameters.",
+      inputSchema: {},
+    },
+    () => runTool(async () => ({ errors: await readReconcileErrors(env) })),
   );
 
   server.registerTool(
@@ -476,7 +474,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
           throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
         }
         const [text, overlay, lastCooked, description] = await Promise.all([
-          readFile(sharedGh, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`),
+          readCorpusFile(corpus, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`),
           getOverlay(),
           getLastCookedMap(),
           recipeDescription(env, slug),
@@ -569,7 +567,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
         'List the curated guidance slugs (each a slug + an optional one-line description) from the shared guidance/ trees. Pass `domain` for one corpus, or omit it to get every domain grouped (returns { domains: [{ domain, entries }] }; with a domain it returns { domain, entries }). Domains: "ingredient_storage" — put-away advice keyed by storage BEHAVIOR CLASS ("tender-herbs", "alliums", "leafy-greens"), a few singletons that break their class\'s rule ("basil", "tomatoes", "avocados"), and "_ethylene" for relational "don\'t store together" rules; "cooking_techniques" — general technique memories keyed by technique ("browning-meat", "searing", "resting-meat"); "purchasing" — buy-side selection keyed by PRODUCT/ITEM ("canned-tomatoes", "olive-oil"): what kind to get, plus the non-obvious "how to tell if it\'s good/ripe" judgments, surfaced while shopping. Map a just-bought item, a recipe step, or a thing on the grocery list to the right slug with your own world knowledge (cilantro → tender-herbs; "brown the beef" → browning-meat; canned tomatoes on the list → canned-tomatoes), then call read_guidance for the relevant ones. An absent tree yields an empty listing, not an error.',
       inputSchema: { domain: z.string().optional() },
     },
-    ({ domain }) => runTool(() => listGuidance(sharedGh, domain)),
+    ({ domain }) => runTool(() => listGuidance(corpus, domain)),
   );
 
   server.registerTool(
@@ -579,14 +577,14 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
         "Read curated guidance content for the named slugs within a domain (from list_guidance). Returns { domain, entries: [{ slug, content }] } where content is the file's markdown. An unknown slug or domain yields a structured error. This is vetted, curated advice — relay any contested tip WITH the hedge written into its prose, and give NO tip for an item/step that has no matching entry (never improvise). Domains: \"ingredient_storage\", \"cooking_techniques\", \"purchasing\".",
       inputSchema: { domain: z.string(), slugs: z.array(z.string()) },
     },
-    ({ domain, slugs }) => runTool(() => readGuidance(sharedGh, domain, slugs)),
+    ({ domain, slugs }) => runTool(() => readGuidance(corpus, domain, slugs)),
   );
 
   server.registerTool(
     "save_guidance",
     {
       description:
-        "Create or REFINE a single guidance memory (one file per slug — refining overwrites, never appends; read the existing entry first and merge). The \"cooking_techniques\" and \"purchasing\" domains are writable; a write to \"ingredient_storage\" (curated, read-only) is rejected with validation_failed. `content` is the full markdown you compose — distilled, imperative, non-obvious advice (with a one-line `description:` frontmatter), NOT the verbatim article. `source` (optional) records provenance (e.g. an ATK/Serious Eats URL) into the frontmatter. Use it when the member posts an article/technique or a buying guide to internalize. Returns { domain, slug, path, commit_sha }.",
+        "Create or REFINE a single guidance memory (one file per slug — refining overwrites, never appends; read the existing entry first and merge). The \"cooking_techniques\" and \"purchasing\" domains are writable; a write to \"ingredient_storage\" (curated, read-only) is rejected with validation_failed. `content` is the full markdown you compose — distilled, imperative, non-obvious advice (with a one-line `description:` frontmatter), NOT the verbatim article. `source` (optional) records provenance (e.g. an ATK/Serious Eats URL) into the frontmatter. Use it when the member posts an article/technique or a buying guide to internalize. Returns { domain, slug, path }.",
       inputSchema: {
         domain: z.string(),
         slug: z.string(),
@@ -595,7 +593,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
       },
     },
     ({ domain, slug, content, source }) =>
-      runTool(() => saveGuidance(sharedGh, domain, slug, content, source)),
+      runTool(() => saveGuidance(corpus, domain, slug, content, source)),
   );
 
   server.registerTool(
@@ -715,10 +713,9 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   );
 
   // Repo-data write tools route by category internally (objective recipe content →
-  // shared root via GitHub; personal profile/overlay → D1 profile tables; session
-  // state pantry → D1 pantry table), so they take the ROOT client + D1 (env) +
-  // tenant id.
-  registerWriteTools(server, sharedGh, env, tenant.id);
+  // R2 corpus store; personal profile/overlay → D1 profile tables; session state
+  // pantry → D1 pantry table), so they take the corpus store + D1 (env) + tenant id.
+  registerWriteTools(server, corpus, env, tenant.id);
   registerGroceryListTools(server, env, tenant.id);
 
   // Cooking history + meal plan: read_meal_plan (resume), update_meal_plan, and
@@ -733,7 +730,7 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
   // data-repo root, while the discovery feeds/inbox/allowlist are shared D1 tables,
   // so any member's config feeds one group pool. Imports dedupe by
   // source URL against the shared corpus so a recipe is reused, not duplicated (§6.4).
-  registerDiscoveryTools(server, sharedGh, env, tenant.id);
+  registerDiscoveryTools(server, corpus, env, tenant.id);
 
   // Recipe notes (§8): attributed annotations in the D1 `recipe_notes` table,
   // aggregated across the group at read time with the privacy WHERE (own-private +
@@ -791,38 +788,27 @@ export function buildServer(env: Env, tenant: Tenant): McpServer {
       }),
   );
 
-  // report_bug — file an attributed GitHub issue on the operator's PRIVATE data
-  // repo on the member's behalf (members have no GitHub account). Identity +
-  // timestamp + label are added server-side, not trusted from the agent. Issues
-  // are repo-level, so this uses the un-prefixed dataGh.
+  // report_bug — record an attributed bug report into the D1 `bug_reports` table the
+  // operator reviews via the admin panel (the GitHub App / issues path is gone for
+  // data). Identity + timestamp are stamped server-side, never trusted from the agent.
   server.registerTool(
     "report_bug",
     {
       description:
-        "File a bug report as a GitHub issue on the maintainer's private repo, on behalf of the user (who has no GitHub account and can't file issues). Use it when a grocery-mcp tool errors in a way you can't work around, or when the user has had to repeatedly correct or redirect you on the same thing. Write a specific, reproducible report. The server attributes the issue to the caller and labels it — don't add identity yourself. Returns the issue url + number, or `insufficient_permission` if the maintainer hasn't enabled issue filing yet.",
+        "File a bug report to the operator's review queue, on behalf of the user (who can't file issues themselves). Use it when a grocery-mcp tool errors in a way you can't work around, or when the user has had to repeatedly correct or redirect you on the same thing. Write a specific, reproducible report. The server attributes the report to the caller and timestamps it — don't add identity yourself. The operator sees it in their admin panel. Returns { filed: true }.",
       inputSchema: {
         title: z.string().describe("A short, specific issue title."),
         body: z
           .string()
           .describe(
-            "What you were doing, what went wrong (the error or the correction pattern), and the tools/inputs involved — enough for the maintainer to reproduce.",
+            "What you were doing, what went wrong (the error or the correction pattern), and the tools/inputs involved — enough for the operator to reproduce.",
           ),
       },
     },
     ({ title, body }) =>
       runTool(async () => {
-        const trailer = `\n\n---\n_Filed by the grocery agent on behalf of **${tenant.id}** at ${new Date().toISOString()}._`;
-        try {
-          return await dataGh.createIssue(title, `${body}${trailer}`, ["agent-reported"]);
-        } catch (e) {
-          if (e instanceof GitHubError && e.status === 403) {
-            throw new ToolError(
-              "insufficient_permission",
-              "Could not file the issue: the GitHub App has not been granted Issues:write on the data repo yet.",
-            );
-          }
-          throw e; // runTool maps other failures to upstream_unavailable
-        }
+        await recordBugReport(db(env), tenant.id, title, body, new Date().toISOString());
+        return { filed: true };
       }),
   );
 

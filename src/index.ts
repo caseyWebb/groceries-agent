@@ -16,8 +16,11 @@ import { handleAuthorize } from "./authorize.js";
 import { handleInboundEmail, rejectReasonFor, type InboundMessage } from "./email.js";
 import { buildWarmDeps, runWarmJob } from "./flyer-warm.js";
 import { buildEmbedDeps, runEmbedJob } from "./recipe-embeddings.js";
+import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
+import { createR2CorpusStore } from "./corpus-store.js";
 import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, notifyFailure } from "./health.js";
 import { handleAdmin } from "./admin.js";
+import { handleCookbook } from "./cookbook.js";
 import type { KvStore } from "./kroger-user.js";
 
 /**
@@ -36,7 +39,10 @@ const apiHandler = {
         headers: { "content-type": "application/json" },
       });
     }
-    return createMcpHandler(buildServer(env, resolved))(request, env, ctx);
+    // The request origin is the Worker's own public host (the operator's domain) — passed
+    // to buildServer so `recipe_site_url` can resolve the Worker-hosted cookbook.
+    const origin = new URL(request.url).origin;
+    return createMcpHandler(buildServer(env, resolved, origin))(request, env, ctx);
   },
 };
 
@@ -57,6 +63,7 @@ const defaultHandler = {
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname.startsWith("/oauth/")) return handleOAuth(env, url);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
+    if (url.pathname === "/cookbook" || url.pathname.startsWith("/cookbook/")) return handleCookbook(request, env);
     if (url.pathname === "/health.svg") return handleHealthSvgRequest(env);
     if (url.pathname === "/health") return handleHealthRequest(env);
     return new Response("Not found", { status: 404 });
@@ -117,23 +124,30 @@ export default {
     if (reason) message.setReject(reason);
   },
   /**
-   * The single cron trigger drives TWO independent jobs each tick — kept under one
-   * trigger so the free-tier cron-count limit never bites:
+   * The single cron trigger drives THREE jobs each tick — kept under one trigger so the
+   * free-tier cron-count limit never bites:
    *   * flyer warm (flyer-cache-warming) — the cursor sweep in `flyer-warm.ts`.
-   *   * recipe-embedding reconcile (semantic recipe search) — `recipe-embeddings.ts`
-   *     refills the embedding table from changed descriptions via `env.AI`. It draws
-   *     on the INTERNAL-subrequest budget, not the flyer's external one, so the two
-   *     coexist in a tick (see the reconcile module header).
-   * Both run regardless of the other's outcome (allSettled), each writes its own
-   * health record + optional ntfy push, and a failure in either is rethrown so the
-   * platform's native cron status reflects it.
+   *   * recipe-index projection (r2-corpus-store) — `recipe-projection.ts` reads the R2
+   *     corpus, validates it, and rebuilds the D1 `recipes` index (replacing the retired
+   *     CI build). It writes the index the recipe-derived reconcile reads, so it runs
+   *     BEFORE the embed job in the same tick.
+   *   * recipe-derived reconcile (semantic recipe search) — `recipe-embeddings.ts` refills
+   *     the description/embedding table from the freshly-projected `recipes` facets via
+   *     `env.AI`. It draws on the INTERNAL-subrequest budget, not the flyer's external one.
+   * The flyer warm is independent of the index, so it runs ALONGSIDE the projection; the
+   * embed job runs after so it sees the fresh index. Each writes its own health record +
+   * optional ntfy push, and any hard failure is rethrown so the platform's native cron
+   * status reflects it.
    */
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const results = await Promise.allSettled([
+    const kv = env.KROGER_KV as unknown as KvStore;
+    const corpus = createR2CorpusStore(env.CORPUS);
+    const phase1 = await Promise.allSettled([
       runWarmJob(env, buildWarmDeps(env)),
-      runEmbedJob(env, buildEmbedDeps(env)),
+      runProjectionJob(env, buildProjectionDeps(env, corpus), kv),
     ]);
-    const failed = results.find((r) => r.status === "rejected");
+    const phase2 = await Promise.allSettled([runEmbedJob(env, buildEmbedDeps(env))]);
+    const failed = [...phase1, ...phase2].find((r) => r.status === "rejected");
     if (failed && failed.status === "rejected") throw failed.reason;
   },
 };

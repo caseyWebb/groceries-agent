@@ -28,6 +28,7 @@ import {
   type Tenant,
 } from "./tenant.js";
 import { listToolsFor, callToolFor } from "./admin-tools.js";
+import { listBugReports } from "./bug-reports.js";
 import type { KvStore } from "./kroger-user.js";
 
 const TENANT_PREFIX = "tenant:"; // mirrors src/tenant.ts (the allowlist directory)
@@ -286,6 +287,12 @@ async function routeAdminApi(
   const tenantMatch = path.match(/^\/admin\/api\/tenants\/([^/]+)$/);
   if (tenantMatch && method === "DELETE") {
     return revoke(deps, decodeURIComponent(tenantMatch[1]));
+  }
+
+  // Bug reports: the operator's review queue for agent-filed reports (report_bug → D1).
+  if (path === "/admin/api/bug-reports") {
+    if (method === "GET") return { reports: await listBugReports(deps.db) };
+    throw new ToolError("unsupported", `Method ${method} not supported on ${path}`);
   }
 
   // Tool console (the operator dev workbench): list + invoke the live MCP tool surface
