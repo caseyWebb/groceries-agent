@@ -68,6 +68,41 @@ describe("handleCookbook", () => {
     expect(html).toContain("https://ex.com/miso-salmon"); // source link
   });
 
+  it("neutralizes XSS in an untrusted recipe body (drops raw HTML + unsafe URL schemes)", async () => {
+    const malicious = [
+      "---",
+      "title: Bad Recipe",
+      "source: javascript:alert('src')",
+      "---",
+      "",
+      "## Ingredients",
+      "- <img src=x onerror=alert(1)>",
+      "",
+      "## Instructions",
+      "<script>alert(2)</script>",
+      "",
+      "[click me](javascript:alert(3))",
+      "",
+    ].join("\n");
+    const env = envWith({ files: { "recipes/bad.md": malicious } });
+    const res = await handleCookbook(get("/cookbook/bad"), env);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toMatch(/onerror=/i);
+    expect(html).not.toMatch(/javascript:/i); // both the body link AND the source href
+    // a restrictive CSP blocks script execution even if something slipped through
+    expect(res.headers.get("content-security-policy")).toMatch(/default-src 'none'/);
+  });
+
+  it("returns a graceful 404 (not a 500) for a recipe with malformed YAML frontmatter", async () => {
+    // `parseMarkdown` throws ToolError('malformed_data'); the open route has no runTool
+    // boundary, so the handler must catch it.
+    const env = envWith({ files: { "recipes/broken.md": "---\ntitle: [unclosed\n---\n## Ingredients\n" } });
+    const res = await handleCookbook(get("/cookbook/broken"), env);
+    expect(res.status).toBe(404);
+  });
+
   it("404s a missing recipe", async () => {
     const res = await handleCookbook(get("/cookbook/ghost"), envWith({}));
     expect(res.status).toBe(404);

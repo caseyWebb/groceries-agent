@@ -1,13 +1,12 @@
-// Structural pre-commit validation (data-write-tools capability). Runs on
-// workerd — the Node index-build validator (scripts/build-indexes.mjs) can't run
-// in the Worker, so this reimplements the STRUCTURAL subset: every staged file
-// parses, enumerated fields hold legal values, and recipe controlled-vocabulary
-// fields (protein / cuisine / requires_equipment) are vocab-checked against the
-// SAME shared definition the build uses (src/vocab.js). Cross-reference / index
-// validation (slug resolution) stays the post-push build Action's job — it needs
-// the whole corpus. Any problem throws ToolError("validation_failed") so the
-// commit engine makes no commit, and the member's agent gets an immediate,
-// fixable error instead of a post-push build failure on main.
+// Structural write-time validation (data-write-tools capability). Runs on workerd at the
+// recipe write tools (create_recipe / update_recipe): every staged file parses,
+// enumerated fields hold legal values, and recipe controlled-vocabulary fields
+// (protein / cuisine / requires_equipment) are vocab-checked against the SAME shared
+// definition (src/vocab.js / src/recipe-contract.js) the Worker recipe-index reconcile
+// (src/recipe-projection.ts) uses over the whole corpus. Cross-reference / index
+// validation (slug resolution) is the reconcile's job — it needs the whole corpus. Any
+// problem throws ToolError("validation_failed") so the write tool persists nothing, and
+// the member's agent gets an immediate, fixable error.
 
 import { load as loadYaml } from "js-yaml";
 import { ToolError } from "./errors.js";
@@ -18,8 +17,9 @@ import { validateRecipeContract } from "./recipe-contract.js";
 // recipe carries no status. A lingering frontmatter `status` on an old file is tolerated
 // and ignored (the build strips it from the index); it is no longer validated here.
 // PROTEIN_VOCAB / CUISINE_VOCAB / EQUIPMENT_VOCAB come from the single shared
-// source (src/vocab.js) that scripts/build-indexes.mjs also imports — so the
-// write-time gate and the build-time gate cannot disagree. recipes/*.md
+// source (src/vocab.js) that the recipe-index reconcile (src/recipe-projection.ts, via
+// src/recipe-contract.js) also validates against — so the write-time gate and the
+// reconcile gate cannot disagree. recipes/*.md
 // protein / cuisine / requires_equipment ARE vocab-enforced here now (an off-vocab
 // value can otherwise only be caught post-push, where it breaks the public site
 // deploy and the index regen with no signal to the agent). A `none`/empty

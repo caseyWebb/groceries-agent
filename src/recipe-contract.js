@@ -4,13 +4,14 @@
 // nothing filters or ranks on stay free-form and are NOT checked here — they pass
 // through into the recipe's `extra` projection untouched.
 //
-// Imported by BOTH the Worker write-time validator (src/validate.ts) and the Node
-// index-build validator (scripts/build-indexes.mjs), so the write-time gate and the
-// build-time gate can never disagree about what a compliant recipe is.
+// Imported by BOTH the Worker write-time validator (src/validate.ts, on agent writes)
+// and the Worker recipe-index reconcile (src/recipe-projection.ts, over the whole R2
+// corpus), so the write-time gate and the reconcile gate can never disagree about what a
+// compliant recipe is.
 //
-// Plain JS (not .ts) on purpose, exactly like src/vocab.js: scripts/build-indexes.mjs
-// runs UNCOMPILED under node, so it cannot import a .ts module. src/recipe-contract.d.ts
-// gives the TypeScript side (Worker + vitest + tsc) its types.
+// Plain JS (not .ts) with a src/recipe-contract.d.ts sidecar — kept JS to stay a single
+// shared module with no compile step (it was historically imported by an uncompiled Node
+// build too); the .d.ts gives the TypeScript side (Worker + vitest + tsc) its types.
 
 import { PROTEIN_VOCAB, CUISINE_VOCAB, SEASON_VOCAB, EQUIPMENT_VOCAB } from './vocab.js';
 
