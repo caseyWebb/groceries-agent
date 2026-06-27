@@ -37,4 +37,4 @@
 - [x] 6.1 Update `docs/ARCHITECTURE.md` where the `/cookbook` route is described to cover the `?q=` two-tier search, the graceful-degradation fallback, and the query-vector cache. (No `docs/TOOLS.md` change — not an MCP tool; no `docs/SCHEMAS.md` change — no D1 shape change.)
 - [x] 6.2 Run `openspec validate cookbook-semantic-search --strict` and resolve any issues.
 - [x] 6.3 Run `aubr typecheck` and `aubr test` (plus `aubr test:tooling` if touched) green.
-- [ ] 6.4 Run `/code-review` over the full branch diff and fill the PR template before opening the PR.
+- [x] 6.4 Run `/code-review` over the full branch diff and fill the PR template before opening the PR. (Review ran; the should-fix SCHEMAS.md gap + two nits were addressed. Opening the PR is left to the operator.)
