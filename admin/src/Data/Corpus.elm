@@ -18,6 +18,7 @@ import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Markdown
 import RemoteData exposing (RemoteData(..), WebData)
 import Url.Builder as Builder
 
@@ -257,7 +258,7 @@ viewObject path object =
                     p [ class "muted" ] [ em [] [ text "empty object" ] ]
 
                 else
-                    pre [] [ text markdown ]
+                    div [ class "card" ] [ Markdown.render markdown ]
         ]
 
 
