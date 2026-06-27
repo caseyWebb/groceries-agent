@@ -33,4 +33,4 @@
 - [x] 5.2 Update `docs/SCHEMAS.md`: remove the `cookbook:qvec:` KV key family from the KV key catalogue (note it self-expires). Confirm no `docs/TOOLS.md` change (not an MCP tool) and no D1 shape change.
 - [x] 5.3 Run `openspec validate cookbook-keyword-search --strict` and resolve any issues.
 - [x] 5.4 Run `aubr typecheck` and `aubr test` green (plus `aubr test:tooling` if touched).
-- [ ] 5.5 Run `/code-review` over the full branch diff and fill the PR template before opening the PR.
+- [x] 5.5 Run `/code-review` over the full branch diff and fill the PR template before opening the PR. (Review ran; addressed the should-fix — Unicode-aware tokenization so accented terms like "jalapeño" stay whole and don't shed 1-char noise tokens — plus the related prefix-bonus nit. No blockers; security paths confirmed correct.)

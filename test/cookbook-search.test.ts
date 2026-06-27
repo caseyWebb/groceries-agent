@@ -79,6 +79,24 @@ describe("rankByKeyword", () => {
     expect(slugs(rankByKeyword(idx, "stir-fry!"))).toEqual(["stir-fry"]);
   });
 
+  it("keeps accented words whole, with no 1-char-token leakage", () => {
+    const idx = index([
+      { slug: "jalapeno-poppers", title: "Jalapeño Poppers" },
+      { slug: "plain-toast", title: "Plain Toast" }, // contains an "o"
+    ]);
+    // "jalapeño" stays one token (not ["jalape","o"]): it matches the accented title and
+    // the stray "o" no longer drags in unrelated recipes.
+    expect(slugs(rankByKeyword(idx, "jalapeño"))).toEqual(["jalapeno-poppers"]);
+  });
+
+  it("earns the typeahead prefix bonus across a hyphen separator", () => {
+    const idx = index([
+      { slug: "chicken-tacos", title: "Chicken Tacos" },
+      { slug: "tacos-chicken", title: "Tacos with Chicken" },
+    ]);
+    expect(slugs(rankByKeyword(idx, "chicken-ta"))[0]).toBe("chicken-tacos");
+  });
+
   it("scores across multiple metadata fields (tags, course, ingredients)", () => {
     const idx = index([
       { slug: "a", title: "Mystery Dish", tags: ["weeknight"], course: ["main"], ingredients_key: ["lentil"] },

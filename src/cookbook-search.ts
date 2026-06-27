@@ -72,11 +72,13 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
-/** Lowercase alphanumeric words of a field, for whole-word matching. */
+/** Lowercase alphanumeric words of a field, for whole-word matching. Unicode-aware, so an
+ *  accented term stays one word ("jalapeño" → ["jalapeño"], not ["jalape","o"]) — keeping
+ *  accented recipe names matchable and not shedding 1-char noise tokens. */
 function words(text: string): string[] {
   return text
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 }
 
@@ -98,23 +100,28 @@ function scoreList(token: string, values: string[], w: Weight): number {
   return best;
 }
 
-/** Normalize the raw query for the title-prefix bonus: lowercase, trim, collapse whitespace
- *  (stopwords kept, so a literal typed prefix like "chicken and r" still matches a title). */
-function normalizeQuery(q: string): string {
-  return q.trim().toLowerCase().replace(/\s+/g, " ");
+/** Normalize a string for the title-prefix bonus: lowercase, collapse every run of
+ *  non-alphanumeric (Unicode) to a single space, trim. Applied to BOTH the title and the
+ *  raw query, so a literal typed prefix matches across spaces, hyphens, and punctuation
+ *  ("chicken ta" and "chicken-ta" both prefix "Chicken Tacos"). Stopwords are kept, so
+ *  "chicken and r" still prefixes "Chicken and Rice". */
+function normalizeForPrefix(s: string): string {
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 /**
  * Tokenize the query through the shared `queryTokens` (which owns the stopword set), after
- * replacing punctuation with spaces so "chicken-tacos" / "tacos!" tokenize cleanly and an
- * embedded stopword ("stir-and-fry" → stir, fry) is still dropped.
+ * replacing only non-alphanumeric punctuation with spaces (Unicode-aware, so accented
+ * letters survive) — "chicken-tacos" / "tacos!" tokenize cleanly, "jalapeño" stays whole,
+ * and an embedded stopword ("stir-and-fry" → stir, fry) is still dropped.
  */
 function tokenize(q: string): string[] {
-  return queryTokens(q.replace(/[^a-z0-9\s]+/gi, " "));
+  return queryTokens(q.replace(/[^\p{L}\p{N}\s]+/gu, " "));
 }
 
-/** Keyword score for one recipe against the (already tokenized) query. 0 = no match. */
-function scoreRecipe(recipe: IndexedRecipe, tokens: string[], normQuery: string): number {
+/** Keyword score for one recipe against the (already tokenized) query. 0 = no match.
+ *  `queryPrefix` is the prefix-normalized raw query (see `normalizeForPrefix`). */
+function scoreRecipe(recipe: IndexedRecipe, tokens: string[], queryPrefix: string): number {
   const title = str(recipe.title) ?? recipe.slug;
   const tags = asStringArray(recipe.tags);
   const protein = str(recipe.protein);
@@ -145,7 +152,9 @@ function scoreRecipe(recipe: IndexedRecipe, tokens: string[], normQuery: string)
   // Coverage: an all-token match outranks a partial one.
   total *= matched / tokens.length;
   // Typeahead: the whole query is a prefix of the title ("chicken ta" → "Chicken Tacos").
-  if (title.toLowerCase().startsWith(normQuery)) total += WEIGHTS.titlePrefixBonus;
+  if (queryPrefix && normalizeForPrefix(title).startsWith(queryPrefix)) {
+    total += WEIGHTS.titlePrefixBonus;
+  }
   return total;
 }
 
@@ -159,11 +168,11 @@ function scoreRecipe(recipe: IndexedRecipe, tokens: string[], normQuery: string)
 export function rankByKeyword(index: RecipeIndex, q: string): CookbookHit[] {
   const tokens = tokenize(q);
   if (tokens.length === 0) return [];
-  const normQuery = normalizeQuery(q);
+  const queryPrefix = normalizeForPrefix(q);
 
   const scored: { hit: CookbookHit; score: number }[] = [];
   for (const recipe of Object.values(index)) {
-    const score = scoreRecipe(recipe, tokens, normQuery);
+    const score = scoreRecipe(recipe, tokens, queryPrefix);
     if (score > 0) scored.push({ hit: toHit(recipe), score });
   }
   scored.sort(
