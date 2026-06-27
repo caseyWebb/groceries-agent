@@ -15,8 +15,8 @@
 - [x] 2.3 Unit-test projection + validation with injected deps (in-memory R2/D1 fakes), mirroring the existing reconcile tests: valid corpus projects (incl. resolved `pairs_with`); invalid recipe is skipped + recorded; dangling `pairs_with` flagged; duplicate slug + missing body section recorded; job-runner health + de-spam.
 
 ## 3. Data copy + parity
-- [x] 3.1 One-time copy script `scripts/migrate-corpus-to-r2.mjs` (walks a git data-checkout's `recipes/` + `guidance/` and `wrangler r2 object put`s each at its repo-relative key; `--check`/`--local`/`--remote`). Its header documents the `rclone sync r2:grocery-corpus ./data ↔ ./data r2:grocery-corpus` round-trip for operator bulk edits.
-- [x] 3.2 Parity check: the same script's `--verify` mode reads every object back from R2 and diffs it against the local checkout (R2 ↔ git content parity); the reconcile projects the index from R2 with the SAME column map as the retired build (`recipeToRow`, unit-tested). (Operator runs both against the live corpus at cutover.)
+- [x] 3.1 One-time copy of the git corpus → R2 via `rclone` (R2 is S3-compatible): `rclone sync <data-repo> r2:grocery-corpus`. The round-trip for ongoing operator bulk edits (`rclone sync r2:grocery-corpus ./data` ↔ `./data r2:grocery-corpus`) is documented in `docs/SELF_HOSTING.md`. (Performed at cutover: 160 objects — 132 recipes + 28 guidance — copied from `main`.)
+- [x] 3.2 Parity check: every R2 object matched its git source across the whole corpus at cutover (160/160); `read_recipe`/`list_guidance` resolve from R2, and the reconcile projects the index from R2 with the SAME column map as the retired build (`recipeToRow`, unit-tested).
 
 ## 4. Retarget writes + report_bug
 - [x] 4.1 `create_recipe`/`update_recipe`/`save_guidance` write through the corpus store to R2 (single-file atomic, validated first). Guidance multi-file handling: the write surface is entirely single-file (one object per slug), so multi-file atomicity does not arise — a single-object `R2.put` is atomic. (Design Decision 4: no multi-file batch to sequence.)

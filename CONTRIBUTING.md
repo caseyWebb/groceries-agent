@@ -13,7 +13,7 @@ There is **no data in this repo** — the data lives in a separate private data 
 | Path | What it is |
 | --- | --- |
 | `src/`, `test/`, `wrangler.jsonc` | the repo root **is** the Cloudflare Worker (TypeScript) hosting the `grocery-mcp` MCP server + OAuth provider |
-| `scripts/` | build tooling: `build-plugin.mjs` (the plugin bundle), `build-admin.mjs` (the admin SPA), `merge-wrangler-config.mjs` (the deploy config merge), `migrate-corpus-to-r2.mjs` (one-time git→R2 corpus copy + parity). The recipe index + cookbook are derived by the Worker now, not built here. |
+| `scripts/` | build tooling: `build-plugin.mjs` (the plugin bundle), `build-admin.mjs` (the admin SPA), `merge-wrangler-config.mjs` (the deploy config merge). The recipe index + cookbook are derived by the Worker now, not built here; the corpus is copied/edited via `rclone` (see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)). |
 | `docs/` | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the technical model) · [`SCHEMAS.md`](docs/SCHEMAS.md) (file formats) · [`TOOLS.md`](docs/TOOLS.md) (the tool contract) · [`SELF_HOSTING.md`](docs/SELF_HOSTING.md) (operator setup) |
 | `AGENT_INSTRUCTIONS.md` | the agent persona; build source for the `plugin/` bundle |
 | `openspec/` | the change/spec workflow — `changes/archive/` is the build history, `specs/` is the living contract |
@@ -68,13 +68,13 @@ gh run watch  --repo caseyWebb/groceries-agent-data                # optional: f
 
 ## The corpus + the index (no CI data build)
 
-The authored corpus (`recipes/*.md` + `guidance/**/*.md`) lives in the operator's R2 `CORPUS` bucket, read/written through `src/corpus-store.ts`. There is **no CI index/site build** anymore: the recipe index is projected by the Worker's scheduled reconcile, and the cookbook is served by the Worker.
+The authored corpus (`recipes/*.md` + `guidance/**/*.md`) lives in the operator's R2 `CORPUS` bucket, read/written through `src/corpus-store.ts`. There is **no CI index/site build** anymore: the recipe index is projected by the Worker's scheduled reconcile, and the cookbook is served by the Worker. The corpus is copied/edited with `rclone` (R2 is S3-compatible) — the one-time seed and the bulk-edit round-trip are documented in [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md):
 
 ```bash
-node scripts/migrate-corpus-to-r2.mjs --root /path/to/data-repo            # one-time git→R2 copy
-node scripts/migrate-corpus-to-r2.mjs --root /path/to/data-repo --check    # list, write nothing
-node scripts/migrate-corpus-to-r2.mjs --root /path/to/data-repo --verify   # parity: R2 ↔ git
-aubr test:tooling                                                          # node --test (tests/, fixture-based)
+rclone sync r2:grocery-corpus ./data     # pull the corpus to a local folder
+# …edit recipes/ + guidance/ markdown…
+rclone sync ./data r2:grocery-corpus      # push it back
+aubr test:tooling                         # node --test (tests/, fixture-based) — the repo's tooling tests
 ```
 
 **Index projection (`src/recipe-projection.ts`).** The cron reconcile reads the whole R2 corpus, validates every recipe (the shared `src/recipe-contract.js` required-field/vocab contract + the `## Ingredients`/`## Instructions` body sections + duplicate-slug guard + cross-corpus `pairs_with` resolution), and rebuilds the D1 `recipes` table. An invalid recipe is **skipped** (not indexed) and recorded to the `reconcile_errors` table — surfaced via `/health`, the `read_reconcile_errors` tool, and an ntfy push (the eventual-feedback model that replaced red CI). It runs in `scheduled()` before the recipe-derived (description/embedding) reconcile.
