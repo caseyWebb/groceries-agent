@@ -1,12 +1,11 @@
 // Worker read layer for the shared recipe index (d1-recipe-index). The index is a
-// D1 `recipes` table (built by scripts/build-indexes.mjs), so this is the single
-// place the Worker reconstructs the in-memory `RecipeIndex` shape from rows — a
-// drop-in for the old `JSON.parse(DATA_KV.get("index:recipes"))`. Everything goes
-// through `src/db.ts`, so a D1 failure surfaces as a structured `storage_error`
-// (never a raw throw) and the table being unreadable is distinguishable from it
-// being empty (a valid empty corpus).
+// D1 `recipes` table (projected by the Worker reconcile, src/recipe-projection.ts), so
+// this is the single place the Worker reconstructs the in-memory `RecipeIndex` shape
+// from rows. Everything goes through `src/db.ts`, so a D1 failure surfaces as a
+// structured `storage_error` (never a raw throw) and the table being unreadable is
+// distinguishable from it being empty (a valid empty corpus).
 //
-// Column ↔ frontmatter contract (mirrors the projection in build-indexes.mjs —
+// Column ↔ frontmatter contract (mirrors the projection in src/recipe-projection.ts —
 // keep the two in sync):
 //   * scalar columns: title, protein, cuisine, time_total — stored/loaded as-is.
 //   * description — NO longer a `recipes` column (it is a Worker-DERIVED field, migration

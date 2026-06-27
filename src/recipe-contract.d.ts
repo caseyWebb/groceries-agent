@@ -1,7 +1,7 @@
 // Types for the plain-JS single-source recipe required-field contract
-// (src/recipe-contract.js). The runtime values live in the .js so
-// scripts/build-indexes.mjs can import them uncompiled; this declaration gives the
-// TypeScript side (Worker + vitest + tsc) its types.
+// (src/recipe-contract.js). The runtime values live in the .js (a single shared
+// no-compile module); this declaration gives the TypeScript side (Worker + vitest + tsc)
+// its types.
 
 export const REQUIRED_NONEMPTY_STRINGS: readonly string[];
 export const REQUIRED_NONEMPTY_ARRAYS: readonly string[];
