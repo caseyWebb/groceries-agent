@@ -120,7 +120,8 @@ export async function recipeDetail(env: Env, slug: string): Promise<RecipeDetail
       slug,
     ),
     db(env).first<{ message: string }>(
-      "SELECT message FROM reconcile_errors WHERE slug = ?1 LIMIT 1",
+      // One slug can have more than one reconcile_errors row (no PK); show the latest.
+      "SELECT message FROM reconcile_errors WHERE slug = ?1 ORDER BY recorded_at DESC LIMIT 1",
       slug,
     ),
     db(env).all<{ tenant: string; favorite: number | null; reject: number | null }>(
@@ -328,11 +329,23 @@ export interface GuidanceListing {
 
 const GUIDANCE_ROOT = "guidance/";
 
-/** Reject a path that escapes the `guidance/` subtree (no `..`, must stay under the root). */
+/**
+ * Normalize a path to a key under `guidance/` and reject any that escapes the subtree.
+ * Accepts a bare relative path (`cooking_techniques/x.md`), an already-rooted path
+ * (`guidance/cooking_techniques/x.md`), or the root itself (`""` / `guidance` /
+ * `guidance/`) — so a bare `guidance` prefix lists the root, not `guidance/guidance`.
+ * A `..` segment is a `not_found` (no traversal out of the subtree).
+ */
 function guidanceKey(path: string): string {
-  const key = path.startsWith(GUIDANCE_ROOT) ? path : `${GUIDANCE_ROOT}${path}`;
-  if (key.includes("..")) throw new ToolError("not_found", `Invalid guidance path: ${path}`, { path });
-  return key;
+  const trimmed = path.replace(/^\/+/, "");
+  const rooted =
+    trimmed === "" || trimmed === "guidance" || trimmed === GUIDANCE_ROOT
+      ? GUIDANCE_ROOT
+      : trimmed.startsWith(GUIDANCE_ROOT)
+        ? trimmed
+        : `${GUIDANCE_ROOT}${trimmed}`;
+  if (rooted.includes("..")) throw new ToolError("not_found", `Invalid guidance path: ${path}`, { path });
+  return rooted;
 }
 
 /** List the immediate children of a `guidance/**` prefix (files + dirs), for the tree browser. */

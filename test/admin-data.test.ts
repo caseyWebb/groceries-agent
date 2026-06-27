@@ -4,6 +4,8 @@ import {
   recipeDetail,
   memberDetail,
   readTable,
+  guidanceListing,
+  guidanceObject,
 } from "../src/admin-data.js";
 import { handleAdmin } from "../src/admin.js";
 import type { Env } from "../src/env.js";
@@ -162,6 +164,43 @@ describe("readTable — fixed, allowlisted, bounded", () => {
   it("rejects a table from another group (no cross-group read)", async () => {
     const { env } = makeEnv();
     await expect(readTable(env, "system", "sku_cache")).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("guidance R2 browse — confinement + normalization", () => {
+  const guidance = {
+    "guidance/cooking_techniques/sear.md": "# Searing",
+    "guidance/ingredient_storage/onions.md": "# Onions",
+  };
+
+  it("lists the guidance tree at the root (default prefix)", async () => {
+    const { env } = makeEnv({ r2: guidance });
+    const listing = await guidanceListing(env);
+    expect(listing.entries.map((e) => e.name).sort()).toEqual(["cooking_techniques", "ingredient_storage"]);
+    expect(listing.entries.every((e) => e.type === "dir")).toBe(true);
+  });
+
+  it("a bare `guidance` prefix lists the root, not guidance/guidance", async () => {
+    const { env } = makeEnv({ r2: guidance });
+    const listing = await guidanceListing(env, "guidance");
+    expect(listing.entries.length).toBe(2);
+  });
+
+  it("returns a guidance object's markdown (rooted or relative path)", async () => {
+    const { env } = makeEnv({ r2: guidance });
+    expect((await guidanceObject(env, "guidance/cooking_techniques/sear.md")).markdown).toBe("# Searing");
+    expect((await guidanceObject(env, "cooking_techniques/sear.md")).markdown).toBe("# Searing");
+  });
+
+  it("rejects a `..` traversal out of the subtree", async () => {
+    const { env } = makeEnv({ r2: guidance });
+    await expect(guidanceObject(env, "../secrets.md")).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("rejects a non-markdown object and an absent object", async () => {
+    const { env } = makeEnv({ r2: guidance });
+    await expect(guidanceObject(env, "guidance/cooking_techniques")).rejects.toMatchObject({ code: "not_found" });
+    await expect(guidanceObject(env, "guidance/missing.md")).rejects.toMatchObject({ code: "not_found" });
   });
 });
 
