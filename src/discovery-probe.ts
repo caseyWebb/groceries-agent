@@ -62,7 +62,15 @@ export async function probeFeed(url: string): Promise<FeedProbeResult> {
     return { feed: { reachable: false, status: res.status, parsed: false, itemCount: 0 }, sample: [] };
   }
 
-  const items = parseFeed(await res.text());
+  // A 200 with an unparseable body is "reachable but not a usable feed" — the same verdict the
+  // sweep reaches by wrapping its parseFeed in a try/catch (src/discovery-sweep.ts). Surface it
+  // as `parsed: false` rather than letting a malformed-XML throw escape as a 500.
+  let items: ReturnType<typeof parseFeed>;
+  try {
+    items = parseFeed(await res.text());
+  } catch {
+    return { feed: { reachable: true, status: res.status, parsed: false, itemCount: 0 }, sample: [] };
+  }
   const feed = { reachable: true, status: res.status, parsed: items.length > 0, itemCount: items.length };
 
   const sampled = items.slice(0, PROBE_SAMPLE_SIZE);
@@ -98,6 +106,10 @@ export async function reprobeParked(env: Env): Promise<ReprobeResult> {
     if (!row.url) continue;
     const acquired = await acquireRecipeContent(row.url);
     if (acquired.ok) {
+      // The page now yields a valid recipe — the original park was stale (a transient outage, or
+      // the site added JSON-LD). Relabel `ok` so the operator can see it recovered. The row STAYS
+      // parked (`outcome` is untouched — the re-probe imports nothing, by design): its URL is
+      // already in the sweep's evaluated-set, so re-importing is a manual re-add, not automatic.
       await updateDiscoveryDetail(env, row.id, { reason: "ok" });
       result.nowAcquirable++;
     } else if (acquired.reason === "unreachable") {

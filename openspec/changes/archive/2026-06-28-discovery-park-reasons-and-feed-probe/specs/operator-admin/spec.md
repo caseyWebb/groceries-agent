@@ -28,7 +28,7 @@ The Config › Feeds editor SHALL offer a **test action** — on each listed fee
 
 ### Requirement: Operator re-probes mislabeled parked discovery rows
 
-The admin surface SHALL expose, gated by Cloudflare Access exactly like the rest of `/admin*` (404 when Access is unconfigured), an operator-only `POST /admin/api/discovery/reprobe-parked` that re-classifies existing parked `outcome='error'` discovery-log rows whose `detail.reason` is the legacy catch-all `unreachable`. For each such row it SHALL re-run the shared acquisition helper against the row's URL and update that row's `detail.reason` in place to the specific outcome (`no_jsonld` / `not_a_recipe` / `incomplete`, or leave `unreachable` when the page genuinely still cannot be fetched), recording the HTTP status where the failure is a non-2xx. The re-probe SHALL be bounded (it processes a capped batch of legacy rows per invocation so a large backlog cannot exhaust the subrequest budget in one call) and idempotent (a row already carrying a specific reason is skipped). It SHALL import nothing and SHALL touch only the `detail` of the targeted rows. It is operator/cross-tenant and SHALL NOT be exposed as an MCP tool; an unsupported method SHALL be rejected (`405`).
+The admin surface SHALL expose, gated by Cloudflare Access exactly like the rest of `/admin*` (404 when Access is unconfigured), an operator-only `POST /admin/api/discovery/reprobe-parked` that re-classifies existing parked `outcome='error'` discovery-log rows whose `detail.reason` is the legacy catch-all `unreachable`. For each such row it SHALL re-run the shared acquisition helper against the row's URL and update that row's `detail.reason` in place to the specific outcome (`no_jsonld` / `not_a_recipe` / `incomplete`, or leave `unreachable` when the page genuinely still cannot be fetched), recording the HTTP status where the failure is a non-2xx. A row that now acquires a valid recipe (the original park was stale) SHALL be relabeled `detail.reason = 'ok'` and SHALL remain parked (its `outcome` unchanged — the re-probe imports nothing). The re-probe SHALL be bounded (it processes a capped batch of legacy rows per invocation so a large backlog cannot exhaust the subrequest budget in one call) and idempotent (a row already carrying a specific reason is skipped). It SHALL import nothing and SHALL touch only the `detail` of the targeted rows. It is operator/cross-tenant and SHALL NOT be exposed as an MCP tool; an unsupported method SHALL be rejected (`405`).
 
 #### Scenario: A legacy unreachable row is re-classified to its specific reason
 
@@ -39,6 +39,11 @@ The admin surface SHALL expose, gated by Cloudflare Access exactly like the rest
 
 - **WHEN** the re-probe re-fetches a legacy row's URL and it still returns a non-2xx or throws
 - **THEN** the row keeps `detail.reason` of `unreachable`, with the HTTP status recorded where applicable
+
+#### Scenario: A now-acquirable row is flagged ok but stays parked
+
+- **WHEN** the re-probe re-fetches a legacy row's URL and it now yields a valid recipe
+- **THEN** the row's `detail.reason` is relabeled `ok` while its `outcome` stays `error` (the re-probe imports nothing), flagging the recovery to the operator
 
 #### Scenario: Re-probe is bounded and idempotent
 
