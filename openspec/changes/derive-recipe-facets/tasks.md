@@ -54,10 +54,10 @@
 
 ## 10. Docs (lockstep)
 
-- [ ] 10.1 `docs/SCHEMAS.md`: recipe frontmatter section (authored gates + identity + optional overrides), the `recipes` projection note, and the new facet table
-- [ ] 10.2 `docs/ARCHITECTURE.md`: the classify pass in `scheduled()` + the placement-rule restatement (facets now derived) + the `scheduled()` ordering
-- [ ] 10.3 `docs/TOOLS.md`: `create_recipe`/`update_recipe` param changes
-- [ ] 10.4 `CLAUDE.md`: the slimmed vault description
+- [x] 10.1 `docs/SCHEMAS.md`: recipe frontmatter contract rewritten (authored gates + identity + optional overrides); new `recipe_facets` table section + the effective-facet merge
+- [x] 10.2 `docs/ARCHITECTURE.md`: the classify-pass section in `scheduled()` + placement-rule restatement (facets now derived) + the five-jobs/ordering updates
+- [x] 10.3 `docs/TOOLS.md`: `create_recipe`/`update_recipe` params + errors updated to the new model
+- [ ] 10.4 `CLAUDE.md`: the slimmed vault description — **deferred with task 8 (vault)**
 
 ## 11. Tests
 
@@ -70,4 +70,4 @@
 
 - [ ] 12.1 `/health` shows the `recipe-classify` job and the `scheduled()` ordering is correct
 - [ ] 12.2 `search_recipes`, the cookbook, and the retrospective return identical effective facets to the pre-change corpus (override-wins parity)
-- [ ] 12.3 `openspec validate "derive-recipe-facets"`, `aubr typecheck`, and `aubr test` are green
+- [x] 12.3 `openspec validate "derive-recipe-facets"` (strict), `aubr typecheck`, and `aubr test` (866 passing) are green
