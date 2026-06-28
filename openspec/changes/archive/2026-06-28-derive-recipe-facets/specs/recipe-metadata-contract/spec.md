@@ -1,8 +1,5 @@
-# recipe-metadata-contract Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change require-indexable-recipe-fields. Update Purpose after archive.
-## Requirements
 ### Requirement: System-consumed recipe fields are required and present
 
 The required-field contract SHALL govern only the **authored** frontmatter fields — the gates and identity a human authors or corrects. The required authored set SHALL be: `title`, `source`, `time_total`, `dietary`, `requires_equipment`, and `pairs_with`. Presence is **blunt-uniform**: a required field SHALL be present on every recipe even when its value is empty, expressed through the field's explicit empty form (`null` or `[]`) rather than by omission. A recipe missing any required authored field SHALL be a hard failure — at Worker write time (`validation_failed`, no commit) and at reconcile time (skip-and-record).
@@ -68,27 +65,6 @@ Frontmatter fields outside the required authored set and the optional Tier B set
 - **WHEN** a recipe omits `veg_forward`
 - **THEN** the reconcile emits no warning — free-form fields carry no presence expectation
 
-### Requirement: The required-field contract has a single shared source of truth
-
-The required-field contract SHALL be defined exactly once in a shared module
-(`src/recipe-contract.js`, a sibling to `src/vocab.js`) — the field list, each field's
-empty-form shape, and the conditional `side_search_terms` rule — and imported by both the
-Worker write-time validator (`src/validate.ts`) and the Worker reconcile
-(`src/recipe-projection.ts`). Neither validator SHALL define its own copy of the contract.
-This guarantees the write-time gate and the reconcile gate can never disagree about what a
-compliant recipe is. If a platform constraint makes a shared import infeasible and a copy is
-unavoidable, an automated test SHALL assert the copies are equal, failing CI on any drift.
-
-#### Scenario: One definition feeds both validators
-
-- **WHEN** a field is added to or removed from the required set
-- **THEN** the change is made once in the shared module and both validators observe it without a second edit
-
-#### Scenario: Both validators agree on a non-compliant recipe
-
-- **WHEN** the Worker and build validators are exercised against the same recipe missing a required field
-- **THEN** both reject it identically — they resolve the same shared contract (or the parity test fails CI before they can disagree)
-
 ### Requirement: Season is a controlled vocabulary
 
 The `season` facet SHALL be a **controlled vocabulary** — `spring`, `summer`, `fall`, `winter` — defined once as the shared `SEASON_VOCAB`. `season` is an optional Tier B facet (derived by the classify pass; an authored value is an override). Wherever a `season` value enters the system — as an **authored override** at write/reconcile time, or as **classifier output** — it SHALL be validated against `SEASON_VOCAB`: an entry outside the vocabulary SHALL be a hard failure that names the offending value (at the Worker, `validation_failed`, no commit; at reconcile, skip-and-record; in the classifier path, a corrective retry then park). `[]` (year-round) remains a legal value.
@@ -110,6 +86,8 @@ The read path SHALL remain tolerant: a deterministic consumer that matches a rec
 - **WHEN** a consumer matches a recipe carrying `season: ["Autumn"]` against a current season of `fall`
 - **THEN** the consumer normalizes `"Autumn"` to `fall` (case-fold + synonym) and the recipe matches, with no rewrite of the stored value
 
+## ADDED Requirements
+
 ### Requirement: Optional Tier B overrides are validated when present
 
 An authored Tier B facet (`protein`, `cuisine`, `course`, `season`, `tags`) is optional, but when present in frontmatter it SHALL be validated by the shared contract exactly as a required field of the same shape would be: `protein` and `cuisine` SHALL be a value from their controlled vocabulary or `null`; `season` SHALL be a `SEASON_VOCAB` array; `course` SHALL be a non-empty array of strings (open vocabulary); `tags` SHALL be an array of strings. An absent Tier B facet SHALL NOT be a contract violation. The same shared module (`src/recipe-contract.js`) SHALL validate both authored overrides and the classify pass's output, so the override gate and the classifier gate cannot disagree.
@@ -124,3 +102,10 @@ An authored Tier B facet (`protein`, `cuisine`, `course`, `season`, `tags`) is o
 - **WHEN** a recipe omits `cuisine`
 - **THEN** the contract accepts the recipe and the classify pass supplies the effective `cuisine`
 
+## REMOVED Requirements
+
+### Requirement: side_search_terms is required for mains
+
+**Reason**: `side_search_terms` becomes a derived (Tier A) field produced by the classify pass, not authored frontmatter, so it leaves the authored required-field contract. The "non-empty iff `course` includes `main`" rule is not dropped — it moves to **classifier-output** validation, where the same shared contract validator backstops the classifier's output and the classify pass conditions `side_search_terms` on the **effective** `course` (including any authored `course` override).
+
+**Migration**: See `recipe-facet-derivation`. The classify pass derives `side_search_terms` (non-empty for effective mains, `[]` otherwise) and the contract validator enforces the rule on that output; no authored `side_search_terms` is read or required.

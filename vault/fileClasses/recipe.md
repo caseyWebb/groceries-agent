@@ -5,6 +5,39 @@ fields:
     options: {}
     path: ""
     id: 6a95ah
+  - name: source
+    type: Input
+    options: {}
+    path: ""
+    id: 7ps15k
+  - name: time_total
+    type: Number
+    options: {}
+    path: ""
+    id: au87kh
+  - name: dietary
+    type: Multi
+    options: {}
+    path: ""
+    id: 4dyfxv
+  - name: requires_equipment
+    type: Multi
+    options:
+      sourceType: ValuesList
+      valuesListNotePath: ""
+      valuesFromDVQuery: ""
+      valuesList:
+        "1": pressure-cooker
+        "2": sous-vide-circulator
+        "3": blender
+        "4": ice-cream-maker
+    path: ""
+    id: q0zk8m
+  - name: pairs_with
+    type: Multi
+    options: {}
+    path: ""
+    id: jptfb7
   - name: course
     type: Multi
     options:
@@ -77,26 +110,6 @@ fields:
         "22": vietnamese
     path: ""
     id: wouisx
-  - name: time_total
-    type: Number
-    options: {}
-    path: ""
-    id: au87kh
-  - name: source
-    type: Input
-    options: {}
-    path: ""
-    id: 7ps15k
-  - name: ingredients_key
-    type: Multi
-    options: {}
-    path: ""
-    id: xttx13
-  - name: dietary
-    type: Multi
-    options: {}
-    path: ""
-    id: 4dyfxv
   - name: season
     type: Multi
     options:
@@ -110,39 +123,11 @@ fields:
         "4": winter
     path: ""
     id: kpjkuw
-  - name: requires_equipment
-    type: Multi
-    options:
-      sourceType: ValuesList
-      valuesListNotePath: ""
-      valuesFromDVQuery: ""
-      valuesList:
-        "1": pressure-cooker
-        "2": sous-vide-circulator
-        "3": blender
-        "4": ice-cream-maker
-    path: ""
-    id: q0zk8m
   - name: tags
     type: Multi
     options: {}
     path: ""
     id: vq54f4
-  - name: pairs_with
-    type: Multi
-    options: {}
-    path: ""
-    id: jptfb7
-  - name: perishable_ingredients
-    type: Multi
-    options: {}
-    path: ""
-    id: hxyt8z
-  - name: side_search_terms
-    type: Multi
-    options: {}
-    path: ""
-    id: gjxdqn
 limit: 100
 mapWithTag: false
 tagNames: []

@@ -79,29 +79,22 @@ source: https://www.seriouseats.com/lemon-garlic-roasted-chicken
 ```
 
 **Notes:**
-- **Required-field contract (blunt-uniform).** Every **system-consumed** field — anything a deterministic consumer reads (`filterRecipes`, the semantic candidate row, the retrospective JOIN, the embedding, side retrieval, discovery dedup) — MUST be **present** on every recipe, in its explicit empty form where a value is genuinely empty. The contract is defined once in `src/recipe-contract.js` (`validateRecipeContract`), imported by both the Worker write-time validator (`src/validate.ts`) and the index reconcile (`src/recipe-projection.ts`), and is a **hard failure** at write time (rejecting the write) and a **skip-and-record** at reconcile time (the recipe is left out of the index and logged to `reconcile_errors`) — there is no warn-only "recommended" tier. The three shapes:
-  - **Required, non-empty:** `title` (non-empty string); `ingredients_key`, `course` (non-empty arrays). (`description` is **not** in the contract — it is a Worker-derived field; see *recipe_derived*.)
-  - **Required, value or explicit `null`:** `protein`, `cuisine` (vocab value or `null`), `time_total` (number or `null`), `source` (URL string or `null`).
-  - **Required, may be `[]`:** `dietary`, `season`, `tags`, `pairs_with`, `perishable_ingredients`, `requires_equipment`.
-  - **Conditional:** `side_search_terms` — present always; **non-empty** when `course` includes `main`, else `[]`.
+- **The descriptive facets are DERIVED on the cron, not authored.** `protein`, `cuisine`, `course`, `season`, `tags`, `ingredients_key`, `perishable_ingredients`, `side_search_terms`, and `meal_preppable` are classified from the body by the **classify pass** (`recipe-facet-derivation`) into the D1 `recipe_facets` table and **merged into `recipes`** by the projection. They are **optional in frontmatter**: absent → the classifier supplies them; present → an authored **override** (Tier B: `protein`/`cuisine`/`course`/`season`/`tags`, vocab-validated, wins over the classifier; `tags` is unioned) or a pre-migration legacy value (Tier A: the rest, classified-wins). The YAML example above shows them for illustration — a new recipe may omit them all (body-only). See *recipe_facets* below.
+- **Required-field contract (authored gates + identity).** The contract governs only the **authored** fields — the two hard gates plus identity. It is defined once in `src/recipe-contract.js` (`validateRecipeContract`), imported by the Worker write-time validator (`src/validate.ts`), the index reconcile (`src/recipe-projection.ts`), and the classifier (`src/discovery-classify.ts`); a **hard failure** at write time and a **skip-and-record** at reconcile time. **One function serves both callers:** AUTHORED frontmatter omits the derived keys (relaxed); the CLASSIFIER's output sets every key (fully validated against vocab + the `course`→`side_search_terms` rule), so the classifier's backstop is preserved.
+  - **Required (authored), non-empty:** `title`.
+  - **Required (authored), value or explicit `null`:** `time_total` (number or `null`), `source` (URL string or `null`).
+  - **Required (authored), may be `[]`:** `dietary`, `pairs_with`, `requires_equipment` (an `EQUIPMENT_VOCAB` array). `dietary` + `requires_equipment` are the **hard gates** kept authored — a wrong AI value risks allergen exposure / silently hiding a makeable recipe.
+  - **Optional (derived), validated when present:** Tier B `protein`/`cuisine` (vocab value or `null`), `course` (non-empty array), `season` (`SEASON_VOCAB` array), `tags`; Tier A `ingredients_key` (non-empty array), `perishable_ingredients`, `side_search_terms` (non-empty iff `course` includes `main`), `meal_preppable` (boolean). `description` is likewise not authored (see *recipe_derived*).
 
-  Fields outside this set are **free-form** and pass through into the `extra` projection unchecked (e.g. `meal_preppable`, `veg_forward`, `difficulty`, `style`, `servings`, `time_active`, `discovery_source`). (`discovered_at` is free-form too — not in the contract — but the projection **also** promotes it to its own queryable `recipes.discovered_at` column; see the `recipes`-table note below.) Promoting a free-form field to a queryable/consumed column means adding it to the contract in the same change. A compliant skeleton:
+  Other fields are **free-form** and pass into `extra` unchecked (`veg_forward`, `difficulty`, `style`, `servings`, `time_active`, `discovery_source`). (`discovered_at` is free-form but the projection promotes it to its own queryable `recipes.discovered_at` column.) A compliant **body-only** skeleton:
 
   ```yaml
   title: …
-  ingredients_key: [ … ]         # non-empty
-  course: [main]                 # non-empty
-  protein: null                  # value or null
-  cuisine: null                  # value or null
-  time_total: null               # number or null
-  source: null                   # URL or null
-  dietary: []
-  season: []
-  tags: []
+  source: null            # URL or null
+  time_total: null        # number or null
+  dietary: []             # hard gate — author it
+  requires_equipment: []  # hard gate — author it
   pairs_with: []
-  perishable_ingredients: []
-  requires_equipment: []
-  side_search_terms: []          # non-empty iff course includes main
   ```
 - `favorite`, `reject`, and `last_cooked` are **per-tenant**, not shared content — `favorite`/`reject` live in each member's D1 `overlay` table; `last_cooked` is derived from the D1 `cooking_log` table. The shared D1 `recipes` table carries objective fields only. A shared recipe's frontmatter SHOULD NOT carry them; the reconcile strips them. (`status`/`rating` are likewise *tolerated and ignored*, not forbidden — a lingering value is stripped from the shared index, never validated; `create_recipe` stamps no `status`.) `update_recipe` is objective-only and rejects a `favorite`/`reject` edit toward `toggle_favorite` / `toggle_reject`, which write the caller's D1 overlay row.
 - Disposition is **per-tenant and opt-out**: a recipe with no overlay row is **available** to that member by default. A member's feedback either favorites it (`toggle_favorite`) or hides it (`toggle_reject` → a hard gate that drops it from their `search_recipes` results) — the two are mutually exclusive, and one member's disposition never changes another's. There is no `active`/`draft` lifecycle and no per-member curated set.
@@ -135,6 +128,19 @@ The reconcile-owned home of each recipe's **derived** fields (migration 0013). N
 - `content_hash` — change-detection hash of those authored facets. The describe pass regenerates the description only when it differs (or is null), so a steady corpus does ~no work.
 - `embedding` — JSON array of 768 floats (`@cf/baai/bge-base-en-v1.5`) as TEXT; null until the embed pass fills it.
 - `description_hash` — hash of the description the vector was built from; gates re-embed.
+
+## recipe_facets (D1 `recipe_facets` table — Worker-derived)
+
+The **classify pass**'s home for each recipe's **derived descriptive facets** (migration 0018, `recipe-facet-derivation`). Not authored, not frontmatter — written only by the scheduled classify pass (`src/recipe-classify.ts`) and the import-time seed (`create_recipe` → `seedRecipeFacets`). Keyed by `slug`; a **sibling of `recipes`** (like `recipe_derived`/`taste_derived`), so the index projection's wholesale `recipes` rebuild never touches it. The projection **reads** it and writes the **effective** facet (`mergeEffectiveFacets`) into `recipes`, so every reader is unchanged. Holds the classifier's **raw** output; the authored-override merge happens in the projection, not here.
+
+- `slug` — recipe id (PK).
+- `body_hash` — change-detection hash over the recipe **body + the authored Tier-B overrides** the classifier conditions on. The classify pass reclassifies only when it differs (or is null), so a steady corpus does ~0 work, and an override edit re-triggers. NULL until first classified.
+- `protein`, `cuisine` — the classified coarse bucket (TEXT) or NULL. **Tier B** (an authored frontmatter value overrides at merge).
+- `course`, `season`, `tags` — classified JSON-array columns. **Tier B**.
+- `ingredients_key`, `perishable_ingredients`, `side_search_terms` — classified JSON-array columns, alias-normalized for the first two. **Tier A** (derived-only; an authored value is a pre-migration legacy fallback).
+- `meal_preppable` — classified boolean (0/1), NULL until classified. **Tier A**; currently has no consumer (rides `recipes.extra`).
+
+**Effective-facet merge** (the projection, `src/recipe-facets.ts`): Tier A → classified (authored legacy only as fallback); Tier B → `authored ?? classified`; `tags` → `authored ∪ classified`; Tier C (`dietary`, `requires_equipment`, `time_total`, `pairs_with`) → authored, untouched. A not-yet-classified recipe projects its derived facets as empty (not an error).
 
 ## taste_derived (per-member, D1 `taste_derived` table — Worker-derived)
 

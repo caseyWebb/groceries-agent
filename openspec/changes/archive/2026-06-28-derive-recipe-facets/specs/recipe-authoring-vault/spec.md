@@ -1,21 +1,4 @@
-# recipe-authoring-vault Specification
-
-## Purpose
-TBD - created by archiving change obsidian-authoring-vault. Update Purpose after archive.
-## Requirements
-### Requirement: A generated, distributable Obsidian authoring vault
-
-The repo SHALL produce a preconfigured Obsidian vault that corpus authors use to write recipes, built by a deterministic script (`scripts/build-vault.mjs`) from authored source (`vault-template/`) into a committed output, with a `--check` validate-only mode. The built vault SHALL NOT be hand-edited (the authored source is `vault-template/`), mirroring the repo's existing generated-artifact discipline (`plugin/`, `admin/dist/`). The vault SHALL ship its `.obsidian/` configuration (enabled plugins, settings, a recipe template, help text) so it is usable on open, subject to Obsidian's one-time trust of community plugins.
-
-#### Scenario: The vault is built from source, not hand-edited
-
-- **WHEN** the authoring vault changes
-- **THEN** the change is made in `vault-template/` and the vault is rebuilt by `build-vault.mjs` (verifiable with `--check`), and the committed built vault is not edited by hand
-
-#### Scenario: The built vault opens ready to author
-
-- **WHEN** an author opens the distributed vault and trusts its plugins
-- **THEN** the recipe fileClass, the new-recipe template, and the help note are present and usable with no further setup
+## MODIFIED Requirements
 
 ### Requirement: Vocab-bound fields are constrained dropdowns generated from the single source of truth
 
@@ -54,13 +37,3 @@ The vault's recipe schema SHALL include only fields a human authors or corrects 
 
 - **WHEN** an author opens the new-recipe template
 - **THEN** the required controls are the gates and identity (`dietary`, `requires_equipment`, `title`, `source`, `time_total`, `pairs_with`), and the descriptive facets are optional overrides rather than required fields
-
-### Requirement: Client-side validation complements, not replaces, the server validator
-
-The vault's constrained dropdowns SHALL be a convenience and a fast-feedback aid at the editing surface; the Worker reconcile's server-side validation SHALL remain authoritative. The system SHALL NOT assume vault-authored content is valid without server validation (an author may edit outside the vault or with plugins disabled).
-
-#### Scenario: Server validation still runs on vault-authored content
-
-- **WHEN** content authored in the vault syncs to the corpus
-- **THEN** the reconcile validates it server-side as it would any edit, and the dropdowns' client-side constraint does not bypass that backstop
-
