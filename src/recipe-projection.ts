@@ -23,7 +23,6 @@ import { validateRecipeContract } from "./recipe-contract.js";
 import { mergeEffectiveFacets, parseFacetRow, type ClassifiedFacets, type RawFacetRow } from "./recipe-facets.js";
 import type { CorpusStore } from "./corpus-store.js";
 import { notifyFailure, writeJobHealth } from "./health.js";
-import type { KvStore } from "./kroger-user.js";
 
 // --- pure projection helpers ---
 
@@ -109,7 +108,7 @@ export interface ReconcileError {
   message: string;
 }
 
-/** What one index reconcile did, for the `health:job:recipe-index` summary. */
+/** What one index reconcile did, for the `recipe-index` job_health summary. */
 export interface ProjectionResult {
   /** Recipes projected into the index. */
   projected: number;
@@ -294,18 +293,18 @@ export function buildProjectionDeps(env: Env, store: CorpusStore, now: () => num
 
 /**
  * One scheduled run of the index reconcile: read prior error slugs, do the pass, record
- * `health:job:recipe-index` (ok with a counts summary, or fail), push an ntfy alert for
+ * the `recipe-index` job_health row (ok with a counts summary, or fail), push an ntfy alert for
  * any NEW invalid recipe (de-spammed via the prior-slug diff — a persistent error is
  * recorded once, not re-alerted) AND on a hard job failure, and **rethrow** a hard
  * failure so the platform's native cron status reflects it — the same shape as
  * `runEmbedJob` / `runWarmJob`.
  */
-export async function runProjectionJob(env: Env, deps: ProjectionDeps, kv: KvStore, now: () => number = () => Date.now()): Promise<void> {
+export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () => number = () => Date.now()): Promise<void> {
   const startedAt = now();
   try {
     const priorSlugs = new Set(await deps.loadErrorSlugs());
     const r = await reconcileRecipeIndex(deps);
-    await writeJobHealth(kv, "recipe-index", {
+    await writeJobHealth(env, "recipe-index", {
       ok: true,
       last_run_at: startedAt,
       summary: { projected: r.projected, skipped: r.skipped },
@@ -323,7 +322,7 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, kv: KvSto
   } catch (e) {
     const m = msg(e);
     console.error("[recipe-index] reconcile failed:", m);
-    await writeJobHealth(kv, "recipe-index", {
+    await writeJobHealth(env, "recipe-index", {
       ok: false,
       last_run_at: startedAt,
       summary: { error: m },

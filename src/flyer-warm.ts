@@ -112,7 +112,7 @@ export interface WarmTickResult {
   /** Units processed this tick (scan ticks) or planned (build ticks). */
   units: number;
   errors?: number;
-  /** Current sweep state, for the `health:job:flyer-warm` freshness summary. */
+  /** Current sweep state, for the `flyer-warm` job_health freshness summary. */
   done: boolean;
   sweep_started_at: number;
   sweep_completed_at: number | null;
@@ -347,7 +347,7 @@ export async function readFlyerRollup(
 }
 
 /**
- * One scheduled run: advance the sweep, record `health:job:flyer-warm` (ok with a
+ * One scheduled run: advance the sweep, record the `flyer-warm` job_health row (ok with a
  * freshness summary, or fail), push an optional ntfy alert on failure, and **rethrow**
  * so the platform's native cron status reflects a failure. Thin glue over `runWarmTick`,
  * kept here (not in the handler) so it is unit-testable with injected deps + env.
@@ -356,7 +356,7 @@ export async function runWarmJob(env: Env, deps: WarmDeps): Promise<void> {
   const startedAt = deps.now();
   try {
     const r = await runWarmTick(deps);
-    await writeJobHealth(deps.kv, "flyer-warm", {
+    await writeJobHealth(env, "flyer-warm", {
       ok: true,
       last_run_at: startedAt,
       summary: {
@@ -370,7 +370,7 @@ export async function runWarmJob(env: Env, deps: WarmDeps): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[flyer-warm] tick failed:", msg);
-    await writeJobHealth(deps.kv, "flyer-warm", {
+    await writeJobHealth(env, "flyer-warm", {
       ok: false,
       last_run_at: startedAt,
       summary: { error: msg },
