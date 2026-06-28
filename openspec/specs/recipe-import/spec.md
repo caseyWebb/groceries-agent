@@ -58,22 +58,22 @@ The importer SHALL populate, from the export alone, each recipe's `title` (from 
 
 ### Requirement: Imported recipes are active and conformant
 
-Every imported recipe SHALL be written **fully conformant to the required-field
-contract** (the `recipe-metadata-contract` capability): every system-consumed field
-present, with explicit empty forms (`null`/`[]`) where a value is genuinely empty —
-`source: null` and `discovered_at`/`discovery_source` null for a non-discovery import.
-There is no `status` field (the per-tenant `status` lifecycle is retired) and no `draft`
-limbo — an imported recipe is an available corpus recipe by default. The write SHALL
-satisfy the shared required-field contract (`src/recipe-contract.js`, enforced by
-`create_recipe`'s write-time validator and re-checked by the Worker reconcile) with **no
-errors and no missing-required-field slack**; a judgment field left unpopulated is a hard
-failure, not a soft warning, so the importer SHALL classify or explicitly empty every
-required field before the write.
+Every imported recipe SHALL be written conformant to the **authored** required-field
+contract (the `recipe-metadata-contract` capability): the required authored fields
+(`title`, `source`, `time_total`, `dietary`, `requires_equipment`, `pairs_with`) present
+with explicit empty forms (`null`/`[]`) where a value is genuinely empty — `source: null`
+for a non-discovery import. The descriptive facets (`protein`, `cuisine`, `course`,
+`season`, `tags`, `ingredients_key`, `perishable_ingredients`, `side_search_terms`,
+`meal_preppable`) are **not** required in frontmatter — they are derived by the classify
+pass and seeded at import (see `recipe-facet-derivation`). There is no `status` field and
+no `draft` limbo — an imported recipe is an available corpus recipe by default. The write
+SHALL satisfy the shared authored contract with no missing-required-field slack; a missing
+required authored field is a hard failure, not a soft warning.
 
-#### Scenario: Fresh import validates strictly
+#### Scenario: Fresh import validates the authored contract strictly
 
 - **WHEN** the importer writes a recipe via `create_recipe`
-- **THEN** the write succeeds only if every required field is present (value or explicit empty); a missing required field is rejected with a structured `validation_failed` error and no recipe is written
+- **THEN** the write succeeds only if every required **authored** field is present (value or explicit empty); a missing required authored field is rejected with a structured `validation_failed` error and no recipe is written
 
 #### Scenario: Available by default, no draft
 
@@ -169,48 +169,6 @@ The `parse_recipe(url)` parse SHALL, when the page's schema.org `Recipe` carries
 - **WHEN** `parse_recipe(url)` parses a page whose `Recipe` JSON-LD includes a `tool` array
 - **THEN** the parse result includes `tools_hint` with those tools, distinct from any field that is written to the recipe
 
-### Requirement: Perishable-ingredient classification at import
-
-When a recipe is imported or created, the system SHALL classify which of its ingredients are perishable and write them to the recipe's `perishable_ingredients` frontmatter field, in the same step it derives other objective fields (protein, cuisine, etc.). The classification test SHALL be *"would the leftover rot before it would realistically be used?"* — not botanical perishability — so shelf-stable staples are excluded and a small quantity of a fast-spoiling item is included. Names SHALL be **normalized** using the same normalization the pantry-verify matcher applies, so a perishable lines up across recipes for cross-recipe comparison. The field is objective shared content written via `create_recipe` / `update_recipe`; it SHALL NOT be hand-maintained config and SHALL NOT live in any tenant overlay. A wrong classification is non-fatal (it only costs a dismissed waste nudge) and is corrected by a normal recipe edit.
-
-#### Scenario: Import classifies perishables
-
-- **WHEN** a recipe calling for cilantro, olive oil, and canned chickpeas is imported
-- **THEN** `perishable_ingredients` is written with the perishable items (e.g. cilantro), normalized, and excludes the shelf-stable staples (olive oil, canned chickpeas)
-
-#### Scenario: Names are normalized for cross-recipe comparison
-
-- **WHEN** two recipes each call for fresh cilantro under different surface wording
-- **THEN** both record the same normalized `perishable_ingredients` entry, so the two recipes' use of that perishable can be compared directly
-
-### Requirement: Course classification at import
-
-When a recipe is imported or created, the system SHALL classify the recipe's `course` and write it to the recipe's `course` frontmatter field, in the same enrichment step that derives the other objective fields (`protein`, `cuisine`, `perishable_ingredients`). `course` SHALL be an **open vocabulary**: the classifier SHALL prefer the documented convention (`main`, `side`, `dessert`, `breakfast`) but MAY assign any descriptive value (e.g. `sauce`, `baked_good`) without a code change, since the vocabulary is not a controlled set. A recipe that genuinely plates as more than one course (e.g. a hearty grain salad that serves as a main or a side) MAY be classified with **multiple** values (`course: [main, side]`). The classified `course` SHALL be persisted via `create_recipe` / `update_recipe`. A wrong or missing classification is non-fatal — `course` absence is warn-free and only leaves the recipe un-bucketed in the meal-plan faceting.
-
-#### Scenario: Import classifies a main dish
-
-- **WHEN** a roast chicken recipe is imported
-- **THEN** its `course` is written as `[main]` (or `main`), in the same step that derives `protein` and `cuisine`
-
-#### Scenario: Dual-use dish gets multiple courses
-
-- **WHEN** a hearty grain salad that works as either a main or a side is imported
-- **THEN** the classifier MAY write `course: [main, side]`, and the recipe is later returned by both `search_recipes({ specs: [{ label: "m", facets: { course: "main" } }] })` and `search_recipes({ specs: [{ label: "s", facets: { course: "side" } }] })`
-
-#### Scenario: Novel course value is accepted without a code change
-
-- **WHEN** a chimichurri recipe is imported and the classifier assigns `course: [sauce]`, a value outside the documented convention
-- **THEN** the value is written and indexed as-is — no controlled-vocabulary check rejects it
-
-### Requirement: One-time perishable backfill of the existing corpus
-
-The system SHALL provide a one-time backfill that populates `perishable_ingredients` across the existing recipe corpus by running the same classification used at import, written as normal recipe edits. The backfill SHALL be idempotent (re-running it SHALL NOT duplicate or corrupt entries) and SHALL leave a recipe's other content unchanged.
-
-#### Scenario: Backfill populates legacy recipes
-
-- **WHEN** the backfill runs over recipes that predate the field
-- **THEN** each gains a `perishable_ingredients` list derived by the import-time classifier, with no other content altered
-
 ### Requirement: Near-duplicate reconciliation without auto-merge
 
 A final pass SHALL surface near-duplicate recipes for human review rather than merging them automatically.
@@ -220,73 +178,38 @@ A final pass SHALL surface near-duplicate recipes for human review rather than m
 - **WHEN** two recipes look like variants of the same dish (e.g. stovetop vs. pressure-cooker butter chicken)
 - **THEN** both are retained and the pair is reported for the user to decide
 
-### Requirement: Protein and cuisine classification draws from the controlled vocabulary
-
-When a recipe is imported or created, the system SHALL classify `protein` and `cuisine`
-to their **coarse controlled buckets** (the sets enforced at write and build time — e.g.
-`fish` not `salmon`, `shellfish` not `shrimp`), in the same enrichment step that derives
-the other required fields (`course`, `ingredients_key`, `perishable_ingredients`,
-`requires_equipment`, `description`, and `side_search_terms` for mains). A specific
-ingredient SHALL be mapped to its bucket rather than written verbatim (shrimp →
-`shellfish`, salmon/cod/tuna → `fish`). When a dish has **no protein focus** — a
-vegetable side, a plain noodle or grain dish, a condiment — the classifier SHALL write
-`protein: null` (the explicit "no value" form), never an omitted field and never an
-off-vocabulary value such as `none`. The controlled sets SHALL be surfaced to the
-classifying agent (the `create_recipe`/`update_recipe` tool descriptions and
-`AGENT_INSTRUCTIONS.md`), and an off-vocabulary value that reaches a write SHALL be
-rejected by the write tool with a structured error, prompting reclassification.
-
-#### Scenario: Specific protein is mapped to its bucket
-
-- **WHEN** a shrimp curry is imported
-- **THEN** the classifier writes `protein: shellfish` (the bucket), not `protein: shrimp`
-
-#### Scenario: No-protein-focus dish writes explicit null
-
-- **WHEN** a radish condiment or a plain cold-noodle dish is imported
-- **THEN** the classifier writes `protein: null` (present and explicit), not an omitted field and not `protein: none`
-
-#### Scenario: An off-vocabulary value is corrected, not persisted
-
-- **WHEN** the classifier nonetheless emits an off-vocabulary `protein`/`cuisine`/`requires_equipment` value on a write
-- **THEN** the write tool returns a structured `validation_failed` error and the recipe is not committed until the value is reclassified to a legal bucket (or, for `protein`/`cuisine`, set to `null`)
-
 ### Requirement: AI brief description generated at import
 
-At import the agent SHALL generate and persist a `description` for the recipe: a brief (≈1–2 sentence) summary in a consistent, craving-aligned register (dish identity, flavor/texture, when one would want it), written by the agent — NOT the scraped marketing copy from the source page. The description is authored frontmatter (human-editable); the embedding is derived from it (reconciled Worker-side on the cron).
+At import `create_recipe` SHALL **seed** a `description` for the recipe synchronously: a
+brief (≈1–2 sentence) summary in a consistent, craving-aligned register (dish identity,
+flavor/texture, when one would want it), generated by the Worker — NOT the scraped
+marketing copy from the source page. The `description` is a **derived** field stored in D1
+(per `derived-recipe-metadata`), not authored frontmatter; the seed keeps a new recipe
+readable before the next reconcile tick, which remains the authority.
 
 #### Scenario: Description is summarized, not scraped
 
 - **WHEN** a recipe is imported from a page with promotional copy
-- **THEN** the persisted `description` is the agent's concise summary, and the scraped marketing text is not used as the description
-
-### Requirement: Memoized side search terms generated at import
-
-When a main-course recipe is imported, the agent SHALL generate `side_search_terms` describing the kind of side that complements it (capturing the complementarity judgment once). These terms become the query for semantic side retrieval; curated `pairs_with` is unaffected and remains the deterministic high-confidence pairing.
-
-#### Scenario: Side terms are written for a main
-
-- **WHEN** a main-course recipe is imported
-- **THEN** `side_search_terms` is populated with terms describing complementary sides, and `pairs_with` (if any) is left intact
+- **THEN** the seeded `description` is the Worker's concise summary stored in D1, and the scraped marketing text is not used as the description
 
 ### Requirement: Import populates every required field
 
-The import/enrichment step SHALL populate every required recipe field before the write,
-deriving each from the source where possible: `ingredients_key` from the recipe's
-ingredient list (the defining 5–7, normalized through the alias table),
-`perishable_ingredients` by the "would the leftover rot" test (`[]` when none),
-`course` from the dish type, `description` as the agent's craving-aligned summary, and
-the may-be-empty arrays (`dietary`, `season`, `tags`, `pairs_with`, `requires_equipment`)
-set to their explicit value or `[]`. A required field the importer cannot derive SHALL be
-written in its explicit empty form (`null`/`[]`), never omitted.
+The import step SHALL populate every required **authored** field before the write,
+deriving each from the source where possible: `time_total` from the source times,
+`dietary` and `requires_equipment` classified (the gates stay authored), `pairs_with` set
+to its value or `[]`, and `source` recovered or `null`. The **descriptive facets** SHALL
+NOT be authored into frontmatter at import; instead `create_recipe` SHALL **seed** them
+synchronously via the classify pass (see `recipe-facet-derivation`), so an agent import is
+not facet-lagged. A required authored field the importer cannot derive SHALL be written in
+its explicit empty form (`null`/`[]`), never omitted.
 
-#### Scenario: ingredients_key is derived, never omitted
+#### Scenario: The authored gates are populated, never omitted
 
 - **WHEN** a recipe is imported
-- **THEN** `ingredients_key` is populated with the defining ingredients (non-empty), normalized through the alias table, rather than left absent
+- **THEN** `dietary` and `requires_equipment` are classified and written (value or explicit `[]`), and `time_total`/`source`/`pairs_with` are present in explicit form
 
-#### Scenario: An underivable field is written empty, not omitted
+#### Scenario: Descriptive facets are seeded, not authored
 
-- **WHEN** the importer cannot determine a recipe's `season`
-- **THEN** it writes `season: []` (present, explicit) rather than omitting the field
+- **WHEN** `create_recipe` writes a recipe
+- **THEN** it seeds the derived descriptive facets synchronously (so the next projection materializes them) rather than requiring them in authored frontmatter
 
