@@ -262,7 +262,7 @@ viewKnobForm model =
             , knobRow "Pantry weight" "0" "2" "0.01" d.pantryWeight (\draft v -> { draft | pantryWeight = v })
             , knobRow "Perish weight" "0" "2" "0.01" d.perishWeight (\draft v -> { draft | perishWeight = v })
             , knobRow "Key weight" "0" "2" "0.01" d.keyWeight (\draft v -> { draft | keyWeight = v })
-            , knobRow "Overlap cap" "1" "10" "1" d.overlapCap (\draft v -> { draft | overlapCap = v })
+            , knobRow "Overlap cap" "1" "20" "1" d.overlapCap (\draft v -> { draft | overlapCap = v })
             ]
         , if isDirty then
             button [ class "btn-secondary", onClick ResetForm ] [ text "Reset" ]

@@ -13932,7 +13932,7 @@ var $author$project$Config$Ranking$viewKnobForm = function (model) {
 						$author$project$Config$Ranking$knobRow,
 						'Overlap cap',
 						'1',
-						'10',
+						'20',
 						'1',
 						d.aq,
 						F2(

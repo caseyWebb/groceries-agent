@@ -708,9 +708,9 @@ triage_threshold        REAL     -- cheaper pre-classify blurb-cosine gate; null
 dedup_threshold         REAL     -- semantic duplicate cosine gate (δ); null → DEFAULT_CONFIG.dedupThreshold
 classify_max            INTEGER  -- max classify+fetch calls per sweep tick; null → DEFAULT_CONFIG.classifyMaxPerTick
 rate_cap                INTEGER  -- max recipe imports per tick (corpus-bloat governor); null → DEFAULT_CONFIG.rateCap
-fetch_max_per_tick      INTEGER  -- max feed fetch calls per tick; null → 5
-max_candidates_per_tick INTEGER  -- max candidates forwarded to classify per tick; null → 40
-retry_max_attempts      INTEGER  -- max retry attempts for a failed candidate; null → 3
+fetch_max_per_tick      INTEGER  -- max feed fetch calls per tick; null → 16
+max_candidates_per_tick INTEGER  -- max candidates forwarded to classify per tick; null → 150
+retry_max_attempts      INTEGER  -- max retry attempts for a failed candidate; null → 5
 log_retention_days      INTEGER  -- days to retain discovery outcome log rows; null → 60
 ```
 
@@ -755,7 +755,7 @@ Example row (ranking weights adjusted, flyer defaults left as-is):
 
 **Notes:**
 - `loadOperatorConfig(env)` (`src/operator-config.ts`) reads the singleton row and merges over `DEFAULT_OPERATOR_CONFIG` — any null column takes its compiled default.
-- `saveOperatorConfig(env, patch)` upserts the id=1 row with non-null fields from the patch. `validateOperatorConfig(patch)` enforces: fractions in [0,1] for `favorite_weight`, `novelty_boost`, `pantry_weight`, `perish_weight`, `min_flyer_discount`; positive integers for `overlap_cap`, `flyer_refresh_hours`, `flyer_batch_units`.
+- `saveOperatorConfig(env, patch)` upserts the id=1 row with non-null fields from the patch. `validateOperatorConfig(patch)` enforces: `favorite_weight`/`novelty_boost`/`pantry_weight` in [0, 2]; `perish_weight`/`key_weight` in [0, 10]; `min_flyer_discount` in [0, 1]; `overlap_cap` positive integer ≤ 20; `flyer_refresh_hours` integer in [1, 720]; `flyer_batch_units` integer in [1, 200].
 - Ranking precedence: compiled defaults → `operator_config` → per-tenant `profile.rotation` (for `novelty_boost` / `resurface_after_days`). `resolveRankParams` in `src/semantic-search.ts` applies these three tiers in order.
 
 ## guidance/
