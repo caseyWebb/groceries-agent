@@ -121,7 +121,10 @@ init source =
 navigation), preserving any already-loaded source and fetching one not yet loaded. -}
 selectSource : LogSource -> Model -> ( Model, Cmd Msg )
 selectSource source model =
-    load source ( { model | selected = source }, Cmd.none )
+    -- Clear any stale re-probe summary on navigation, so a summary shown under one source can't
+    -- leak across to another (a latent bug today — Discovery is the only source — but correct the
+    -- moment a second LogSource is added).
+    load source ( { model | selected = source, reprobe = ReprobeIdle }, Cmd.none )
 
 
 {-| Select `source` and, if its entries are not already loaded/loading, kick its fetch. Folds
