@@ -43,8 +43,8 @@
 
 ## 8. Authoring vault
 
-- [ ] 8.1 In `scripts/build-vault.mjs` + `vault-template/`, drop the Tier A controls, demote Tier B to optional-override dropdowns (still generated from `vocab.js`), keep `requires_equipment`/`dietary`/identity, and slim the "New recipe" template to identity + gates + body
-- [ ] 8.2 Confirm `aubr build:vault --check` passes and the drift gate still holds
+- [x] 8.1 `scripts/build-vault.mjs` `FIELD_SPECS` + the "New recipe" template slimmed: Tier A controls dropped, Tier B kept as optional-override dropdowns, gates + identity required; `tests/build-vault.test.mjs` updated to the new schema
+- [x] 8.2 `aubr build:vault` regenerated `vault/`; `--check` passes (no drift); tooling tests green (80/80)
 
 ## 9. Migration (strip-on-agreement)
 
@@ -57,7 +57,7 @@
 - [x] 10.1 `docs/SCHEMAS.md`: recipe frontmatter contract rewritten (authored gates + identity + optional overrides); new `recipe_facets` table section + the effective-facet merge
 - [x] 10.2 `docs/ARCHITECTURE.md`: the classify-pass section in `scheduled()` + placement-rule restatement (facets now derived) + the five-jobs/ordering updates
 - [x] 10.3 `docs/TOOLS.md`: `create_recipe`/`update_recipe` params + errors updated to the new model
-- [ ] 10.4 `CLAUDE.md`: the slimmed vault description — **deferred with task 8 (vault)**
+- [x] 10.4 `CLAUDE.md`: the vault description updated (authored gates + identity + optional Tier B overrides; facets derived)
 
 ## 11. Tests
 

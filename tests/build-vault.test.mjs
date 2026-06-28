@@ -18,7 +18,7 @@ import {
   assembleVaultFiles,
 } from "../scripts/build-vault.mjs";
 import * as VOCAB from "../src/vocab.js";
-import { REQUIRED_FIELDS, validateRecipeContract } from "../src/recipe-contract.js";
+import { REQUIRED_FIELDS, OPTIONAL_TIER_A, OPTIONAL_TIER_B, validateRecipeContract } from "../src/recipe-contract.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -33,12 +33,13 @@ const FIXTURE_VOCAB = {
 
 // --- schema: human-authored fields only ----------------------------------
 
-test("the vault schema is exactly the human-authored contract field set", () => {
-  // The vault must offer a control for every authored field and ONLY those — i.e. the
-  // recipe-contract REQUIRED_FIELDS (which already excludes the Worker-derived
-  // `description`). Same set, order-independent.
+test("the vault schema is the authored gates + identity plus the optional Tier B overrides", () => {
+  // The vault offers a control for every REQUIRED authored field (gates + identity) PLUS the
+  // optional Tier B override dropdowns — and ONLY those. The Tier A derived facets and the
+  // Worker-derived `description` are excluded: no human authors them (recipe-facet-derivation).
   const schema = FIELD_SPECS.map((f) => f.name).sort();
-  assert.deepEqual(schema, [...REQUIRED_FIELDS].sort());
+  assert.deepEqual(schema, [...REQUIRED_FIELDS, ...OPTIONAL_TIER_B].sort());
+  for (const f of OPTIONAL_TIER_A) assert.ok(!schema.includes(f), `Tier A ${f} must not be a vault authoring control`);
 });
 
 test("no derived field (`description`) appears in the schema", () => {
