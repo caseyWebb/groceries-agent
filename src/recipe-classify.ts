@@ -210,6 +210,24 @@ export async function seedRecipeFacets(
   await db(env).run(UPSERT_SQL, ...facetBinds(slug, facets, facetGateHash(body, overrides)));
 }
 
+/**
+ * Seed `recipe_facets` from an ALREADY-classified frontmatter — the discovery sweep's import
+ * path, which classified the candidate upstream, so this does NOT re-classify (one fewer env.AI
+ * call) and keeps discovery consistent with the create_recipe model. The sweep strips the
+ * descriptive facets from the authored file, so it carries NO Tier-B overrides — the gate hash
+ * therefore matches what the classify pass computes for the stripped file (`facetGateHash(body,
+ * {})`), so the next tick sees a match and does not reclassify. Best-effort at the call site.
+ */
+export async function seedClassifiedFacets(
+  env: Env,
+  slug: string,
+  classifiedFm: Record<string, unknown>,
+  body: string,
+): Promise<void> {
+  const facets = extractFacets(classifiedFm, await readAliases(env));
+  await db(env).run(UPSERT_SQL, ...facetBinds(slug, facets, facetGateHash(body, {})));
+}
+
 /** Wire the real R2 corpus + Workers AI + D1 + aliases for the scheduled handler. */
 export function buildFacetDeps(env: Env, store: CorpusStore): DerivedFacetDeps {
   const d = db(env);

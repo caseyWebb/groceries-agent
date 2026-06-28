@@ -25,11 +25,12 @@ import { extractRecipeSources, canonicalizeUrl, buildNewRecipe } from "./discove
 import { parseFeed } from "./feeds.js";
 import { fetchWithBrowserHeaders } from "./http.js";
 import { extractJsonLd, findRecipe, normalizeRecipe } from "./jsonld.js";
-import { classifyRecipe } from "./discovery-classify.js";
+import { classifyRecipe, DERIVED_FACET_FIELDS } from "./discovery-classify.js";
 import { generateDescription, facetsFromFrontmatter } from "./description.js";
 import { CLASSIFY_MODEL } from "./discovery-classify.js";
 import { validateFile } from "./validate.js";
 import { seedRecipeDescription } from "./recipe-embeddings.js";
+import { seedClassifiedFacets } from "./recipe-classify.js";
 import { readOverlay, readProfile } from "./profile-db.js";
 import { readTasteVectors, reconcileTasteVectors, buildTasteDeps } from "./taste-vector.js";
 import { recordDiscoveryLog, loadEvaluatedUrls, recordDiscoveryMatches, pruneDiscoveryLog } from "./discovery-db.js";
@@ -577,17 +578,30 @@ export function buildDiscoveryDeps(env: Env, now: () => number = () => Date.now(
     confirmMatches: (title, description, members) => confirmMatchesAI(env, title, description, members, tasteTexts),
 
     async importRecipe(frontmatter, content) {
-      const fm = { ...frontmatter, discovered_at: today(), discovery_source: "discovery-sweep" };
       const body = assembleBody(content);
-      const { slug, file, facets } = await buildNewRecipe(store, env, fm, body);
+      // Read the description facets from the FULL classified output, before stripping it from the file.
+      const descFacets = facetsFromFrontmatter(frontmatter);
+      // The descriptive facets are DERIVED (recipe-facet-derivation) — do NOT freeze the classifier's
+      // output as authored frontmatter (that would make it a permanent override the whole-corpus
+      // classify pass can't update, re-freezing the corpus). Strip them and seed recipe_facets from
+      // the classification instead, mirroring create_recipe. The authored file keeps only the gates +
+      // identity the classifier produced (dietary/requires_equipment/time_total/title/source/pairs_with).
+      const fm: Record<string, unknown> = { ...frontmatter, discovered_at: today(), discovery_source: "discovery-sweep" };
+      for (const k of DERIVED_FACET_FIELDS) delete fm[k];
+      const { slug, file } = await buildNewRecipe(store, env, fm, body);
       validateFile(file.path, file.content);
       await store.put(file.path, file.content);
-      // Seed the description so the recipe reads well before the reconcile (the embedding is
-      // left to the reconcile, as create_recipe does — keep import consistent with that path).
+      // Seed the description + the derived facets so the recipe reads well + is faceted before the
+      // reconcile (embeddings left to the reconcile, as create_recipe does). Both best-effort.
       try {
-        await seedRecipeDescription(env, slug, facets);
+        await seedRecipeDescription(env, slug, descFacets);
       } catch (e) {
         console.error(`[discovery-sweep] description seed failed for ${slug}:`, e);
+      }
+      try {
+        await seedClassifiedFacets(env, slug, frontmatter, body);
+      } catch (e) {
+        console.error(`[discovery-sweep] facet seed failed for ${slug}:`, e);
       }
       return slug;
     },

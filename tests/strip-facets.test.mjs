@@ -38,6 +38,16 @@ test("strips a block-style (multi-line) array including its indented continuatio
   assert.match(out, /^title: X$/m);
 });
 
+test("strips a multi-line flow array cleanly (no stray closing bracket left behind)", () => {
+  const text = recipe(["title: X", "ingredients_key: [", "  chicken,", "  rice", "]", "dietary: []"].join("\n"));
+  const out = stripFrontmatterKeys(text, ["ingredients_key"]);
+  assert.doesNotMatch(out, /ingredients_key/);
+  assert.doesNotMatch(out, /chicken/);
+  assert.doesNotMatch(out, /^\]/m); // the closing bracket must not survive as a stray line
+  assert.match(out, /^title: X$/m);
+  assert.match(out, /^dietary: \[\]$/m);
+});
+
 test("returns null when no requested key is present (no-op)", () => {
   const text = recipe("title: X\nsource: null");
   assert.equal(stripFrontmatterKeys(text, ["protein", "tags"]), null);

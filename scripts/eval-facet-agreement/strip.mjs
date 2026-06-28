@@ -39,14 +39,26 @@ export function stripFrontmatterKeys(text, keys) {
   if (!m) return null;
   const [, open, fm, close, body] = m;
   const drop = new Set(keys);
+  const delta = (s) => (s.match(/[[{]/g) || []).length - (s.match(/[\]}]/g) || []).length;
   const out = [];
-  let skipping = false;
+  let skipping = false; // indented-block continuation of a dropped key
+  let flow = 0; // unbalanced [ / { inside a dropped key's MULTI-LINE flow value
   for (const line of fm.split(/\r?\n/)) {
+    if (flow > 0) {
+      // Still inside a dropped key's multi-line flow array/map — skip until the brackets balance.
+      flow += delta(line);
+      continue;
+    }
     const keyMatch = /^([A-Za-z_][\w-]*):/.exec(line);
     if (keyMatch) {
-      // A new top-level key: start (or stop) skipping based on whether it's dropped.
-      skipping = drop.has(keyMatch[1]);
-      if (!skipping) out.push(line);
+      if (drop.has(keyMatch[1])) {
+        const d = delta(line);
+        if (d > 0) flow = d; // value opens a flow collection not closed on this line
+        else skipping = true; // scalar or single-line value; skip any indented continuation
+        continue;
+      }
+      skipping = false;
+      out.push(line);
     } else if (skipping && (/^\s/.test(line) || line.trim() === "")) {
       // An indented / blank continuation line of a dropped block — skip it too.
       continue;

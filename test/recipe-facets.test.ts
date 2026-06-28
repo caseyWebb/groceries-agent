@@ -13,8 +13,19 @@ describe("mergeEffectiveFacets", () => {
     expect(eff.perishable_ingredients).toEqual(["cilantro"]);
   });
 
-  it("Tier A — falls back to an authored legacy value when classified is empty (pre-migration)", () => {
-    const eff = mergeEffectiveFacets({ ingredients_key: ["legacy"] }, classified({ ingredients_key: [] }));
+  it("Tier A — an empty CLASSIFIED array wins over a stale authored value (classified is authoritative)", () => {
+    // A non-null classified row with [] (e.g. perishable_ingredients for a shelf-stable dish) is the
+    // classifier's authoritative answer — it must NOT resurrect a stale authored legacy value.
+    const eff = mergeEffectiveFacets(
+      { ingredients_key: ["legacy"], perishable_ingredients: ["stale"] },
+      classified({ ingredients_key: ["chicken"], perishable_ingredients: [] }),
+    );
+    expect(eff.perishable_ingredients).toEqual([]);
+    expect(eff.ingredients_key).toEqual(["chicken"]);
+  });
+
+  it("Tier A — falls back to authored legacy ONLY before classification (classified is null)", () => {
+    const eff = mergeEffectiveFacets({ ingredients_key: ["legacy"] }, null);
     expect(eff.ingredients_key).toEqual(["legacy"]);
   });
 

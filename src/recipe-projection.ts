@@ -54,13 +54,6 @@ export function normalizeValue(value: unknown): unknown {
   return value;
 }
 
-/** Normalize the open-vocabulary `course` to a lowercased, trimmed string array. */
-export function normalizeCourse(value: unknown): string[] {
-  if (value == null) return [];
-  const arr = Array.isArray(value) ? value : [value];
-  return arr.map((c) => String(c).trim().toLowerCase()).filter((c) => c.length > 0);
-}
-
 /** Derive the slug (basename without `.md`) from a recipe object path. */
 export function deriveSlug(path: string): string {
   const base = path.split("/").pop() ?? path;

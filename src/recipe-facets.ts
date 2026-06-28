@@ -114,8 +114,10 @@ export function mergeEffectiveFacets(
   classified: ClassifiedFacets | null,
 ): ClassifiedFacets {
   const c = classified;
-  // Tier A — classified wins; else authored legacy (pre-migration); else empty.
-  const pickArr = (cv: string[] | undefined, av: string[]): string[] => (cv && cv.length ? cv : av);
+  // Tier A — classified-wins once the recipe is CLASSIFIED, even when the classifier legitimately
+  // returns `[]` (e.g. perishable_ingredients for a shelf-stable dish). An authored value is only a
+  // fallback BEFORE classification (a pre-migration legacy value); a non-null `classified` wins.
+  const tierA = (cv: string[] | undefined, av: unknown): string[] => (c ? cv ?? [] : strArray(av));
   // Tier B — authored override (present, even if null) wins; else classified; else empty.
   return {
     protein: has(authored, "protein")
@@ -131,10 +133,13 @@ export function mergeEffectiveFacets(
     course: has(authored, "course") ? normalizeFacetCourse(authored.course) : c?.course ?? [],
     season: has(authored, "season") ? strArray(authored.season) : c?.season ?? [],
     tags: unionStable(strArray(authored.tags), c?.tags ?? []),
-    ingredients_key: pickArr(c?.ingredients_key, strArray(authored.ingredients_key)),
-    perishable_ingredients: pickArr(c?.perishable_ingredients, strArray(authored.perishable_ingredients)),
-    side_search_terms: pickArr(c?.side_search_terms, strArray(authored.side_search_terms)),
-    meal_preppable:
-      c?.meal_preppable ?? (typeof authored.meal_preppable === "boolean" ? authored.meal_preppable : null),
+    ingredients_key: tierA(c?.ingredients_key, authored.ingredients_key),
+    perishable_ingredients: tierA(c?.perishable_ingredients, authored.perishable_ingredients),
+    side_search_terms: tierA(c?.side_search_terms, authored.side_search_terms),
+    meal_preppable: c
+      ? c.meal_preppable
+      : typeof authored.meal_preppable === "boolean"
+        ? authored.meal_preppable
+        : null,
   };
 }
