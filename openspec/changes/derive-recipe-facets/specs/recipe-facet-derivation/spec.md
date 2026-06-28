@@ -104,6 +104,20 @@ The effective facets SHALL be materialized into the D1 `recipes` index (see `rec
 - **WHEN** the synchronous classify seed errors during `create_recipe`
 - **THEN** the recipe is still persisted and the scheduled classify pass backfills its facets on a later tick
 
+### Requirement: Discovery imports derive facets, not freeze them
+
+When the discovery sweep auto-imports a recipe, it SHALL NOT write the classifier's descriptive facets into the authored R2 frontmatter (which would make them permanent authored Tier B overrides the whole-corpus classify pass could never refresh, and Tier A legacy values). It SHALL write only the gates + identity to the authored file and SHALL seed the derived facets into `recipe_facets` from the classification it already produced (no re-classification), so a discovered recipe follows the same derived-facet model as a `create_recipe` import.
+
+#### Scenario: A discovered recipe's facets are derived, not authored
+
+- **WHEN** the discovery sweep imports a candidate it has classified
+- **THEN** the authored recipe file carries only the gates + identity, the descriptive facets (`protein`/`cuisine`/`course`/`season`/`tags`/`ingredients_key`/`perishable_ingredients`/`side_search_terms`/`meal_preppable`) are absent from it, and those facets are seeded into `recipe_facets` instead
+
+#### Scenario: The whole-corpus classifier can later refresh a discovered recipe's facets
+
+- **WHEN** the whole-corpus classifier improves and a discovered recipe's body is reclassified
+- **THEN** its derived facets update, because they were not frozen as authored overrides in frontmatter
+
 ### Requirement: Derived ingredient facets are alias-normalized
 
 The classify pass SHALL normalize the derived `ingredients_key` and `perishable_ingredients` through the shared ingredient alias table (the same `normalizeIngredientList` the write path and the discovery path apply), so a derived ingredient name lines up across recipes for cross-recipe overlap and pantry matching.

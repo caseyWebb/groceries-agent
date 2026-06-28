@@ -21,7 +21,7 @@ The guiding principle: **humans author the gates and the identity; the AI derive
 
 **Non-Goals:**
 - Moving `dietary` or `requires_equipment` off authored frontmatter (deliberately retained — the hard gates).
-- Changing the discovery sweep's classify/import *behavior* beyond consuming the extracted shared module.
+- Re-architecting the discovery sweep's pipeline (triage/dedup/match/gate stages are unchanged). Its import *write* does change to match the create_recipe model — it strips the descriptive facets from the authored file and seeds `recipe_facets` from the classification — so discovered recipes don't re-freeze facets in frontmatter (a code-review finding addressed before deploy).
 - Changing any recipe reader (`filterRecipes`, cookbook, retrospective, semantic search, the describe pass) — the merge is materialized into `recipes`, so reads are untouched.
 - Replacing brute-force facet storage with Vectorize or a read-time JOIN architecture.
 
