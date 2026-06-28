@@ -66,9 +66,25 @@ export interface Env {
    * A **read-only** Cloudflare API token (Account Analytics: Read) the Usage view uses to read
    * account-wide KV-operation and Workers-AI-neuron usage from the GraphQL Analytics API. Secret,
    * OPTIONAL — set via `wrangler secret`, never committed (the repo is public). When unset, the
-   * Usage view reports "not configured". Reads only; it can mutate nothing.
+   * Usage view reports "not configured". Reads only; it can mutate nothing. The Usage **trends**
+   * panel reuses this same token for the Analytics Engine SQL API (it reads the `grocery_usage`
+   * dataset); confirm the token's scope also grants AE SQL read on a connected account.
    */
   CF_ANALYTICS_TOKEN?: string;
+
+  // --- Usage trends (usage-trends). Code-level binding, no operator config. ---
+  /**
+   * Workers Analytics Engine dataset (`grocery_usage`) the background jobs emit one
+   * tenant-clean data point to per run (the **history** tier, complementing the `job_health`
+   * D1 **liveness** tier) — job name, outcome, duration, and summary counts, never a per-tenant
+   * id. Read back by the Usage trends panel via the AE SQL API (`src/usage.ts`). OPTIONAL: an
+   * unbound deployment makes `recordUsagePoint` a silent no-op (`USAGE_AE?.`). AE `writeDataPoint`
+   * is non-blocking and draws on neither the KV nor the D1 budget. Code-level binding (no
+   * operator-owned id), propagated by the deploy merge (`scripts/merge-wrangler-config.mjs`
+   * allowlist), like `ai`/`assets`. The blob/double slot layout is a documented positional
+   * contract (`docs/SCHEMAS.md`); a later change must not reorder existing slots.
+   */
+  USAGE_AE?: AnalyticsEngineDataset;
 
   // --- KV (ephemeral infra only; all domain data is in D1) ---
   /**

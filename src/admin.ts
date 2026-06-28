@@ -56,7 +56,7 @@ import {
   guidanceObject,
 } from "./admin-data.js";
 import { isCorpusTable, listCorpusTable, addCorpusRow, deleteCorpusRow } from "./admin-corpus.js";
-import { fetchUsage } from "./usage.js";
+import { fetchUsage, fetchUsageTrends } from "./usage.js";
 import type { KvStore } from "./kroger-user.js";
 
 const TENANT_PREFIX = "tenant:"; // mirrors src/tenant.ts (the allowlist directory)
@@ -415,6 +415,15 @@ async function routeAdminApi(
   // not consume it). Reports `{ configured: false }` when the CF analytics vars are unset.
   if (path === "/admin/api/usage") {
     if (method === "GET") return fetchUsage(env);
+    throw new ToolError("unsupported", `Method ${method} not supported on ${path}`);
+  }
+
+  // Usage TRENDS (usage-trends): per-job run metrics (counts + durations) over the recent window,
+  // read from the Analytics Engine SQL API (the `grocery_usage` dataset the jobs emit to). Same
+  // Access gate, same opt-in config as `/admin/api/usage`; performs NO KV or D1. Reports
+  // `{ configured: false }` when the CF analytics vars are unset.
+  if (path === "/admin/api/usage/trends") {
+    if (method === "GET") return fetchUsageTrends(env);
     throw new ToolError("unsupported", `Method ${method} not supported on ${path}`);
   }
 

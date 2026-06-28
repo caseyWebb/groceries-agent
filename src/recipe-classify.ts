@@ -29,7 +29,7 @@ import { normalizeIngredientList } from "./matching.js";
 import { readAliases } from "./corpus-db.js";
 import { hashText } from "./hash.js";
 import { normalizeFacetCourse, EMPTY_FACETS, type ClassifiedFacets } from "./recipe-facets.js";
-import { isAiQuotaError, notifyFailure, writeJobHealth } from "./health.js";
+import { isAiQuotaError, notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
 
 /** Max recipes CLASSIFIED per tick (one env.AI call each — not batchable, like describe). */
 export const CLASSIFY_MAX_PER_TICK = 20;
@@ -358,6 +358,12 @@ export async function runFacetJob(env: Env, deps: DerivedFacetDeps): Promise<voi
         quota_exhausted: r.quotaExhausted,
       },
     });
+    // History point (usage-trends): doubles = [duration_ms, classified, pending, parked, errored, pruned].
+    recordUsagePoint(env, "recipe-classify", {
+      ok: !r.quotaExhausted,
+      durationMs: deps.now() - startedAt,
+      counts: [r.classified, r.pending, r.parked, r.errored, r.pruned],
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[recipe-classify] classify pass failed:", msg);
@@ -366,6 +372,7 @@ export async function runFacetJob(env: Env, deps: DerivedFacetDeps): Promise<voi
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    recordUsagePoint(env, "recipe-classify", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "recipe-classify", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing
   }

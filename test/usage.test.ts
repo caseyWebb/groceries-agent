@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { fetchUsage, mapAccountUsage, utcDay, FREE_TIER_LIMITS } from "../src/usage.js";
+import {
+  fetchUsage,
+  fetchUsageTrends,
+  mapAccountUsage,
+  mapTrendRows,
+  utcDay,
+  FREE_TIER_LIMITS,
+  TRENDS_WINDOW_DAYS,
+} from "../src/usage.js";
 import type { Env } from "../src/env.js";
 
 // A canned Cloudflare GraphQL Analytics response body (the slice usage.ts reads).
@@ -127,6 +135,80 @@ describe("fetchUsage", () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
     await expect(fetchUsage(configuredEnv(), { fetchImpl, now: () => 1 })).rejects.toMatchObject({
+      code: "upstream_unavailable",
+    });
+  });
+});
+
+describe("mapTrendRows", () => {
+  it("groups AE SQL rows into per-job series, ordered by job then day", () => {
+    const rows = [
+      { job: "recipe-classify", day: "2026-06-27 00:00:00", runs: 288, avg_ms: 120, total_ms: 34560 },
+      { job: "flyer-warm", day: "2026-06-28 00:00:00", runs: 288, avg_ms: 40, total_ms: 11520 },
+      { job: "recipe-classify", day: "2026-06-28 00:00:00", runs: 288, avg_ms: 130, total_ms: 37440 },
+    ];
+    const result = mapTrendRows(rows, 1_700_000_000_000, TRENDS_WINDOW_DAYS);
+    if (!result.configured) throw new Error("expected configured");
+    expect(result.window_days).toBe(TRENDS_WINDOW_DAYS);
+    expect(result.jobs.map((j) => j.job)).toEqual(["flyer-warm", "recipe-classify"]);
+    const classify = result.jobs.find((j) => j.job === "recipe-classify")!;
+    // days ascending, normalized to YYYY-MM-DD
+    expect(classify.days.map((d) => d.day)).toEqual(["2026-06-27", "2026-06-28"]);
+    expect(classify.days[1]).toEqual({ day: "2026-06-28", runs: 288, avg_ms: 130, total_ms: 37440 });
+  });
+
+  it("coerces numeric strings and drops rows with no job name", () => {
+    const rows = [
+      { job: "email", day: "2026-06-28 00:00:00", runs: "3", avg_ms: "12.5", total_ms: "37.5" },
+      { day: "2026-06-28 00:00:00", runs: 99 }, // no job → dropped
+    ];
+    const result = mapTrendRows(rows, 1, TRENDS_WINDOW_DAYS);
+    if (!result.configured) throw new Error("expected configured");
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]).toEqual({
+      job: "email",
+      days: [{ day: "2026-06-28", runs: 3, avg_ms: 12.5, total_ms: 37.5 }],
+    });
+  });
+
+  it("tolerates an empty result set", () => {
+    const result = mapTrendRows([], 1, TRENDS_WINDOW_DAYS);
+    if (!result.configured) throw new Error("expected configured");
+    expect(result.jobs).toEqual([]);
+  });
+});
+
+describe("fetchUsageTrends", () => {
+  it("returns { configured: false } and makes NO request when the CF vars are unset", async () => {
+    const f = fetchReturning({ data: [] });
+    const result = await fetchUsageTrends({} as unknown as Env, { fetchImpl: f.fetchImpl, now: () => 1 });
+    expect(result).toEqual({ configured: false });
+    expect(f.calls).toBe(0);
+  });
+
+  it("maps the AE SQL `data` rows into a trends payload", async () => {
+    const f = fetchReturning({
+      data: [{ job: "flyer-warm", day: "2026-06-28 00:00:00", runs: 288, avg_ms: 40, total_ms: 11520 }],
+    });
+    const result = await fetchUsageTrends(configuredEnv(), { fetchImpl: f.fetchImpl, now: () => 1 });
+    if (!result.configured) throw new Error("expected configured");
+    expect(f.calls).toBe(1);
+    expect(result.jobs[0].job).toBe("flyer-warm");
+    expect(result.jobs[0].days[0]).toEqual({ day: "2026-06-28", runs: 288, avg_ms: 40, total_ms: 11520 });
+  });
+
+  it("throws upstream_unavailable on a non-2xx", async () => {
+    const f = fetchReturning("nope", 403);
+    await expect(fetchUsageTrends(configuredEnv(), { fetchImpl: f.fetchImpl, now: () => 1 })).rejects.toMatchObject({
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("throws upstream_unavailable when the transport fails", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    await expect(fetchUsageTrends(configuredEnv(), { fetchImpl, now: () => 1 })).rejects.toMatchObject({
       code: "upstream_unavailable",
     });
   });

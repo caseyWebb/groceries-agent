@@ -208,3 +208,138 @@ export async function fetchUsage(env: Env, deps: UsageDeps = defaultDeps): Promi
   const account = body.data?.viewer?.accounts?.[0] ?? {};
   return mapAccountUsage(account, day, nowMs);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Usage TRENDS (usage-trends): the per-job HISTORY tier, read from the Workers Analytics
+// Engine SQL API — complementing the account-level GraphQL snapshot above and the `job_health`
+// D1 liveness row. Each background job emits one data point per run to the `grocery_usage` AE
+// dataset (src/health.ts `recordUsagePoint`); this reads them back as a per-job/per-day series.
+//
+// CORRECTION to the snapshot above: built-in datasets (KV ops, AI neurons) use the GraphQL
+// Analytics API; a CUSTOM AE dataset uses the AE SQL API instead — `POST /accounts/<id>/
+// analytics_engine/sql` with a SQL string body and the same bearer token. So this is a SECOND
+// client (SQL, not GraphQL), reusing `CF_ACCOUNT_ID` + `CF_ANALYTICS_TOKEN`. NOTE: the token may
+// need an Account Analytics: Read scope that also covers AE SQL, and the SQL dialect/`data` shape
+// is verified against a live account as part of landing this capability (see the change's spike
+// tasks) — the same "verify against live" caveat as the GraphQL field names above. Performs NO
+// KV or D1 operation (an outbound `fetch` only), and opt-in: `{ configured: false }` when unset.
+
+/** How many days of history the trends query covers (AE free-tier retention is ≈90 days). */
+export const TRENDS_WINDOW_DAYS = 30;
+
+/** The AE SQL endpoint (account-scoped; the dataset is named in the FROM clause). */
+const aeSqlEndpoint = (accountTag: string) =>
+  `https://api.cloudflare.com/client/v4/accounts/${accountTag}/analytics_engine/sql`;
+
+/** One job's metrics for a single UTC day. */
+export interface TrendDay {
+  /** UTC day, `YYYY-MM-DD`. */
+  day: string;
+  /** Number of runs that day. */
+  runs: number;
+  /** Mean run duration (ms) that day. */
+  avg_ms: number;
+  /** Summed run duration (ms) that day. */
+  total_ms: number;
+}
+
+/** One job's day-by-day series over the window (ascending by day). */
+export interface JobTrend {
+  job: string;
+  days: TrendDay[];
+}
+
+/** The trends payload returned to the admin API. A discriminated union mirroring `UsageResult`,
+ *  so "configured but empty" is unrepresentable: an unconfigured deployment is `{ configured: false }`. */
+export type TrendsResult =
+  | { configured: false }
+  | { configured: true; generated_at: number; window_days: number; jobs: JobTrend[] };
+
+/** The AE SQL `data` row shape (loosely typed — external data; numbers may arrive as strings). */
+interface TrendRow {
+  job?: unknown;
+  day?: unknown;
+  runs?: unknown;
+  avg_ms?: unknown;
+  total_ms?: unknown;
+}
+
+/** Coerce an AE SQL scalar (number or numeric string) to a finite number, else 0. */
+function toNum(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+/** Normalize an AE SQL day value (e.g. `"2026-06-28 00:00:00"` or an ISO string) to `YYYY-MM-DD`. */
+function toDay(v: unknown): string {
+  return typeof v === "string" ? v.slice(0, 10) : "";
+}
+
+/**
+ * Pure mapping of AE SQL `data` rows into per-job series. Groups by `job`, coerces the numeric
+ * columns, and orders each job's days ascending (jobs ordered by name) so the panel renders a
+ * stable series. Rows with no job name are dropped.
+ */
+export function mapTrendRows(rows: TrendRow[], nowMs: number, windowDays: number): TrendsResult {
+  const byJob = new Map<string, TrendDay[]>();
+  for (const row of rows) {
+    const job = typeof row.job === "string" ? row.job : "";
+    if (!job) continue;
+    const days = byJob.get(job) ?? [];
+    days.push({ day: toDay(row.day), runs: toNum(row.runs), avg_ms: toNum(row.avg_ms), total_ms: toNum(row.total_ms) });
+    byJob.set(job, days);
+  }
+  const jobs: JobTrend[] = [...byJob.entries()]
+    .map(([job, days]) => ({ job, days: days.sort((a, b) => a.day.localeCompare(b.day)) }))
+    .sort((a, b) => a.job.localeCompare(b.job));
+  return { configured: true, generated_at: nowMs, window_days: windowDays, jobs };
+}
+
+/** The AE SQL query: per-job, per-day run count + mean/total duration over the window. `double1`
+ *  is the run duration (the documented slot-1 metric); `blob1` is the job name. */
+const trendsSql = (windowDays: number) =>
+  `SELECT blob1 AS job, toStartOfDay(timestamp) AS day, ` +
+  `count() AS runs, avg(double1) AS avg_ms, sum(double1) AS total_ms ` +
+  `FROM grocery_usage ` +
+  `WHERE timestamp > now() - INTERVAL '${windowDays}' DAY ` +
+  `GROUP BY job, day ORDER BY day ASC`;
+
+/**
+ * Fetch the per-job usage trends from the Analytics Engine SQL API. Returns `{ configured: false }`
+ * (with NO network call) when `CF_ACCOUNT_ID`/`CF_ANALYTICS_TOKEN` is unset. Maps a transport
+ * failure, a non-2xx, or an unparseable body to an `upstream_unavailable` ToolError (the admin
+ * route serializes it). Performs no KV or D1 operation.
+ */
+export async function fetchUsageTrends(env: Env, deps: UsageDeps = defaultDeps): Promise<TrendsResult> {
+  const accountTag = env.CF_ACCOUNT_ID?.trim();
+  const token = env.CF_ANALYTICS_TOKEN?.trim();
+  if (!accountTag || !token) return { configured: false };
+
+  const nowMs = deps.now();
+  let res: Response;
+  try {
+    res = await deps.fetchImpl(aeSqlEndpoint(accountTag), {
+      method: "POST",
+      headers: { "content-type": "text/plain", authorization: `Bearer ${token}` },
+      body: trendsSql(TRENDS_WINDOW_DAYS),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new ToolError("upstream_unavailable", `Analytics Engine SQL request failed: ${message}`);
+  }
+  if (!res.ok) {
+    throw new ToolError("upstream_unavailable", `Analytics Engine SQL returned HTTP ${res.status}`);
+  }
+  let body: { data?: TrendRow[] };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new ToolError("upstream_unavailable", `Analytics Engine SQL returned an unparseable body: ${message}`);
+  }
+  return mapTrendRows(body.data ?? [], nowMs, TRENDS_WINDOW_DAYS);
+}

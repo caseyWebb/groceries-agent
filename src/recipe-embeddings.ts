@@ -21,7 +21,7 @@ import { contentHash, generateDescription, type RecipeFacets } from "./descripti
 import { embedTexts } from "./embedding.js";
 import type { Env } from "./env.js";
 import { hashText } from "./hash.js";
-import { notifyFailure, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
 
 // Re-exported so existing importers (and tests) keep a single hash entry point.
 export { hashText } from "./hash.js";
@@ -262,6 +262,12 @@ export async function runEmbedJob(env: Env, deps: DerivedDeps): Promise<void> {
         pending: r.pending,
       },
     });
+    // History point (usage-trends): doubles = [duration_ms, described, describePending, embedded, pruned, pending].
+    recordUsagePoint(env, "recipe-embed", {
+      ok: true,
+      durationMs: deps.now() - startedAt,
+      counts: [r.described, r.describePending, r.embedded, r.pruned, r.pending],
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[recipe-derived] reconcile failed:", msg);
@@ -270,6 +276,7 @@ export async function runEmbedJob(env: Env, deps: DerivedDeps): Promise<void> {
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    recordUsagePoint(env, "recipe-embed", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "recipe-embed", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing
   }

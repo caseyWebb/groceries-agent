@@ -43,7 +43,7 @@ import {
   pruneDiscoveryLog,
   countDiscoveryFailures,
 } from "./discovery-db.js";
-import { notifyFailure, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
 
 /** A new discovery candidate to evaluate (already deduped vs corpus/rejections/log by the deps). */
 export interface SweepCandidate {
@@ -930,6 +930,25 @@ export async function runDiscoverySweepJob(
         log_pruned: pruned,
       },
     });
+    // History point (usage-trends): doubles = [duration_ms, processed, imported, duplicate, no_match,
+    // dietary_gated, parked, failed, failed_outstanding, deferred, taste_updated, log_pruned].
+    recordUsagePoint(env, "discovery-sweep", {
+      ok,
+      durationMs: now() - startedAt,
+      counts: [
+        r.processed,
+        r.imported,
+        r.duplicate,
+        r.noMatch,
+        r.dietaryGated,
+        r.parked,
+        r.failed,
+        failedOutstanding,
+        r.deferred,
+        taste.updated,
+        pruned,
+      ],
+    });
     if (r.failed > 0) {
       // Push only on FRESH infra failures (this tick), not on every tick a failure stands —
       // the standing state is already visible at `/health` (ok:false). Avoids per-tick ntfy
@@ -954,6 +973,7 @@ export async function runDiscoverySweepJob(
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    recordUsagePoint(env, "discovery-sweep", { ok: false, durationMs: now() - startedAt });
     await notifyFailure(env, "discovery-sweep", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing
   }

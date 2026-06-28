@@ -55,6 +55,17 @@
 	// binding (like d1/triggers): propagated to every operator by the deploy merge.
 	// In `wrangler dev` the binding is proxied to the real AI API (needs wrangler auth).
 	"ai": { "binding": "AI" },
+	// Workers Analytics Engine (usage-trends): the per-run usage history tier. Each
+	// background job emits ONE tenant-clean data point per run (job name, outcome,
+	// duration, counts) to the `grocery_usage` dataset — complementing the `job_health`
+	// D1 liveness row, read back by the Usage trends panel via the AE SQL API. AE writes
+	// are non-blocking and cost NO KV/D1 budget. Code-level binding (no operator-owned id,
+	// like `ai`/`assets`): the deploy merge propagates it (merge-wrangler-config.mjs
+	// allowlist) — a NEW binding TYPE, so the merge needs an explicit allowlist line or it
+	// is silently dropped from every operator's deploy.
+	"analytics_engine_datasets": [
+		{ "binding": "USAGE_AE", "dataset": "grocery_usage" }
+	],
 	// Static assets (operator-admin): the committed admin SPA under admin/dist/, served
 	// same-origin at /admin/* via the ASSETS binding. `run_worker_first` routes /admin*
 	// to the Worker FIRST so the Cloudflare Access gate (and the /admin/api/* handlers)

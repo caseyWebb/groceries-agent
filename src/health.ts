@@ -135,6 +135,39 @@ export async function writeJobHealth(env: Env, name: string, health: JobHealth):
   await db(env).run(UPSERT_JOB_HEALTH, name, health.ok ? 1 : 0, health.last_run_at, JSON.stringify(health.summary));
 }
 
+/**
+ * Emit ONE tenant-clean usage data point for a job run to the `grocery_usage` Analytics Engine
+ * dataset (usage-trends) — the **history** tier that complements this job's `job_health` D1
+ * **liveness** row. Carries the job name, the run outcome, the run duration, and the job's own
+ * numeric summary counts (a per-job, documented, **positional** order — see `docs/SCHEMAS.md`):
+ *
+ *   indexes: [job]                      — the sampling key (one per job)
+ *   blobs:   [job, ok ? "ok" : "fail"]  — dimensions
+ *   doubles: [durationMs, ...counts]    — metrics
+ *
+ * **Best-effort and additive**, exactly like the optional ntfy push and the `job_health` write's
+ * `.catch(() => {})`: a failed or unconfigured emission MUST NOT change the job's outcome. The
+ * `USAGE_AE?.` makes an unbound deployment a silent no-op, and a throw is swallowed. **Tenant-clean
+ * by construction** — only the job name, outcome, duration, and counts; never a per-tenant id. AE
+ * `writeDataPoint` is non-blocking and consumes neither the KV nor the D1 budget, so this never
+ * re-introduces the standing write load `job_health`-in-D1 was moved to avoid.
+ */
+export function recordUsagePoint(
+  env: Pick<Env, "USAGE_AE">,
+  job: string,
+  point: { ok: boolean; durationMs: number; counts?: readonly number[] },
+): void {
+  try {
+    env.USAGE_AE?.writeDataPoint({
+      indexes: [job],
+      blobs: [job, point.ok ? "ok" : "fail"],
+      doubles: [point.durationMs, ...(point.counts ?? [])],
+    });
+  } catch {
+    // Emission must never affect the job — swallow (mirrors notifyFailure / the job_health catch).
+  }
+}
+
 /** Read one job's health row, or null when it has never run. */
 export async function readJobHealth(env: Env, name: string): Promise<JobHealth | null> {
   const row = await db(env).first<JobHealthRow>(

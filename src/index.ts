@@ -21,7 +21,7 @@ import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
 import { buildDiscoveryDeps, runDiscoverySweepJob } from "./discovery-sweep.js";
 import { loadDiscoveryConfig } from "./discovery-calibration.js";
 import { createR2CorpusStore } from "./corpus-store.js";
-import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, notifyFailure } from "./health.js";
+import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, recordUsagePoint, notifyFailure } from "./health.js";
 import { handleAdmin } from "./admin.js";
 import { handleCookbook } from "./cookbook.js";
 
@@ -123,6 +123,13 @@ export default {
       last_run_at: startedAt,
       summary,
     }).catch(() => {});
+    // History point (usage-trends): doubles = [duration_ms, accepted(0|1), written(0|1)]. The boolean
+    // gate outcomes are emitted as 0/1 so the trend stays purely numeric; tenant-clean (no `from`).
+    recordUsagePoint(env, "email", {
+      ok,
+      durationMs: Date.now() - startedAt,
+      counts: [summary.accepted === true ? 1 : 0, summary.written === true ? 1 : 0],
+    });
     if (reason) message.setReject(reason);
   },
   /**

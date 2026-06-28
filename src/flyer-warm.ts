@@ -23,7 +23,7 @@ import { dedupeFlyerHits, isFulfillable, isOnSale, type FlyerItem } from "./matc
 import { directoryFromEnv } from "./tenant.js";
 import { readPreferences } from "./profile-db.js";
 import { readFlyerTerms } from "./corpus-db.js";
-import { notifyFailure, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
 
 // KV keys. Rollups are per-location (`flyer:{locationId}`); the cursor and the
 // persisted sweep plan are single keys. All live in the existing KROGER_KV namespace.
@@ -367,6 +367,8 @@ export async function runWarmJob(env: Env, deps: WarmDeps): Promise<void> {
         errors: r.errors ?? 0,
       },
     });
+    // History point (usage-trends): doubles = [duration_ms, errors]. Additive, best-effort.
+    recordUsagePoint(env, "flyer-warm", { ok: true, durationMs: deps.now() - startedAt, counts: [r.errors ?? 0] });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[flyer-warm] tick failed:", msg);
@@ -375,6 +377,7 @@ export async function runWarmJob(env: Env, deps: WarmDeps): Promise<void> {
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    recordUsagePoint(env, "flyer-warm", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "flyer-warm", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing
   }
