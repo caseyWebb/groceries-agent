@@ -106,7 +106,10 @@ function isPrivateIpv6(addr: string): boolean {
 /** True when a URL host is a private/loopback/link-local literal or a localhost name. A normal
  *  public hostname returns false (it cannot be resolved here — see the module LIMIT note). */
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  // Strip a single trailing dot (the FQDN root form): `localhost.` resolves to loopback exactly
+  // like `localhost`, and the WHATWG parser keeps the dot on NON-IP hosts, so the name check must
+  // normalize it. (The parser already strips it from IPv4-literal hosts.)
+  const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (host.startsWith("[") && host.endsWith("]")) return isPrivateIpv6(host.slice(1, -1));
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return isPrivateIpv4(host);

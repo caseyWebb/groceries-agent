@@ -27,7 +27,7 @@ These are cheap to fix together because they share one chokepoint, and they are 
 
 - **Code:** `src/http.ts` (primitive), `src/url.ts` (the pure `assertPublicHttpUrl` guard — already the dependency-free URL helper home), `src/discovery-sweep.ts` (`selectFeedBatch` + KV cursor in `loadCandidates`, `feedFetchMaxPerTick` in `DiscoveryConfig`/`DEFAULT_CONFIG`), `src/discovery-probe.ts` + `src/recipe-acquire.ts` (inherit the primitive + capped read), `src/corpus-db.ts` (`addFeedRows` write-time guard), `src/discovery-tools.ts` (`update_feeds` reject surface).
 - **State:** one new ephemeral KV key (`discovery:feed-cursor` in `KROGER_KV`, the namespace the flyer cursor already uses). No D1 migration.
-- **Config:** `feedFetchMaxPerTick` added to `DiscoveryConfig` (operator-tunable via the existing `loadDiscoveryConfig` override); calibrated against the residual external-fetch budget (`flyer + recipe-page + K ≤ ~50`).
+- **Config:** `feedFetchMaxPerTick` added to `DiscoveryConfig`/`DEFAULT_CONFIG` as a constant guardrail (modeled on `retryFetchMaxPerTick` — **not** an operator knob: not in the D1 `discovery_config` override or the admin UI); calibrated against the residual external-fetch budget (`flyer + recipe-page + K ≤ ~50`).
 - **Docs:** `docs/TOOLS.md` (`update_feeds` reject reason), `docs/ARCHITECTURE.md` (the egress guard + sweep feed-rotation).
 - **Dependencies:** none added (pure-JS URL parsing + `AbortSignal`).
 - **Known limit:** on Workers a host guard catches literal private targets and redirect hops but cannot pre-resolve DNS, so a public name that resolves to a private address is not caught — consistent with the issues' medium/low severities (Workers has no co-located metadata/loopback service).

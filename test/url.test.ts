@@ -62,7 +62,7 @@ describe("assertPublicHttpUrl — refused private IPv4 literals", () => {
     "http://169.254.169.254/", // the cloud-metadata address
     "http://0.0.0.0/",
     "http://0.1.2.3/",
-    "http://999.1.1.1/", // syntactic dotted-quad, out of range → refused
+    "http://999.1.1.1/", // out-of-range quad → the URL parser throws → refused as malformed
   ]) {
     it(`refuses ${bad}`, () => {
       expect(isPublicHttpUrl(bad)).toBe(false);
@@ -83,6 +83,9 @@ describe("assertPublicHttpUrl — refused IPv6 + localhost", () => {
     "http://localhost/",
     "http://LocalHost:3000/",
     "http://api.localhost/",
+    "http://localhost./", // FQDN-root trailing-dot form still resolves to loopback
+    "http://api.localhost./",
+    "http://127.0.0.1./", // trailing-dot IPv4 (parser strips the dot)
   ]) {
     it(`refuses ${bad}`, () => {
       expect(isPublicHttpUrl(bad)).toBe(false);
