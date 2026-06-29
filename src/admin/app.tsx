@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
+import { validator } from "hono/validator";
 import type { Env } from "../env.js";
 import { db } from "../db.js";
 import { ToolError } from "../errors.js";
@@ -30,7 +31,7 @@ import { buildDiscoveryDeps, processCandidate, DEFAULT_CONFIG } from "../discove
 import { addDiscoveryRejection } from "../corpus-db.js";
 import { canonicalizeUrl } from "../url.js";
 import { LogsPage } from "./pages/logs.js";
-import { getDiscoveryConfig, putDiscoveryConfig, analyzeDiscovery, dryRunDiscovery, testFeed, getOperatorConfig, putOperatorConfig } from "./config-api.js";
+import { getDiscoveryConfig, putDiscoveryConfig, analyzeDiscovery, dryRunDiscovery, testFeed, getOperatorConfig, putOperatorConfig, listCorpus, addCorpus, deleteCorpus } from "./config-api.js";
 import { registerConfigRoutes } from "./pages/config.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */
@@ -159,7 +160,16 @@ const routes = app
   .post("/api/discovery/test-feed", async (c) => c.json(await testFeed(c.env, await c.req.json())))
   // Config › Ranking + Flyer: the operator ranking/flyer config store.
   .get("/api/operator-config", async (c) => c.json(await getOperatorConfig(c.env)))
-  .put("/api/operator-config", async (c) => c.json(await putOperatorConfig(c.env, await c.req.json())));
+  .put("/api/operator-config", async (c) => c.json(await putOperatorConfig(c.env, await c.req.json())))
+  // Config › shared-corpus editors: list/add/remove the five group-wide lookup tables. The add
+  // route declares its JSON body via a validator so the typed client accepts it alongside :table.
+  .get("/api/corpus/:table", async (c) => c.json(await listCorpus(c.env, c.req.param("table"))))
+  .post("/api/corpus/:table", validator("json", (v) => v as Record<string, unknown>), async (c) =>
+    c.json(await addCorpus(c.env, c.req.param("table"), c.req.valid("json"))),
+  )
+  .delete("/api/corpus/:table/:key", async (c) =>
+    c.json(await deleteCorpus(c.env, c.req.param("table"), decodeURIComponent(c.req.param("key")))),
+  );
 
 // Data explorer area (operator-data-explorer): read-only SSR views over D1 + the R2 corpus.
 registerDataRoutes(app);

@@ -22,6 +22,7 @@ import {
   parseOperatorConfigPatch,
   type OperatorConfig,
 } from "../operator-config.js";
+import { isCorpusTable, listCorpusTable, addCorpusRow, deleteCorpusRow } from "../admin-corpus.js";
 import { ToolError } from "../errors.js";
 
 /** The nine operator-editable discovery knobs (the read-only retry/feed defaults are never PUT). */
@@ -101,4 +102,24 @@ export async function putOperatorConfig(env: Env, body: Record<string, unknown>)
   if (err) throw err;
   await saveOperatorConfig(env, patch);
   return { config: await loadOperatorConfig(env) };
+}
+
+// --- Shared-corpus editors (aliases / flyer-terms / feeds / senders / members) ----------------
+
+/** Validate the `<table>` slug (404 on unknown), narrowing it to the corpus-table union. */
+function corpusTable(table: string): "aliases" | "flyer-terms" | "feeds" | "senders" | "members" {
+  if (!isCorpusTable(table)) throw new ToolError("not_found", `No corpus table ${table}`, { table });
+  return table;
+}
+
+export async function listCorpus(env: Env, table: string): Promise<ReturnType<typeof listCorpusTable>> {
+  return listCorpusTable(env, corpusTable(table));
+}
+
+export async function addCorpus(env: Env, table: string, body: Record<string, unknown>): Promise<ReturnType<typeof addCorpusRow>> {
+  return addCorpusRow(env, corpusTable(table), body);
+}
+
+export async function deleteCorpus(env: Env, table: string, key: string): Promise<ReturnType<typeof deleteCorpusRow>> {
+  return deleteCorpusRow(env, corpusTable(table), key);
 }
