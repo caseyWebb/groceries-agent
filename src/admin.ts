@@ -374,6 +374,23 @@ async function resolveActingTenant(env: Env, tenantId: string | null): Promise<T
   return resolved;
 }
 
+/**
+ * Mint a single-use Kroger consent link bound to a chosen ALLOWLISTED member — the same nonce
+ * the `kroger_login_url` MCP tool mints (kroger-user-auth), so the operator can link a member
+ * who has no `/mcp` session yet. Resolved by the same allowlist check the tool console uses
+ * (an unknown id is `not_found`); never exposed as an MCP tool. The nonce is not logged — it
+ * rides only in the returned url, carried in this Access-authenticated response.
+ */
+export async function krogerConsentLink(
+  env: Env,
+  deps: AdminDeps,
+  tenantId: string,
+  origin: string,
+): Promise<{ url: string }> {
+  const tenant = await resolveActingTenant(env, tenantId);
+  return { url: await buildKrogerConsentUrl(deps.krogerKv, origin, tenant.id) };
+}
+
 /** Route an `/admin/api/*` request to an operation. Throws ToolError; the caller serializes. */
 async function routeAdminApi(
   env: Env,
@@ -404,15 +421,10 @@ async function routeAdminApi(
     return { ...result, connector_url: `${url.origin}/mcp` };
   }
 
-  // Kroger consent-link bootstrap: mint the same single-use nonce the `kroger_login_url`
-  // MCP tool mints (kroger-user-auth), bound to a chosen ALLOWLISTED member, so the
-  // operator can link a member who has no `/mcp` session yet. Resolved by the same
-  // allowlist check the tool console uses; never exposed as an MCP tool. The nonce is
-  // not logged (it rides only in this Access-authenticated response).
+  // Kroger consent-link bootstrap (shared with the Hono panel's typed route — see krogerConsentLink).
   const krogerLoginMatch = path.match(/^\/admin\/api\/tenants\/([^/]+)\/kroger-login$/);
   if (krogerLoginMatch && method === "POST") {
-    const tenant = await resolveActingTenant(env, decodeURIComponent(krogerLoginMatch[1]));
-    return { url: await buildKrogerConsentUrl(deps.krogerKv, url.origin, tenant.id) };
+    return krogerConsentLink(env, deps, decodeURIComponent(krogerLoginMatch[1]), url.origin);
   }
 
   const tenantMatch = path.match(/^\/admin\/api\/tenants\/([^/]+)$/);

@@ -17,6 +17,7 @@ import {
   onboard,
   rotate,
   revoke,
+  krogerConsentLink,
   randomInviteCode,
   type AdminDeps,
 } from "../admin.js";
@@ -112,6 +113,10 @@ const routes = app
     const result = await rotate(adminDeps(c.env), decodeURIComponent(c.req.param("id")));
     return c.json({ ...result, connector_url: connectorUrl(c.req.url) });
   })
+  // Mint a single-use Kroger consent link for an allowlisted member (for one with no /mcp session yet).
+  .post("/api/tenants/:id/kroger-login", async (c) =>
+    c.json(await krogerConsentLink(c.env, adminDeps(c.env), decodeURIComponent(c.req.param("id")), new URL(c.req.url).origin)),
+  )
   .delete("/api/tenants/:id", async (c) => {
     return c.json(await revoke(adminDeps(c.env), decodeURIComponent(c.req.param("id"))));
   })

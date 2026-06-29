@@ -1654,7 +1654,7 @@ function MembersIsland(initial) {
   const [members, setMembers] = useState(initial.members);
   const [username, setUsername] = useState("");
   const [action, setAction] = useState({ status: "idle" });
-  const [minted, setMinted] = useState(null);
+  const [banner, setBanner] = useState(null);
   const busy = action.status === "busy";
   async function refresh() {
     const res = await client.admin.api.tenants.$get();
@@ -1667,7 +1667,7 @@ function MembersIsland(initial) {
     const res = await client.admin.api.tenants.$post({ json: { username } });
     if (res.ok) {
       const data = await res.json();
-      setMinted({ username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
+      setBanner({ kind: "invite", username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
       setUsername("");
       setAction({ status: "idle" });
       await refresh();
@@ -1680,10 +1680,21 @@ function MembersIsland(initial) {
     const res = await client.admin.api.tenants[":id"].rotate.$post({ param: { id } });
     if (res.ok) {
       const data = await res.json();
-      setMinted({ username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
+      setBanner({ kind: "invite", username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
       setAction({ status: "idle" });
     } else {
       setAction({ status: "failed", op: { kind: "rotate", id }, message: errMessage(await res.json()) });
+    }
+  }
+  async function doKrogerLink(id) {
+    setAction({ status: "busy", op: { kind: "kroger", id } });
+    const res = await client.admin.api.tenants[":id"]["kroger-login"].$post({ param: { id } });
+    if (res.ok) {
+      const data = await res.json();
+      setBanner({ kind: "kroger", username: id, url: data.url });
+      setAction({ status: "idle" });
+    } else {
+      setAction({ status: "failed", op: { kind: "kroger", id }, message: errMessage(await res.json()) });
     }
   }
   async function doRevoke(id) {
@@ -1697,20 +1708,24 @@ function MembersIsland(initial) {
     }
   }
   return /* @__PURE__ */ jsxDEV("div", { children: [
-    minted ? /* @__PURE__ */ jsxDEV("div", { class: "minted", children: [
+    banner ? /* @__PURE__ */ jsxDEV("div", { class: "minted", children: [
       /* @__PURE__ */ jsxDEV("div", { class: "minted-head", children: [
-        /* @__PURE__ */ jsxDEV("strong", { children: minted.username }),
-        /* @__PURE__ */ jsxDEV("button", { class: "link", onClick: () => setMinted(null), children: "dismiss" })
+        /* @__PURE__ */ jsxDEV("strong", { children: banner.kind === "kroger" ? `Kroger consent link for ${banner.username}` : banner.username }),
+        /* @__PURE__ */ jsxDEV("button", { class: "link", onClick: () => setBanner(null), children: "dismiss" })
       ] }),
-      /* @__PURE__ */ jsxDEV("p", { class: "once", children: "Shown once \u2014 copy the invite now." }),
-      /* @__PURE__ */ jsxDEV("div", { class: "row", children: [
+      /* @__PURE__ */ jsxDEV("p", { class: "once", children: banner.kind === "kroger" ? "Give this link to the member to open and authorize Kroger. Single-use, expires in ~10 minutes; never logged." : "Shown once \u2014 copy the invite now." }),
+      banner.kind === "invite" ? /* @__PURE__ */ jsxDEV("div", { class: "row", children: [
         /* @__PURE__ */ jsxDEV("span", { class: "k", children: "invite code" }),
-        /* @__PURE__ */ jsxDEV("span", { class: "v", children: minted.invite_code })
-      ] }),
-      /* @__PURE__ */ jsxDEV("div", { class: "row", children: [
+        /* @__PURE__ */ jsxDEV("span", { class: "v", children: banner.invite_code })
+      ] }) : null,
+      banner.kind === "invite" ? /* @__PURE__ */ jsxDEV("div", { class: "row", children: [
         /* @__PURE__ */ jsxDEV("span", { class: "k", children: "connector" }),
-        /* @__PURE__ */ jsxDEV("span", { class: "v", children: minted.connector_url })
-      ] })
+        /* @__PURE__ */ jsxDEV("span", { class: "v", children: banner.connector_url })
+      ] }) : null,
+      banner.kind === "kroger" ? /* @__PURE__ */ jsxDEV("div", { class: "row", children: [
+        /* @__PURE__ */ jsxDEV("span", { class: "k", children: "consent url" }),
+        /* @__PURE__ */ jsxDEV("span", { class: "v", children: banner.url })
+      ] }) : null
     ] }) : null,
     action.status === "failed" ? /* @__PURE__ */ jsxDEV("div", { class: "error", children: action.message }) : null,
     /* @__PURE__ */ jsxDEV("table", { children: [
@@ -1722,6 +1737,7 @@ function MembersIsland(initial) {
         /* @__PURE__ */ jsxDEV("td", { children: m }),
         /* @__PURE__ */ jsxDEV("td", { class: "form-actions", children: [
           /* @__PURE__ */ jsxDEV("button", { class: "link", disabled: busy, onClick: () => doRotate(m), children: "rotate invite" }),
+          /* @__PURE__ */ jsxDEV("button", { class: "link", disabled: busy, onClick: () => doKrogerLink(m), children: action.status === "busy" && action.op.kind === "kroger" && action.op.id === m ? "minting\u2026" : "kroger link" }),
           /* @__PURE__ */ jsxDEV("button", { class: "danger", disabled: busy, onClick: () => doRevoke(m), children: "revoke" })
         ] })
       ] })) })

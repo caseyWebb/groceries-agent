@@ -33,7 +33,7 @@ and Logs islands, so no separate runtime-ceiling gate is needed.)
 - [x] Config · Calibration — SSR the loaded config (seeded into the island); island for the `Clean | Dirty | NeedsConfirm` form machine, Analyze, Dry-run, and confirm-gated Save (reads the structured floor-breach error body to confirm — better than the Elm `Http.BadStatus` wart). Config-area shell + sub-nav stood up.
 - [x] Config · corpus editors — SSR the 5 lookup tables; one generic island for add/remove with one-at-a-time mutation state; feed-test action (read-only, no refetch). Ranking/Flyer operator-config forms also landed under the Config shell.
 - [x] Logs actions — per-row Retry/Delete island (one `RowAction` union, one-at-a-time, reload on success) + the entry detail dialog; retry/delete routes reuse the sweep's own functions
-- [ ] Kroger-consent link action where it lives in the panel
+- [x] Kroger-consent link action — per-member "kroger link" button in the Members island minting a single-use consent url (banner is a two-variant `invite | kroger` union); backend extracted to a shared `krogerConsentLink` the legacy path also calls
 - [ ] Commit Playwright visual-snapshot baselines for the interactive consoles (incl. open-dialog and confirm states)
 
 ## 5. Cutover + cleanup

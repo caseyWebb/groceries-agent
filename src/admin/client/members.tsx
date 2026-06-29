@@ -11,15 +11,17 @@ import type { MembersIslandProps } from "../shared.js";
 
 const client = hc<AdminApp>(location.origin);
 
-interface Minted {
-  username: string;
-  invite_code: string;
-  connector_url: string;
-}
+// The "show once" banner: either freshly-minted invite credentials or a single-use Kroger
+// consent link for a member. One field, two variants — so the two banners can't both be set
+// in contradictory ways (admin/CLAUDE.md discipline, ported from the Elm `Minted` type).
+type Banner =
+  | { kind: "invite"; username: string; invite_code: string; connector_url: string }
+  | { kind: "kroger"; username: string; url: string };
 
 type Op =
   | { kind: "onboard" }
   | { kind: "rotate"; id: string }
+  | { kind: "kroger"; id: string }
   | { kind: "revoke"; id: string };
 
 type ActionState =
@@ -39,7 +41,7 @@ function MembersIsland(initial: MembersIslandProps) {
   const [members, setMembers] = useState<string[]>(initial.members);
   const [username, setUsername] = useState("");
   const [action, setAction] = useState<ActionState>({ status: "idle" });
-  const [minted, setMinted] = useState<Minted | null>(null);
+  const [banner, setBanner] = useState<Banner | null>(null);
 
   const busy = action.status === "busy";
 
@@ -55,7 +57,7 @@ function MembersIsland(initial: MembersIslandProps) {
     const res = await client.admin.api.tenants.$post({ json: { username } });
     if (res.ok) {
       const data = await res.json();
-      setMinted({ username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
+      setBanner({ kind: "invite", username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
       setUsername("");
       setAction({ status: "idle" });
       await refresh();
@@ -69,10 +71,22 @@ function MembersIsland(initial: MembersIslandProps) {
     const res = await client.admin.api.tenants[":id"].rotate.$post({ param: { id } });
     if (res.ok) {
       const data = await res.json();
-      setMinted({ username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
+      setBanner({ kind: "invite", username: data.username, invite_code: data.invite_code, connector_url: data.connector_url });
       setAction({ status: "idle" });
     } else {
       setAction({ status: "failed", op: { kind: "rotate", id }, message: errMessage(await res.json()) });
+    }
+  }
+
+  async function doKrogerLink(id: string): Promise<void> {
+    setAction({ status: "busy", op: { kind: "kroger", id } });
+    const res = await client.admin.api.tenants[":id"]["kroger-login"].$post({ param: { id } });
+    if (res.ok) {
+      const data = await res.json();
+      setBanner({ kind: "kroger", username: id, url: data.url });
+      setAction({ status: "idle" });
+    } else {
+      setAction({ status: "failed", op: { kind: "kroger", id }, message: errMessage(await res.json()) });
     }
   }
 
@@ -89,23 +103,37 @@ function MembersIsland(initial: MembersIslandProps) {
 
   return (
     <div>
-      {minted ? (
+      {banner ? (
         <div class="minted">
           <div class="minted-head">
-            <strong>{minted.username}</strong>
-            <button class="link" onClick={() => setMinted(null)}>
+            <strong>{banner.kind === "kroger" ? `Kroger consent link for ${banner.username}` : banner.username}</strong>
+            <button class="link" onClick={() => setBanner(null)}>
               dismiss
             </button>
           </div>
-          <p class="once">Shown once — copy the invite now.</p>
-          <div class="row">
-            <span class="k">invite code</span>
-            <span class="v">{minted.invite_code}</span>
-          </div>
-          <div class="row">
-            <span class="k">connector</span>
-            <span class="v">{minted.connector_url}</span>
-          </div>
+          <p class="once">
+            {banner.kind === "kroger"
+              ? "Give this link to the member to open and authorize Kroger. Single-use, expires in ~10 minutes; never logged."
+              : "Shown once — copy the invite now."}
+          </p>
+          {banner.kind === "invite" ? (
+            <div class="row">
+              <span class="k">invite code</span>
+              <span class="v">{banner.invite_code}</span>
+            </div>
+          ) : null}
+          {banner.kind === "invite" ? (
+            <div class="row">
+              <span class="k">connector</span>
+              <span class="v">{banner.connector_url}</span>
+            </div>
+          ) : null}
+          {banner.kind === "kroger" ? (
+            <div class="row">
+              <span class="k">consent url</span>
+              <span class="v">{banner.url}</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {action.status === "failed" ? <div class="error">{action.message}</div> : null}
@@ -123,6 +151,9 @@ function MembersIsland(initial: MembersIslandProps) {
               <td class="form-actions">
                 <button class="link" disabled={busy} onClick={() => doRotate(m)}>
                   rotate invite
+                </button>
+                <button class="link" disabled={busy} onClick={() => doKrogerLink(m)}>
+                  {action.status === "busy" && action.op.kind === "kroger" && action.op.id === m ? "minting…" : "kroger link"}
                 </button>
                 <button class="danger" disabled={busy} onClick={() => doRevoke(m)}>
                   revoke

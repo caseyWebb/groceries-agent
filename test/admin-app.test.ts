@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import app from "../src/admin/app.js";
 import type { Env } from "../src/env.js";
+import type { KvStore } from "../src/kroger-user.js";
+import { redeemAuthNonce } from "../src/oauth.js";
 import { fakeD1 } from "./fake-d1.js";
 
 /** In-memory KV (single-page list) — satisfies the bindings the member ops touch. */
@@ -106,5 +108,20 @@ describe("admin Hono app", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ username: "casey", revoked: true });
+  });
+
+  it("mints a redeemable Kroger consent link for an allowlisted member", async () => {
+    const env = makeEnv({}, ["casey"]);
+    const res = await app.request("/admin/api/tenants/casey/kroger-login", { method: "POST" }, env);
+    expect(res.status).toBe(200);
+    const { url } = (await res.json()) as { url: string };
+    const nonce = new URL(url).searchParams.get("nonce")!;
+    expect(await redeemAuthNonce(env.KROGER_KV as unknown as KvStore, nonce)).toBe("casey");
+  });
+
+  it("404s a Kroger consent link for a non-allowlisted member", async () => {
+    const res = await app.request("/admin/api/tenants/ghost/kroger-login", { method: "POST" }, makeEnv());
+    expect(res.status).toBe(404);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "not_found" });
   });
 });
