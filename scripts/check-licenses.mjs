@@ -9,10 +9,10 @@
 //   node scripts/check-licenses.mjs           scan prod deps; exit 1 on any violation
 //   node scripts/check-licenses.mjs --list    print every prod license seen (calibration aid)
 //
-// "What's in production" comes from package-lock.json's `packages` map (entries flagged `dev`,
-// `devOptional`, or `optional` are excluded — only the guaranteed-shipped closure). Each package's
-// license is read from its own installed package.json (authoritative), falling back to the lockfile
-// entry's `license` field.
+// "What's in production" comes from package-lock.json's `packages` map (entries flagged `dev` or
+// `devOptional` are excluded — build/test tooling and the dev-only optional tree). `optional: true`
+// is kept in scope on purpose. Each package's license is read from its own installed package.json
+// (authoritative), falling back to the lockfile entry's `license` field.
 
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -145,18 +145,19 @@ function readJson(path) {
 
 /**
  * Walk package-lock.json's `packages` map and return one record per PRODUCTION dependency:
- * `{ name, version, license, path }`. The root (""), workspace links, and anything not in the
- * guaranteed-shipped closure — `dev`, `devOptional`, or `optional` — are skipped: only the core
- * production tree is bundled into the Worker, so an optional native addon (e.g. an LZMA
- * accelerator that can't even load on workerd) is not "what we distribute" and shouldn't gate CI.
- * License comes from the installed package.json, falling back to the lockfile entry's `license`.
+ * `{ name, version, license, path }`. The root (""), workspace links, and the dev-only tree
+ * (`dev` / `devOptional`) are skipped. `optional: true` is kept IN scope: an optional dependency
+ * can be a genuine runtime path, not just a platform binary, so its license still matters — an
+ * addon that can't load on workerd simply never ships, but we'd rather flag an incompatible
+ * optional license than silently pass it. License comes from the installed package.json, falling
+ * back to the lockfile entry's `license`.
  */
 export function collectProductionDeps(lock, root = ROOT) {
   const out = [];
   const packages = lock.packages || {};
   for (const [path, entry] of Object.entries(packages)) {
     if (path === "" || !path.includes("node_modules/")) continue;
-    if (entry.dev === true || entry.devOptional === true || entry.optional === true || entry.link === true) continue;
+    if (entry.dev === true || entry.devOptional === true || entry.link === true) continue;
     const installed = readJson(join(root, path, "package.json"));
     const name = installed?.name || path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length);
     const version = installed?.version || entry.version || "";
@@ -185,7 +186,7 @@ if (isMain) {
       byLicense.get(key).push(`${d.name}@${d.version}`);
     }
     for (const key of [...byLicense.keys()].sort()) {
-      console.log(`${isLicenseAllowed(key) ? "ok " : "?? "} ${key}  (${byLicense.get(key).length})`);
+      console.log(`${isLicenseAllowed(key) ? "ok " : "NO "} ${key}  (${byLicense.get(key).length})`);
     }
     process.exit(0);
   }
