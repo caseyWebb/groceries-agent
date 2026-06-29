@@ -1,0 +1,33 @@
+{
+  "pkg": "operator-admin-kit",
+  "globalName": "OperatorAdmin",
+  "shape": "package",
+  "cssEntry": "src/admin/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "guidelinesGlob": [],
+  "componentSrcMap": {
+    "Card": "src/admin/ui/kit.tsx",
+    "Button": "src/admin/ui/kit.tsx",
+    "Pill": "src/admin/ui/kit.tsx",
+    "TierBadge": "src/admin/ui/kit.tsx",
+    "Dot": "src/admin/ui/kit.tsx",
+    "ErrorBanner": "src/admin/ui/kit.tsx",
+    "Field": "src/admin/ui/kit.tsx",
+    "Table": "src/admin/ui/kit.tsx",
+    "Dialog": "src/admin/ui/kit.tsx"
+  },
+  "dtsPropsFor": {
+    "Card": "  children?: React.ReactNode;",
+    "Button": "  children?: React.ReactNode;\n  /** Visual style. `primary` is the default solid accent button. */\n  variant?: \"primary\" | \"link\" | \"danger\" | \"danger-solid\";\n  type?: \"button\" | \"submit\";",
+    "Pill": "  label: string;\n  active?: boolean;",
+    "TierBadge": "  /** Projection status: `indexed` | `skipped` | `pending` | `orphaned`. */\n  status: string;",
+    "Dot": "  state: \"ok\" | \"fail\" | \"never\" | \"muted\";",
+    "ErrorBanner": "  message: string;",
+    "Field": "  label: string;\n  /** Form field name; seeds the input server-side. */\n  name: string;\n  value?: string;\n  placeholder?: string;",
+    "Table": "  /** Header row cells (e.g. a set of `<th>`). */\n  head: React.ReactNode;\n  children?: React.ReactNode;",
+    "Dialog": "  title: string;\n  children?: React.ReactNode;"
+  },
+  "overrides": {
+    "Dialog": { "cardMode": "single", "primaryStory": "MemberDetail" }
+  }
+}

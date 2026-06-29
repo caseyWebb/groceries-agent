@@ -1,0 +1,7 @@
+{
+  "//": "Preview-local JSX config. The design-export previews are React (the design app's runtime), but the repo root tsconfig sets jsxImportSource: hono/jsx — esbuild auto-discovers the nearest tsconfig per entry, so this one pins the previews to React's runtime (which the converter's reactShim maps to window.React). Required for the preview render check; committed so re-syncs compile previews the same way.",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  }
+}

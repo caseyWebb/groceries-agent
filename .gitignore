@@ -68,3 +68,12 @@ Desktop.ini
 .\#*
 \#*\#
 .migration/
+
+# claude.ai/design sync (design-sync skill): staged converter, generated bundle,
+# and machine state. The durable inputs under .design-sync/ (config.json, NOTES.md,
+# conventions.md, previews/, entry/) ARE committed; only the cache/output is ignored.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
