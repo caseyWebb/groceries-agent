@@ -594,7 +594,7 @@ AE has **no named columns** — a data point is `index1`, `blob1..blob20`, `doub
 - `index1` = job name (the sampling key)
 - `blob1` = job name · `blob2` = outcome (`"ok"` | `"fail"`)
 - `double1` = run duration (ms) — the same slot-1 metric for every job
-- `double2…` = the job's own summary counts, in a **fixed per-job order** (the fail path emits `double1` only):
+- `double2…` = the job's own summary counts, in a **fixed per-job order** (the five cron jobs' catch-path emits `double1` (duration) only; `email` and the `recipe-classify` quota-exhausted path still carry their counts even when `blob2` is `"fail"`):
   - `flyer-warm`: `[errors]`
   - `recipe-classify`: `[classified, pending, parked, errored, pruned]`
   - `recipe-index`: `[projected, skipped]`
