@@ -51,7 +51,7 @@ export interface SearchOptions {
 }
 
 export interface KrogerClient {
-  /** Resolve a `preferred_location` label (e.g. "Kroger - 76104") to a locationId, cached. */
+  /** Resolve a `preferred_location` label (e.g. "Kroger - 76104") to a locationId. */
   resolveLocationId(label: string): Promise<string>;
   /** Term search at a location; returns priced, fulfillment-tagged candidates. */
   search(term: string, opts: SearchOptions): Promise<KrogerCandidate[]>;
