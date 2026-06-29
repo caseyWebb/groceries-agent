@@ -218,11 +218,14 @@ export async function fetchUsage(env: Env, deps: UsageDeps = defaultDeps): Promi
 // CORRECTION to the snapshot above: built-in datasets (KV ops, AI neurons) use the GraphQL
 // Analytics API; a CUSTOM AE dataset uses the AE SQL API instead — `POST /accounts/<id>/
 // analytics_engine/sql` with a SQL string body and the same bearer token. So this is a SECOND
-// client (SQL, not GraphQL), reusing `CF_ACCOUNT_ID` + `CF_ANALYTICS_TOKEN`. NOTE: the token may
-// need an Account Analytics: Read scope that also covers AE SQL, and the SQL dialect/`data` shape
-// is verified against a live account as part of landing this capability (see the change's spike
-// tasks) — the same "verify against live" caveat as the GraphQL field names above. Performs NO
-// KV or D1 operation (an outbound `fetch` only), and opt-in: `{ configured: false }` when unset.
+// client (SQL, not GraphQL), reusing `CF_ACCOUNT_ID` + `CF_ANALYTICS_TOKEN`. The endpoint + bearer
+// auth are confirmed against the live API (a wrongly-scoped token gets a structured HTTP 403
+// "Authorization error", not a 404), so the token MUST carry the **Account Analytics: Read** scope
+// — the same scope the GraphQL snapshot needs, but it is checked independently here, so verify it
+// covers AE SQL on a connected account. The success-path envelope (`{ data: [...] }`, the rows this
+// reads) follows Cloudflare's documented AE SQL shape; confirm it against a properly-scoped token
+// once data has been written. Performs NO KV or D1 operation (an outbound `fetch` only), and opt-in:
+// `{ configured: false }` when unset.
 
 /** How many days of history the trends query covers (AE free-tier retention is ≈90 days). */
 export const TRENDS_WINDOW_DAYS = 30;
