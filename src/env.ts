@@ -48,13 +48,6 @@ export interface Env {
    * deployed Worker. (Only the literal `1` enables it; e.g. `"true"` is a no-op.)
    */
   ADMIN_DEV_BYPASS?: string;
-  /**
-   * Transitional flag (operator-admin rewrite): when set to exactly `1`, `/admin*` is served
-   * by the new Hono app (`src/admin/app.tsx`) instead of the Elm `handleAdmin`. Lets the
-   * TypeScript panel be built and exercised behind the same Access gate while the Elm panel
-   * remains the default, until the single cutover flip removes this branch. Non-secret.
-   */
-  ADMIN_HONO?: string;
 
   // --- AGPL §13 source offer (open-source-license). OPTIONAL, non-secret. ---
   /**
@@ -166,10 +159,12 @@ export interface Env {
 
   // --- Static assets (operator-admin) ---
   /**
-   * Workers Static Assets binding serving the admin SPA committed under `admin/dist/`.
-   * `handleAdmin` serves the shell/bundle via `env.ASSETS.fetch()` after the Access
-   * gate, so the static surface is gated too. Code-level binding (no operator id);
-   * propagated by the deploy merge (`scripts/merge-wrangler-config.mjs` allowlist).
+   * Workers Static Assets binding serving the admin panel's island bundles + stylesheet
+   * committed under `admin/dist/`. The Hono app (`src/admin/app.tsx`) SSRs every page and
+   * falls back to `env.ASSETS.fetch()` for `/admin/islands/*` + `/admin/styles.css` — past
+   * the Access gate, so the static surface is gated too. `run_worker_first` on `/admin*`
+   * keeps assets behind the gate. Code-level binding (no operator id); propagated by the
+   * deploy merge (`scripts/merge-wrangler-config.mjs` allowlist).
    */
   ASSETS: Fetcher;
 

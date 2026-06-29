@@ -110,4 +110,42 @@ describe("Config › shared-corpus editors (typed API routes)", () => {
     expect((await res.json()) as { error: string }).toMatchObject({ error: "validation_failed" });
     expect(tables.aliases).toHaveLength(0);
   });
+
+  const post = (body: unknown) =>
+    ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) as RequestInit;
+
+  it("rejects feed tags that are not a string array (400)", async () => {
+    const { env } = devEnv({ feeds: [] });
+    const res = await app.request("/admin/api/corpus/feeds", post({ url: "https://a.com", tags: "x" }), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a negative feed weight (400)", async () => {
+    const { env } = devEnv({ feeds: [] });
+    const res = await app.request("/admin/api/corpus/feeds", post({ url: "https://a.com", weight: -1 }), env);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a malformed member address (no @) with 400 instead of a silent no-op", async () => {
+    const { env, tables } = devEnv({ discovery_members: [] });
+    const res = await app.request("/admin/api/corpus/members", post({ address: "notanaddress" }), env);
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "validation_failed" });
+    expect(tables.discovery_members).toHaveLength(0);
+  });
+
+  it("removes by primary key idempotently (removed: true, then false)", async () => {
+    const { env, tables } = devEnv({ flyer_terms: [{ term: "fruit" }] });
+    const hit = await app.request("/admin/api/corpus/flyer-terms/fruit", { method: "DELETE" }, env);
+    expect(await hit.json()).toEqual({ removed: true });
+    expect(tables.flyer_terms).toHaveLength(0);
+    const miss = await app.request("/admin/api/corpus/flyer-terms/fruit", { method: "DELETE" }, env);
+    expect(await miss.json()).toEqual({ removed: false });
+  });
+
+  it("normalizes an address key on delete", async () => {
+    const { env } = devEnv({ discovery_members: [{ address: "me@x.com" }] });
+    const res = await app.request("/admin/api/corpus/members/Me@X.com", { method: "DELETE" }, env);
+    expect(await res.json()).toEqual({ removed: true });
+  });
 });

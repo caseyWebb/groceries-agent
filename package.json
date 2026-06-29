@@ -28,8 +28,7 @@
     "check:licenses": "node scripts/check-licenses.mjs",
     "build:plugin": "node scripts/build-plugin.mjs",
     "build:admin": "node scripts/build-admin.mjs",
-    "build:vault": "node scripts/build-vault.mjs",
-    "test:admin": "node scripts/test-admin.mjs"
+    "build:vault": "node scripts/build-vault.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.1",

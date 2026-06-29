@@ -23,7 +23,6 @@ import { loadDiscoveryConfig } from "./discovery-calibration.js";
 import { loadOperatorConfig } from "./operator-config.js";
 import { createR2CorpusStore } from "./corpus-store.js";
 import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, recordUsagePoint, notifyFailure } from "./health.js";
-import { handleAdmin } from "./admin.js";
 import { handleCookbook } from "./cookbook.js";
 import { handleSource } from "./source.js";
 import adminApp from "./admin/app.js";
@@ -68,11 +67,9 @@ const defaultHandler = {
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname.startsWith("/oauth/")) return handleOAuth(env, url);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
-      // Transitional: the new Hono panel serves `/admin*` when ADMIN_HONO=1, else the Elm
-      // panel (handleAdmin). Both sit behind the same Access gate; the single cutover flip
-      // (Phase 5) removes this branch. See openspec rewrite-admin-panel-to-hono.
-      if (env.ADMIN_HONO === "1") return adminApp.fetch(request, env);
-      return handleAdmin(request, env);
+      // The operator admin panel (Hono SSR + islands), gated by Cloudflare Access in the app
+      // middleware. `run_worker_first` routes /admin* here before any static asset is served.
+      return adminApp.fetch(request, env);
     }
     if (url.pathname === "/cookbook" || url.pathname.startsWith("/cookbook/")) return handleCookbook(request, env);
     if (url.pathname === "/health.svg") return handleHealthSvgRequest(env);

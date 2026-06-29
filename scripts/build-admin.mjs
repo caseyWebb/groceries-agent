@@ -8,11 +8,10 @@
 //   <out>/admin/islands/<name>.js   (esbuild bundle, browser ESM, hono/jsx/dom runtime)
 //   <out>/admin/styles.css          (copied from src/admin/styles.css)
 //
-// esbuild only — NO network package registry needed, so any sandbox can rebuild it (the whole
-// point of leaving Elm: package.elm-lang.org is gone). Hand-rolled + deterministic, mirroring
-// build-plugin.mjs, with a --check validate-only mode (the CI drift gate). The Elm bundle
-// (admin/dist/admin/{elm.js,index.html}) stays committed and is served by default until the
-// cutover flip (Phase 5) removes it; this script no longer builds Elm.
+// esbuild only — NO network package registry needed, so any sandbox can rebuild it. Hand-rolled
+// + deterministic, mirroring build-plugin.mjs, with a --check validate-only mode (the CI drift
+// gate). The committed bundle is exactly the islands + the stylesheet; the server pages are not
+// pre-built (the Worker renders them at request time).
 //
 // Usage: node scripts/build-admin.mjs [--out admin/dist] [--check]
 

@@ -11,7 +11,7 @@
 // and a bad input as `validation_failed` — this module never throws raw.
 //
 // It rides the same Cloudflare Access gate as the rest of `/admin*` (it has no auth code of
-// its own); when Access is unconfigured `handleAdmin` 404s the whole surface, this included.
+// its own); when Access is unconfigured the admin app's gate 404s the whole surface, this included.
 
 import type { Env } from "./env.js";
 import { ToolError } from "./errors.js";

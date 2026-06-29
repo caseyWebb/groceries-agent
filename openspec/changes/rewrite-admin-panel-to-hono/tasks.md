@@ -37,11 +37,11 @@ and Logs islands, so no separate runtime-ceiling gate is needed.)
 - [ ] Commit Playwright visual-snapshot baselines for the interactive consoles (incl. open-dialog and confirm states)
 
 ## 5. Cutover + cleanup
-- [ ] Flip `handleAdmin` → `admin.fetch` so the Hono app serves all of `/admin`; remove the transition flag/branch
-- [ ] Remove `admin/elm.json`, `admin/src/*.elm`, `admin/tests/*.elm`, `scripts/test-admin.mjs` (Elm), and the pinned Elm compiler / `package.elm-lang.org` build dependency
-- [ ] Remove the **dropped Tool Console** backend: `GET /admin/api/tools` + `POST /admin/api/tools/:name` in `src/admin.ts`, and `src/admin-tools.ts` + its tests (if unused elsewhere)
-- [ ] Finish `scripts/build-admin.mjs` (esbuild-only); confirm `aubr build:admin --check` passes; drop the Elm reachability concern from CI
-- [ ] Repoint admin logic tests into the vitest run; the Playwright E2E + visual-snapshot suite runs in CI
-- [ ] Rewrite `admin/CLAUDE.md` for the TypeScript discipline (discriminated unions, `Loadable`, exhaustiveness)
-- [ ] Update `docs/ARCHITECTURE.md` and `CONTRIBUTING.md` admin-build references in lockstep; confirm `repo-structure` (`admin/src` → committed `admin/dist`) still holds
-- [ ] Rebuild and commit `admin/dist/`; `aubr typecheck` + `aubr test` green
+- [x] Flip `handleAdmin` → `adminApp.fetch` so the Hono app serves all of `/admin`; removed the `ADMIN_HONO` transition flag/branch (`src/index.ts`, `src/env.ts`)
+- [x] Remove `admin/elm.json`, `admin/src/*.elm`, `admin/tests/*.elm`, `scripts/test-admin.mjs`, `admin/index.html`, the committed Elm bundle (`admin/dist/admin/{elm.js,index.html}`), and the `test:admin` script (no pinned Elm dep existed — it was npx-fetched)
+- [x] Remove the **dropped Tool Console** backend: the legacy router (`routeAdminApi`/`handleAdmin`) in `src/admin.ts` (its `/admin/api/tools*` routes included), and `src/admin-tools.ts` + its test. The reusable in-memory MCP harness (`withServer`/`invokeTool`) moved to `test/tool-harness.ts` (one non-console user)
+- [x] Finish `scripts/build-admin.mjs` (esbuild-only); `aubr build:admin --check` passes; no Elm reachability concern remains
+- [x] Repoint the admin logic tests onto the Hono app (a `test/admin-request.ts` shim drives `adminApp.fetch`); obsolete transport tests (tool console, SPA shell, removed JSON `/api/data` + `/api/bug-reports`) dropped, corpus cases folded into `admin-config-corpus.test.ts`. Playwright E2E/snapshots remain deferred to the polish pass
+- [x] Rewrite the modeling-discipline doc for TypeScript (discriminated unions, `Loadable`, `assertNever`) — now co-located at `src/admin/CLAUDE.md`
+- [x] Update `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and root `CLAUDE.md` admin references in lockstep; `admin/` now holds only the committed `admin/dist/`
+- [x] Rebuild and commit `admin/dist/`; `aubr typecheck` + `aubr test` green
