@@ -25,7 +25,7 @@
 
 ## 3. Read-heavy areas (SSR-only)
 - [x] Status home — SSR `buildHealthPayload` directly (headline, per-job rows, D1 row, admin-gate posture incl. exposed/AI-quota warnings, never-run state); the 503-decode dance is gone (in-process call)
-- [ ] Logs — SSR the source submenu + selected-source entries (master/detail)
+- [x] Logs — SSR the source submenu + selected-source entries (master/detail); entries hydrate as an island for row actions
 - [x] Data explorer — SSR the 5 entity views (recipes list/detail, members, corpus + guidance browser, discovery, system) by calling `admin-data.ts` directly; all client state → query-param SSR navigation (no islands)
 - [x] Usage — SSR the usage / trends / tool-usage dashboards (KV/AI meters, per-job sparklines, per-tool latency; `{ configured: false }` setup cards preserved); Refresh is a reload
 - [ ] Commit Playwright visual-snapshot baselines for these read-only views
@@ -33,7 +33,7 @@
 ## 4. Remaining interactive areas (islands)
 - [ ] Config · Calibration — SSR the loaded config; island for the `Clean | Dirty | NeedsConfirm` form machine, Analyze, Dry-run, and confirm-gated Save (read the structured floor-breach error body to name the field — an improvement over the Elm `Http.BadStatus` wart)
 - [ ] Config · corpus editors — SSR the 5 lookup tables; island for add/remove with one-at-a-time mutation state; feed-test action (read-only, no refetch)
-- [ ] Logs actions — per-row Retry/Delete islands (one-at-a-time, reload on success) + the entry detail dialog
+- [x] Logs actions — per-row Retry/Delete island (one `RowAction` union, one-at-a-time, reload on success) + the entry detail dialog; retry/delete routes reuse the sweep's own functions
 - [ ] Kroger-consent link action where it lives in the panel
 - [ ] Commit Playwright visual-snapshot baselines for the interactive consoles (incl. open-dialog and confirm states)
 

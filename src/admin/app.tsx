@@ -25,6 +25,11 @@ import { StatusPage } from "./pages/status.js";
 import { registerDataRoutes } from "./pages/data.js";
 import { fetchUsage, fetchUsageTrends, fetchToolUsage } from "../usage.js";
 import { UsagePage } from "./pages/usage.js";
+import { readDiscoveryLog, readDiscoveryRowById, deleteDiscoveryRow } from "../discovery-db.js";
+import { buildDiscoveryDeps, processCandidate, DEFAULT_CONFIG } from "../discovery-sweep.js";
+import { addDiscoveryRejection } from "../corpus-db.js";
+import { canonicalizeUrl } from "../url.js";
+import { LogsPage } from "./pages/logs.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */
 function adminDeps(env: Env): AdminDeps {
@@ -106,6 +111,43 @@ const routes = app
   })
   .delete("/api/tenants/:id", async (c) => {
     return c.json(await revoke(adminDeps(c.env), decodeURIComponent(c.req.param("id"))));
+  })
+  // Logs › Discovery: the row actions the Logs island calls. Retry/Delete reuse the sweep's
+  // own functions (shared logic, not a re-implementation) — same outcome as the autonomous sweep.
+  .get("/api/logs/discovery", async (c) => c.json({ entries: await readDiscoveryLog(c.env, 200) }))
+  .post("/api/discovery/:id/retry", async (c) => {
+    const id = c.req.param("id");
+    const row = await readDiscoveryRowById(c.env, id);
+    if (!row) throw new ToolError("not_found", `No discovery row with id ${id}`);
+    if (row.outcome !== "error" && row.outcome !== "failed") {
+      throw new ToolError("unsupported", `Row ${id} has outcome "${row.outcome}" — only error/failed rows can be retried`);
+    }
+    const deps = buildDiscoveryDeps(c.env);
+    const members = await deps.loadMembers();
+    const corpus = await deps.loadCorpusVectors();
+    await processCandidate(
+      deps,
+      DEFAULT_CONFIG,
+      { url: row.url ?? "", title: row.title ?? "", summary: null, source: row.source ?? "", existingRowId: id, attempts: row.attempts },
+      { triageVec: null, members, corpus, importedVectors: [], nowMs: Date.now() },
+      { bypassCap: true },
+    );
+    return c.json(await readDiscoveryRowById(c.env, id));
+  })
+  .delete("/api/discovery/:id", async (c) => {
+    const id = c.req.param("id");
+    const row = await readDiscoveryRowById(c.env, id);
+    if (!row) throw new ToolError("not_found", `No discovery row with id ${id}`);
+    if (row.url) {
+      await addDiscoveryRejection(c.env, {
+        url: canonicalizeUrl(row.url),
+        reason: "operator-deleted",
+        rejectedBy: "admin",
+        rejectedAt: new Date().toISOString(),
+      });
+    }
+    await deleteDiscoveryRow(c.env, id);
+    return c.json({ deleted: id });
   });
 
 // Data explorer area (operator-data-explorer): read-only SSR views over D1 + the R2 corpus.
@@ -116,6 +158,11 @@ app.get("/usage", async (c) => {
   const [usage, trends, tools] = await Promise.all([fetchUsage(c.env), fetchUsageTrends(c.env), fetchToolUsage(c.env)]);
   return c.html(page(<UsagePage usage={usage} trends={trends} tools={tools} />));
 });
+
+// Logs area (operator-admin): the discovery sweep's outcome log (master/detail), SSR'd; the
+// entries hydrate as an island for per-row retry/delete + the detail dialog.
+app.get("/logs", async (c) => c.html(page(<LogsPage entries={await readDiscoveryLog(c.env, 200)} />)));
+app.get("/logs/discovery", async (c) => c.html(page(<LogsPage entries={await readDiscoveryLog(c.env, 200)} />)));
 
 // Static islands + styles fall through to the ASSETS binding (already past the Access gate;
 // `ASSETS.fetch` bypasses run_worker_first, so this never re-enters and loops).
