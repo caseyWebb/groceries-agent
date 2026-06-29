@@ -18,6 +18,8 @@ The Worker *is* the backend: the admin operations already exist as plain TS func
 - Make the UI buildable in any sandbox (remove the `package.elm-lang.org` dependency).
 - Preserve **every** observable behavior: Access gating, member lifecycle, tool console, corpus editors, calibration, discovery-log actions, Kroger-consent link.
 - Port the `admin/CLAUDE.md` "impossible states impossible" discipline to TypeScript.
+- Establish a thin JSX **component kit** (incl. a `Loadable` RemoteData primitive) the areas compose from; keep styling as global CSS.
+- Add **Playwright** end-to-end + visual-regression tests in CI, emitting screenshot diffs as PR artifacts.
 
 **Non-Goals:**
 - No second Worker, no meta-framework (SvelteKit/HonoX/Vite). One deployable.
@@ -50,6 +52,15 @@ Server JSX compiles via the Worker's existing esbuild through a `tsconfig` `jsx`
 ### 7. Impossible-states discipline in TypeScript
 The modeling rules carry forward as discriminated unions: a 4-state `Loadable`/RemoteData union for remote data; one union for an in-flight mutation + its target + its failure; errors carried inside the failing variant. Exhaustiveness is enforced at compile time via `ts-pattern`'s `.exhaustive()` and an `assertNever` helper — **no new linter required** (the repo already runs `tsc --noEmit` strict). `admin/CLAUDE.md` is rewritten for the TS idiom.
 
+### 8. Full SSR navigation + cross-document View Transitions
+Navigation between areas is **full SSR** — no client-side router, no client route state (the SPA complexity the rewrite sheds). The app-like polish comes from the platform: **cross-document View Transitions** (`@view-transition { navigation: auto; }` in `styles.css`) animate every same-origin full-page navigation with **zero JS**, and a `view-transition-name` on the persistent shell (`<h1>` + nav) morphs it across navigations instead of flashing. Progressive enhancement: modern Chromium/Safari animate, older browsers fall back to an instant nav (no breakage) — ideal for a one-operator tool on a modern browser. **Alternative rejected:** *a client-side router* — reintroduces SPA route state + bundle for a polish the platform now provides for free over SSR.
+
+### 9. Global CSS + a thin JSX component kit (no CSS Modules / CSS-in-JS)
+The existing ~120-line stylesheet is extracted from the inline `<style>` into a **served `admin/dist/admin/styles.css`** (SSR has no single `index.html`), linked from a shared layout component and reachable for the View-Transition opt-in. Its semantic class vocabulary (`.card`, `.pill`, `.tier.<status>`, `.dialog`, …) and `:root` tokens stay **global** — for 120 lines on a one-operator tool, CSS Modules / CSS-in-JS / Tailwind are overhead with no payoff. A thin **component kit** (`admin/src/ui/`) of ~10–15 JSX primitives — `Card`, `Button`, `Pill`, `TierBadge`, `Dot`, `Dialog`, `Field`, `ErrorBanner`, `Table`, a layout, and a **`Loadable`** that renders the 4-state RemoteData union (Decision 7) — gives the real component win (composition, typed props, change-once) and co-locates each component's markup + class usage, while styling stays simple and global. The 7 areas compose from this kit.
+
+### 10. Testing: vitest (logic) + Playwright visual snapshots in CI
+Pure logic (route parsing, JSONC stripping, schema-example generation, table-editor logic) is **vitest**, ported directly from the Elm tests. End-to-end + **visual regression** is **Playwright**, run in CI against a `wrangler dev` preview: `toHaveScreenshot()` with **committed baseline PNGs** (the repo's committed-artifact pattern), rendered inside the pinned Playwright container so local and CI match, with diff images uploaded as **CI artifacts on the PR** — so an agent-written PR carries before/after/diff screenshots as a first-class output. **No SaaS, no secret.** **Alternative noted:** *Percy/Chromatic* — a nicer inline-PR dashboard, but adds a hosted dependency + `PERCY_TOKEN` (and won't run on fork PRs); an optional upgrade, not the default.
+
 ## Risks / Trade-offs
 
 - **A future React design system** → Out of scope now. If ever wanted, Decision 3's runtime-agnostic data layer makes swapping an island's renderer to Preact/React a contained change, not a re-architecture.
@@ -57,12 +68,13 @@ The modeling rules carry forward as discriminated unions: a 4-state `Loadable`/R
 - **Hydration/serialization boundary** (island props must be JSON-serializable to avoid hydration mismatch) → These functions are already JSON-serialized over `/admin/api/*` today, so they are effectively JSON-shaped; enforce JSON-serializable prop types at the island boundary.
 - **Big-rewrite / partial-parity risk** → Build the Hono app to parity on the branch in phases; `/admin` cannot be served by both Elm and Hono at once, so cutover is a **single** flip (`handleAdmin` → `admin.fetch`) at the end. Rollback = revert that flip (the Elm bundle remains in history until the rip-out commit).
 - **`hono/jsx/dom` is younger than React** → Port Tool Console (the most dynamic island) second as a runtime-ceiling gate; forms, dialogs, and tables are well within its range, and a strain there is a contained one-island swap to Preact/React (data layer untouched).
+- **Visual-snapshot flakiness across environments** → Run Playwright snapshots inside the pinned Playwright container so local and CI render identically; commit the baselines like any other generated artifact, and review diffs as PR artifacts.
 
 ## Migration Plan
 
 Phased on the feature branch; the Elm panel keeps serving `/admin` until the final cutover flip.
 
-1. **Scaffold + Members thin vertical** — prove the whole pipeline (Hono mount, Access middleware, SSR-via-`src/`-call, one island, one typed route, esbuild build + `--check`, vitest) on the smallest real CRUD surface, including the once-shown invite minting.
+1. **Scaffold + Members thin vertical** — prove the whole pipeline (Hono mount, Access middleware, SSR-via-`src/`-call, one island, one typed route, esbuild build + `--check`, the component kit + served `styles.css` + View-Transition opt-in, the Playwright + visual-snapshot CI harness, vitest) on the smallest real CRUD surface, including the once-shown invite minting.
 2. **Tool Console (runtime-ceiling gate)** — port the most dynamic island second to validate `hono/jsx/dom` on schema-derived forms + the JSONC arg editor (and the `hc` invoke path) before the bulk; a strain here is a contained one-island swap to Preact/React.
 3. **Read-heavy areas (SSR-only)** — Status, Logs list, Data explorer (5 views), Usage. Big seam reduction, minimal/no islands.
 4. **Remaining interactive areas (islands)** — Calibration (the form machine + analyze/dry-run/confirm-save), corpus editors (+ feed test), Logs actions (retry/delete + detail dialog).
@@ -73,4 +85,5 @@ Phased on the feature branch; the Elm panel keeps serving `/admin` until the fin
 ## Open Questions
 
 - **Incremental reads:** should any `/admin/api/data/*` read endpoints remain as typed routes for island-driven incremental fetches (e.g. opening a recipe detail without a full nav), or fully collapse into SSR navigations? Lean: collapse, and add a typed route only where an island genuinely needs to fetch without navigating.
-- **Inter-area navigation:** full SSR navigations between areas (simplest, fine for an internal tool) vs. client-side nav. Lean: full SSR navigation; revisit view-transitions only if the operator UX warrants it.
+- **SSR shell + island bootstrap:** how island props serialize into the page (a `<script type="application/json">` blob per island vs a data attribute) and whether islands ship as per-page bundles or one shared esbuild bundle. Lean: per-island JSON blob + per-entry esbuild bundles.
+- **Auth expiry on island RPC:** a session that expires *after* load makes an `hc` call return 403 (the page-load case is handled cleanly at the edge). Islands should surface "session expired — reload" rather than a generic error. Lean: a shared `hc` error handler that detects the Access 403 and prompts a reload.
