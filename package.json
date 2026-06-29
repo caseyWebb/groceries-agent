@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "grocery-agent: the grocery-mcp Cloudflare Worker (MCP server) + the plugin-build and deploy tooling that data repos run via reusable CI workflows.",
+  "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=22"
   },
