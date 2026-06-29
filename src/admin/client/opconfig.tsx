@@ -2,7 +2,8 @@
 // sub-views. A simple load → edit → save form over the SSR-seeded OperatorConfig: the field set
 // (which keys, labels, steps) rides in the props, so one island serves both. A `pct` field is
 // shown as a percentage but stored as a fraction. PUT validates server-side; on a range error the
-// message renders. Dirty/clean is a single flag (no in-flight overlap — one mutation per save).
+// message renders. The save lifecycle is ONE discriminated union (clean | dirty | saved | error),
+// so "is there an error", "did it just save", and "can I save" cannot contradict.
 
 import { render, useState } from "hono/jsx/dom";
 import { hc } from "hono/client";
@@ -18,6 +19,14 @@ interface FieldDesc {
   pct?: boolean;
 }
 
+// clean (matches the saved config) → dirty (edited) → saved (PUT ok) or error (PUT failed, still
+// effectively dirty). One union so the status flags can't disagree (admin/CLAUDE.md discipline).
+type SaveState =
+  | { t: "clean" }
+  | { t: "dirty" }
+  | { t: "saved" }
+  | { t: "error"; message: string };
+
 function shown(config: OperatorConfig, f: FieldDesc): string {
   const v = (config as unknown as Record<string, number>)[f.key];
   return String(f.pct ? Math.round(v * 100) : v);
@@ -28,14 +37,13 @@ function OpConfigIsland({ config, fields }: { config: OperatorConfig; fields: Fi
   for (const f of fields) initial[f.key] = shown(config, f);
 
   const [draft, setDraft] = useState<Record<string, string>>(initial);
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState(false);
+  const [state, setState] = useState<SaveState>({ t: "clean" });
+
+  const canSave = state.t === "dirty" || state.t === "error";
 
   function onField(key: string, value: string): void {
     setDraft({ ...draft, [key]: value });
-    setDirty(true);
-    setSavedAt(false);
+    setState({ t: "dirty" });
   }
 
   async function save(): Promise<void> {
@@ -46,18 +54,16 @@ function OpConfigIsland({ config, fields }: { config: OperatorConfig; fields: Fi
     }
     const res = await client.admin.api["operator-config"].$put({ json: patch });
     if (res.ok) {
-      setDirty(false);
-      setError(null);
-      setSavedAt(true);
+      setState({ t: "saved" });
     } else {
       const b = (await res.json().catch(() => null)) as { message?: string } | null;
-      setError(b?.message ?? `HTTP ${res.status}`);
+      setState({ t: "error", message: b?.message ?? `HTTP ${res.status}` });
     }
   }
 
   return (
     <div class="card">
-      {error ? <div class="error">{error}</div> : null}
+      {state.t === "error" ? <div class="error">{state.message}</div> : null}
       {fields.map((f) => (
         <label>
           {f.label}
@@ -70,10 +76,10 @@ function OpConfigIsland({ config, fields }: { config: OperatorConfig; fields: Fi
         </label>
       ))}
       <div class="form-actions">
-        <button disabled={!dirty} onClick={save}>
+        <button disabled={!canSave} onClick={save}>
           Save
         </button>
-        {savedAt ? <span class="muted small">Saved.</span> : null}
+        {state.t === "saved" ? <span class="muted small">Saved.</span> : null}
       </div>
     </div>
   );

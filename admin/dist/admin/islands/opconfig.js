@@ -1651,13 +1651,11 @@ function OpConfigIsland({ config, fields }) {
   const initial = {};
   for (const f of fields) initial[f.key] = shown(config, f);
   const [draft, setDraft] = useState(initial);
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState(null);
-  const [savedAt, setSavedAt] = useState(false);
+  const [state, setState] = useState({ t: "clean" });
+  const canSave = state.t === "dirty" || state.t === "error";
   function onField(key, value) {
     setDraft({ ...draft, [key]: value });
-    setDirty(true);
-    setSavedAt(false);
+    setState({ t: "dirty" });
   }
   async function save() {
     const patch = {};
@@ -1667,16 +1665,14 @@ function OpConfigIsland({ config, fields }) {
     }
     const res = await client.admin.api["operator-config"].$put({ json: patch });
     if (res.ok) {
-      setDirty(false);
-      setError(null);
-      setSavedAt(true);
+      setState({ t: "saved" });
     } else {
       const b = await res.json().catch(() => null);
-      setError(b?.message ?? `HTTP ${res.status}`);
+      setState({ t: "error", message: b?.message ?? `HTTP ${res.status}` });
     }
   }
   return /* @__PURE__ */ jsxDEV("div", { class: "card", children: [
-    error ? /* @__PURE__ */ jsxDEV("div", { class: "error", children: error }) : null,
+    state.t === "error" ? /* @__PURE__ */ jsxDEV("div", { class: "error", children: state.message }) : null,
     fields.map((f) => /* @__PURE__ */ jsxDEV("label", { children: [
       f.label,
       /* @__PURE__ */ jsxDEV(
@@ -1690,8 +1686,8 @@ function OpConfigIsland({ config, fields }) {
       )
     ] })),
     /* @__PURE__ */ jsxDEV("div", { class: "form-actions", children: [
-      /* @__PURE__ */ jsxDEV("button", { disabled: !dirty, onClick: save, children: "Save" }),
-      savedAt ? /* @__PURE__ */ jsxDEV("span", { class: "muted small", children: "Saved." }) : null
+      /* @__PURE__ */ jsxDEV("button", { disabled: !canSave, onClick: save, children: "Save" }),
+      state.t === "saved" ? /* @__PURE__ */ jsxDEV("span", { class: "muted small", children: "Saved." }) : null
     ] })
   ] });
 }
