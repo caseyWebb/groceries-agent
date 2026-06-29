@@ -8,7 +8,7 @@ the `isOver` limit predicate. The types can't prove these — the shapes can.
 import Expect
 import Json.Decode as Decode
 import Test exposing (Test, describe, test)
-import Usage exposing (UsageView(..))
+import Usage exposing (TrendsView(..), UsageView(..))
 
 
 suite : Test
@@ -33,11 +33,23 @@ suite =
             , test "above the limit is over" <|
                 \_ -> Usage.isOver 1440 1000 |> Expect.equal True
             ]
+        , describe "trendsViewDecoder"
+            [ test "an unconfigured payload decodes to the TrendsNotConfigured state" <|
+                \_ ->
+                    Decode.decodeString Usage.trendsViewDecoder "{\"configured\":false}"
+                        |> Expect.equal (Ok TrendsNotConfigured)
+            , test "a configured payload decodes each job's per-day series" <|
+                \_ ->
+                    Decode.decodeString Usage.trendsViewDecoder configuredTrends
+                        |> Result.map summarizeTrends
+                        |> Expect.equal (Ok { jobs = 1, firstJob = "flyer-warm", days = 2, latestRuns = 288 })
+            ]
         ]
 
 
 {-| Pull the compiler-opaque values out of a decoded `Configured` payload for one assertion; a
-`NotConfigured` (shouldn't happen for this fixture) yields sentinel values that fail the test. -}
+`NotConfigured` (shouldn't happen for this fixture) yields sentinel values that fail the test.
+-}
 summarize : UsageView -> { day : String, writes : Int, namespaces : Int, neurons : Int }
 summarize view =
     case view of
@@ -50,6 +62,50 @@ summarize view =
             , namespaces = List.length data.kv.namespaces
             , neurons = data.ai.neuronsUsed
             }
+
+
+{-| Pull the compiler-opaque values out of a decoded `TrendsConfigured` payload for one assertion;
+a `TrendsNotConfigured` (shouldn't happen for this fixture) yields sentinel values that fail.
+-}
+summarizeTrends : TrendsView -> { jobs : Int, firstJob : String, days : Int, latestRuns : Int }
+summarizeTrends view =
+    case view of
+        TrendsNotConfigured ->
+            { jobs = -1, firstJob = "", days = -1, latestRuns = -1 }
+
+        TrendsConfigured jobs ->
+            case jobs of
+                first :: _ ->
+                    { jobs = List.length jobs
+                    , firstJob = first.job
+                    , days = List.length first.days
+                    , latestRuns =
+                        List.reverse first.days
+                            |> List.head
+                            |> Maybe.map .runs
+                            |> Maybe.withDefault -1
+                    }
+
+                [] ->
+                    { jobs = 0, firstJob = "", days = 0, latestRuns = -1 }
+
+
+configuredTrends : String
+configuredTrends =
+    """
+    { "configured": true
+    , "generated_at": 1700000000000
+    , "window_days": 30
+    , "jobs":
+        [ { "job": "flyer-warm"
+          , "days":
+              [ { "day": "2026-06-27", "runs": 287, "avg_ms": 41.0, "total_ms": 11767.0 }
+              , { "day": "2026-06-28", "runs": 288, "avg_ms": 40.0, "total_ms": 11520.0 }
+              ]
+          }
+        ]
+    }
+    """
 
 
 configuredPayload : String

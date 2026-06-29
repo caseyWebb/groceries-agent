@@ -22,7 +22,7 @@ import { parseMarkdown } from "./parse.js";
 import { validateRecipeContract } from "./recipe-contract.js";
 import { mergeEffectiveFacets, parseFacetRow, type ClassifiedFacets, type RawFacetRow } from "./recipe-facets.js";
 import type { CorpusStore } from "./corpus-store.js";
-import { notifyFailure, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
 
 // --- pure projection helpers ---
 
@@ -309,6 +309,12 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () =
       last_run_at: startedAt,
       summary: { projected: r.projected, skipped: r.skipped },
     });
+    // History point (usage-trends): doubles = [duration_ms, projected, skipped].
+    recordUsagePoint(env, "recipe-index", {
+      ok: true,
+      durationMs: now() - startedAt,
+      counts: [r.projected, r.skipped],
+    });
     const newErrors = r.errors.filter((e) => !priorSlugs.has(e.slug));
     if (newErrors.length) {
       // A new malformed edit is surfaced (Decision 3): the count + the first few
@@ -327,6 +333,7 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () =
       last_run_at: startedAt,
       summary: { error: m },
     }).catch(() => {});
+    recordUsagePoint(env, "recipe-index", { ok: false, durationMs: now() - startedAt });
     await notifyFailure(env, "recipe-index", m);
     throw e; // cron is not retried; surfacing the failure loses nothing
   }

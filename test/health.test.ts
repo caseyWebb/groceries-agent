@@ -7,6 +7,7 @@ import {
   notifyFailure,
   probeD1,
   readJobHealth,
+  recordUsagePoint,
   renderHealthSvg,
   writeJobHealth,
   type JobHealth,
@@ -75,6 +76,41 @@ const rec = (ok: boolean, summary: Record<string, unknown> = {}): JobHealth => (
   ok,
   last_run_at: 1_700_000_000_000,
   summary,
+});
+
+describe("recordUsagePoint (usage-trends emission)", () => {
+  it("emits one tenant-clean data point: indexes=[job], blobs=[job, outcome], doubles=[duration, ...counts]", () => {
+    const points: unknown[] = [];
+    const env = { USAGE_AE: { writeDataPoint: (p: unknown) => points.push(p) } } as unknown as Env;
+    recordUsagePoint(env, "recipe-classify", { ok: true, durationMs: 120, counts: [5, 2, 0, 1, 3] });
+    expect(points).toEqual([
+      { indexes: ["recipe-classify"], blobs: ["recipe-classify", "ok"], doubles: [120, 5, 2, 0, 1, 3] },
+    ]);
+  });
+
+  it("encodes a failed run's outcome as the `fail` blob and omits counts", () => {
+    const points: { blobs?: unknown[]; doubles?: unknown[] }[] = [];
+    const env = { USAGE_AE: { writeDataPoint: (p: never) => points.push(p) } } as unknown as Env;
+    recordUsagePoint(env, "flyer-warm", { ok: false, durationMs: 9 });
+    expect(points[0].blobs).toEqual(["flyer-warm", "fail"]);
+    expect(points[0].doubles).toEqual([9]); // duration only — no counts on the fail path
+  });
+
+  it("is a silent no-op when the AE binding is unbound (an un-bound deployment)", () => {
+    // No USAGE_AE on env — emission must neither throw nor do anything.
+    expect(() => recordUsagePoint({} as unknown as Env, "email", { ok: true, durationMs: 1 })).not.toThrow();
+  });
+
+  it("swallows a throwing writeDataPoint (emission must never affect the job)", () => {
+    const env = {
+      USAGE_AE: {
+        writeDataPoint: () => {
+          throw new Error("AE unavailable");
+        },
+      },
+    } as unknown as Env;
+    expect(() => recordUsagePoint(env, "email", { ok: true, durationMs: 1, counts: [1, 0] })).not.toThrow();
+  });
 });
 
 describe("job health records", () => {

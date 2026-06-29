@@ -35,6 +35,7 @@ const code = {
   ai: { binding: "AI" },
   assets: { directory: "./admin/dist", binding: "ASSETS", run_worker_first: ["/admin", "/admin/*"] },
   r2_buckets: [{ binding: "CORPUS", bucket_name: "grocery-corpus" }],
+  analytics_engine_datasets: [{ binding: "USAGE_AE", dataset: "grocery_usage" }],
 };
 
 // A slim operator config (post-template).
@@ -64,6 +65,13 @@ test("the Workers Static Assets binding propagates verbatim from code (operator-
 test("the R2 corpus bucket binding propagates verbatim from code (the silent-drop trap)", () => {
   const out = mergeWranglerConfig(code, operator); // operator declares no `r2_buckets`
   assert.deepEqual(out.r2_buckets, [{ binding: "CORPUS", bucket_name: "grocery-corpus" }]);
+});
+
+test("the Analytics Engine dataset binding propagates verbatim from code (the silent-drop trap)", () => {
+  // usage-trends: a new binding TYPE the merge must allowlist explicitly, or the per-run
+  // usage points are silently dropped from every operator's deploy (`env.USAGE_AE` undefined).
+  const out = mergeWranglerConfig(code, operator); // operator declares no analytics_engine_datasets
+  assert.deepEqual(out.analytics_engine_datasets, [{ binding: "USAGE_AE", dataset: "grocery_usage" }]);
 });
 
 test("compatibility settings come from code even if the operator differs", () => {
@@ -127,7 +135,8 @@ test("the deployed config only contains the curated key set", () => {
   const out = mergeWranglerConfig(code, operator);
   const allowed = new Set([
     "name", "main", "workers_dev", "compatibility_date", "compatibility_flags",
-    "triggers", "observability", "vars", "kv_namespaces", "d1_databases", "ai", "assets", "r2_buckets", "routes", "route",
+    "triggers", "observability", "vars", "kv_namespaces", "d1_databases", "ai", "assets", "r2_buckets",
+    "analytics_engine_datasets", "routes", "route",
   ]);
   for (const k of Object.keys(out)) assert.ok(allowed.has(k), `unexpected key in deployed config: ${k}`);
 });
