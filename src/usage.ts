@@ -90,7 +90,7 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
  *  lists. Everything is optional/loosely typed because it is external data. */
 interface AccountAnalytics {
   kvOperations?: { dimensions?: { namespaceId?: string; actionType?: string }; sum?: { requests?: number } }[];
-  aiInference?: { dimensions?: { modelName?: string }; sum?: { neurons?: number } }[];
+  aiInference?: { dimensions?: { modelId?: string }; sum?: { totalNeurons?: number } }[];
 }
 
 /**
@@ -117,8 +117,8 @@ export function mapAccountUsage(account: AccountAnalytics, day: string, nowMs: n
 
   const byModel = new Map<string, number>();
   for (const row of account.aiInference ?? []) {
-    const model = row.dimensions?.modelName ?? "unknown";
-    byModel.set(model, (byModel.get(model) ?? 0) + num(row.sum?.neurons));
+    const model = row.dimensions?.modelId ?? "unknown";
+    byModel.set(model, (byModel.get(model) ?? 0) + num(row.sum?.totalNeurons));
   }
   const aiByModel: AiModelUsage[] = [...byModel.entries()]
     .map(([model, neurons]) => ({ model, neurons }))
@@ -134,24 +134,28 @@ export function mapAccountUsage(account: AccountAnalytics, day: string, nowMs: n
   };
 }
 
-/** The GraphQL query: today's KV operations (by namespace + action) and Workers AI neurons
- *  (by model) for one account. `$accountTag`/`$date` are bound from env + the current day. */
-const USAGE_QUERY = `query Usage($accountTag: String!, $date: String!) {
+/** The GraphQL query for one account's current-day usage: KV operations (by namespace + action)
+ *  from `kvOperationsAdaptiveGroups`, and Workers AI neurons (by model) from `aiInferenceAdaptiveGroups`.
+ *  The two datasets filter on different time dimensions — KV by `date`, AI by `datetimeHour` — so the
+ *  day's bounds are inlined (server-controlled `YYYY-MM-DD`, no injection surface) and only `$accountTag`
+ *  is a bound variable. Field/dimension/metric names match the live schema: KV `namespaceId`/`actionType`
+ *  with `sum { requests }`; AI `modelId` with `sum { totalNeurons }`. */
+const usageQuery = (day: string) => `query Usage($accountTag: String!) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
-      kvOperations: workersKvOperationsAdaptiveGroups(
+      kvOperations: kvOperationsAdaptiveGroups(
         limit: 1000
-        filter: { date: $date }
+        filter: { date_geq: "${day}", date_leq: "${day}" }
       ) {
         dimensions { namespaceId actionType }
         sum { requests }
       }
-      aiInference: workersAiInferenceRequestsAdaptiveGroups(
+      aiInference: aiInferenceAdaptiveGroups(
         limit: 1000
-        filter: { date: $date }
+        filter: { datetimeHour_geq: "${day}T00:00:00Z", datetimeHour_leq: "${day}T23:00:00Z" }
       ) {
-        dimensions { modelName }
-        sum { neurons }
+        dimensions { modelId }
+        sum { totalNeurons }
       }
     }
   }
@@ -189,7 +193,7 @@ export async function fetchUsage(env: Env, deps: UsageDeps = defaultDeps): Promi
     res = await deps.fetchImpl(GRAPHQL_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ query: USAGE_QUERY, variables: { accountTag, date: day } }),
+      body: JSON.stringify({ query: usageQuery(day), variables: { accountTag } }),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

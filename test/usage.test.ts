@@ -102,8 +102,8 @@ describe("mapAccountUsage", () => {
     const account = {
       kvOperations: [{ dimensions: { namespaceId: "ns_a", actionType: "bogus" }, sum: { requests: 99 } }],
       aiInference: [
-        { dimensions: { modelName: "@cf/baai/bge-base-en-v1.5" }, sum: { neurons: 1200 } },
-        { dimensions: { modelName: "@cf/meta/llama" }, sum: { neurons: 800 } },
+        { dimensions: { modelId: "@cf/baai/bge-base-en-v1.5" }, sum: { totalNeurons: 1200 } },
+        { dimensions: { modelId: "@cf/meta/llama" }, sum: { totalNeurons: 800 } },
       ],
     };
     const usage = mapAccountUsage(account, "2026-06-28", 1_700_000_000_000);
@@ -145,7 +145,7 @@ describe("fetchUsage", () => {
     const f = fetchReturning(
       graphqlBody({
         kvOperations: [{ dimensions: { namespaceId: "ns_a", actionType: "write" }, sum: { requests: 1440 } }],
-        aiInference: [{ dimensions: { modelName: "m" }, sum: { neurons: 42 } }],
+        aiInference: [{ dimensions: { modelId: "m" }, sum: { totalNeurons: 42 } }],
       }),
     );
     const now = Date.parse("2026-06-28T10:00:00Z");
