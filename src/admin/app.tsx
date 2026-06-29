@@ -23,6 +23,8 @@ import { buildHealthPayload, HEALTH_JOBS } from "../health.js";
 import { MembersPage } from "./pages/members.js";
 import { StatusPage } from "./pages/status.js";
 import { registerDataRoutes } from "./pages/data.js";
+import { fetchUsage, fetchUsageTrends, fetchToolUsage } from "../usage.js";
+import { UsagePage } from "./pages/usage.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */
 function adminDeps(env: Env): AdminDeps {
@@ -108,6 +110,12 @@ const routes = app
 
 // Data explorer area (operator-data-explorer): read-only SSR views over D1 + the R2 corpus.
 registerDataRoutes(app);
+
+// Usage area (usage-observability / usage-trends / tool-usage-trends): three SSR dashboards.
+app.get("/usage", async (c) => {
+  const [usage, trends, tools] = await Promise.all([fetchUsage(c.env), fetchUsageTrends(c.env), fetchToolUsage(c.env)]);
+  return c.html(page(<UsagePage usage={usage} trends={trends} tools={tools} />));
+});
 
 // Static islands + styles fall through to the ASSETS binding (already past the Access gate;
 // `ASSETS.fetch` bypasses run_worker_first, so this never re-enters and loops).

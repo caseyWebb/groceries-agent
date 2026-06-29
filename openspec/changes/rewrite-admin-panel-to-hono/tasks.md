@@ -27,7 +27,7 @@
 - [x] Status home — SSR `buildHealthPayload` directly (headline, per-job rows, D1 row, admin-gate posture incl. exposed/AI-quota warnings, never-run state); the 503-decode dance is gone (in-process call)
 - [ ] Logs — SSR the source submenu + selected-source entries (master/detail)
 - [x] Data explorer — SSR the 5 entity views (recipes list/detail, members, corpus + guidance browser, discovery, system) by calling `admin-data.ts` directly; all client state → query-param SSR navigation (no islands)
-- [ ] Usage — SSR the usage / trends / tool-usage dashboards (`{ configured: false }` handling preserved)
+- [x] Usage — SSR the usage / trends / tool-usage dashboards (KV/AI meters, per-job sparklines, per-tool latency; `{ configured: false }` setup cards preserved); Refresh is a reload
 - [ ] Commit Playwright visual-snapshot baselines for these read-only views
 
 ## 4. Remaining interactive areas (islands)
