@@ -23,7 +23,7 @@ Prerequisite (satisfied): `rewrite-admin-panel-to-hono` is cut over and archived
 - [x] Logs (`client/logs.tsx`): row actions → `btn` (ghost Retry/Refresh, destructive Delete), failure → `alert`, detail modal → **native `<dialog>`** (Basecoat `dialog`, `showModal()` from island state via `useRef`/`useEffect`; Esc + backdrop + footer Close sync state — no Basecoat JS). Page master/detail layout (`.logs`/`.entry-*`) stays panel-specific. The `.dialog-backdrop`/`.dialog-legacy`/`.dialog-head`/`.dialog-body` classes are now unused → dropped in Phase 7. **Playwright-verified** (seeded rows: buttons + opened the modal)
 
 ## 6. Config (form-heavy — highest payoff, last)
-- [ ] Calibration console + ranking/flyer forms + corpus editors (`pages/config.tsx`, `client/calibration.tsx`, `client/corpus.tsx`, `client/opconfig.tsx`): Basecoat form components (input/label/native-select/switch) + form layout; the `Clean|Dirty|NeedsConfirm` form-machine + add/remove island behavior unchanged
+- [x] Config islands (`calibration.tsx`, `corpus.tsx`, `opconfig.tsx`): forms → Basecoat `label`+`input` with `grid gap` layout, buttons → `btn` variants, failures → `alert`, tables → `table`; the calibration `.confirm` floor-warning → a destructive `alert` with a `<footer>` action row. Page pill sub-nav kept (panel-specific). The `Clean|Dirty|NeedsConfirm` form-machine + add/remove/test behavior unchanged. (No native-select/switch needed — these forms are number/text inputs.) **Playwright-verified**: calibration knob form + the feeds corpus editor
 
 ## 7. Cleanup + docs
 - [ ] Remove the dead hand-rolled component classes from `src/admin/styles.css` (only the thin project theme + layout layer remains); confirm no orphaned class references across `src/admin/**`
