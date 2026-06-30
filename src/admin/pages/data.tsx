@@ -78,7 +78,7 @@ const DataTable = ({ page }: { page: TablePage }) =>
   page.rows.length === 0 ? (
     <p class="muted">(No rows.)</p>
   ) : (
-    <table>
+    <table class="table">
       <thead>
         <tr>
           {page.columns.map((c) => (
@@ -126,7 +126,7 @@ const RecipesListPage = ({ recipes }: { recipes: RecipeListEntry[] }) => (
     {recipes.length === 0 ? (
       <p class="muted">No recipes in the corpus or the index.</p>
     ) : (
-      <table>
+      <table class="table">
         <thead>
           <tr>
             <th>slug</th>
@@ -175,17 +175,21 @@ const RecipeDetailPage = ({ detail }: { detail: RecipeDetail }) => (
       <a href="/admin/data/recipes">← all recipes</a>
     </p>
     <h2>{detail.slug}</h2>
-    <div class="card-legacy">
-      <span class={`tier ${detail.status}`}>{detail.status}</span> <span class="muted small">{tierDetail(detail)}</span>
+    <div class="card">
+      <section>
+        <span class={`tier ${detail.status}`}>{detail.status}</span> <span class="muted small">{tierDetail(detail)}</span>
+      </section>
     </div>
     {detail.derived?.description ? (
-      <div class="card-legacy">
-        <p>{detail.derived.description}</p>
-        <p class="muted small">{detail.derived.has_embedding ? "embedding: present" : "embedding: not yet generated"}</p>
+      <div class="card">
+        <section>
+          <p>{detail.derived.description}</p>
+          <p class="muted small">{detail.derived.has_embedding ? "embedding: present" : "embedding: not yet generated"}</p>
+        </section>
       </div>
     ) : null}
     {detail.dispositions.length > 0 ? (
-      <table>
+      <table class="table">
         <thead>
           <tr>
             <th>tenant</th>
@@ -203,7 +207,11 @@ const RecipeDetailPage = ({ detail }: { detail: RecipeDetail }) => (
       </table>
     ) : null}
     <JsonSection label="Notes (cross-tenant)" count={detail.notes.length} value={detail.notes} />
-    {detail.body ? <div class="card-legacy" dangerouslySetInnerHTML={{ __html: md(detail.body) }} /> : null}
+    {detail.body ? (
+      <div class="card">
+        <section dangerouslySetInnerHTML={{ __html: md(detail.body) }} />
+      </div>
+    ) : null}
     <p class="schema-label">R2 source</p>
     {detail.source ? <pre>{detail.source}</pre> : <p class="muted">(no R2 source object)</p>}
     <p class="schema-label">D1 projection</p>
@@ -278,7 +286,13 @@ const GuidanceBrowser = ({ view }: { view: GuidanceView }) =>
         <a href="/admin/data/corpus">← back to guidance</a>
       </p>
       <p class="muted small">{view.path}</p>
-      {view.markdown.trim() ? <div class="card-legacy" dangerouslySetInnerHTML={{ __html: md(view.markdown) }} /> : <p class="muted">(empty object)</p>}
+      {view.markdown.trim() ? (
+        <div class="card">
+          <section dangerouslySetInnerHTML={{ __html: md(view.markdown) }} />
+        </div>
+      ) : (
+        <p class="muted">(empty object)</p>
+      )}
     </div>
   ) : (
     <div>
