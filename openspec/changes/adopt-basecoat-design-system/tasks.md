@@ -20,7 +20,7 @@ Prerequisite (satisfied): `rewrite-admin-panel-to-hono` is cut over and archived
 - [x] Usage dashboards (`pages/usage.tsx`): dashboard cards → kit `<Card>`, NotConfigured setup cards → `card`/`section` muted, Refresh → ghost `btn`. Kept the status-row/dot meters, `.summary` AI-by-model, and the sparkline viz (panel-specific). Confirmed via Playwright that Basecoat `.card` needs a `<section>` wrapper (direct children get card-layout gaps) — the kit `<Card>` provides it
 
 ## 5. Logs
-- [ ] Logs master/detail (`pages/logs.tsx`, `client/logs.tsx`): card/table + native `<dialog>` for the detail (drop the bespoke `.dialog-backdrop`/`.dialog`); row-action (retry/delete) island behavior unchanged
+- [x] Logs (`client/logs.tsx`): row actions → `btn` (ghost Retry/Refresh, destructive Delete), failure → `alert`, detail modal → **native `<dialog>`** (Basecoat `dialog`, `showModal()` from island state via `useRef`/`useEffect`; Esc + backdrop + footer Close sync state — no Basecoat JS). Page master/detail layout (`.logs`/`.entry-*`) stays panel-specific. The `.dialog-backdrop`/`.dialog-legacy`/`.dialog-head`/`.dialog-body` classes are now unused → dropped in Phase 7. **Playwright-verified** (seeded rows: buttons + opened the modal)
 
 ## 6. Config (form-heavy — highest payoff, last)
 - [ ] Calibration console + ranking/flyer forms + corpus editors (`pages/config.tsx`, `client/calibration.tsx`, `client/corpus.tsx`, `client/opconfig.tsx`): Basecoat form components (input/label/native-select/switch) + form layout; the `Clean|Dirty|NeedsConfirm` form-machine + add/remove island behavior unchanged
