@@ -86,6 +86,26 @@ Islands (`client/*.tsx`) run in the browser and are typechecked under
 "hono/jsx/dom"`; the SSR pages compile under the root config (workerd types, `jsxImportSource:
 "hono/jsx"`). Keep browser-only code in `client/`. `aubr typecheck` runs both passes.
 
+## Styling — the Basecoat design system
+
+The panel is styled with **Basecoat** (the Vega style pack), a Tailwind CSS component system
+(shadcn/ui-compatible tokens, no React). `src/admin/styles.css` is the **Tailwind entry**:
+`@import "tailwindcss"; @import "basecoat-css/vega";` + the operator theme (`--primary` → the
+orange accent). The build (`build-admin.mjs`) Tailwind-compiles it; `@source "./"` scans this
+tree for the utility classes you use.
+
+- **Compose from Basecoat's class API:** a root component class plus `data-variant`/`data-size`
+  attributes — `<button class="btn" data-variant="destructive" data-size="sm">`, `<div class="card"><section>…</section></div>`, `<div class="alert" data-variant="destructive"><svg…/><h2>…</h2><section>…</section></div>`, `<span class="badge">`, `<input class="input">`, `<table class="table">`. Layout is **Tailwind utilities** (`flex`, `grid`, `gap-*`, `items-center`, …).
+- **No Basecoat component JavaScript.** Modals use the native `<dialog>` element (`showModal()`)
+  — Basecoat styles it CSS-only; interactivity lives in `hono/jsx/dom` island state, so read-only
+  pages still ship zero client JS. Do not load Basecoat's JS into an island (it would fight the
+  island's DOM reconciliation).
+- **Icons:** inline Lucide SVG (Basecoat ships none) — copy the path from lucide.dev.
+- **Transitional bridge (temporary):** `styles.css` still carries panel-specific layout plus a
+  `-legacy` bridge (`.card-legacy`, the `@layer base` bare-element rules) so areas not yet
+  migrated render as before. It shrinks as each area moves to Basecoat and is removed entirely in
+  the cleanup phase. **New work does not use the bridge classes** — use Basecoat + utilities.
+
 ## Build & serve
 
 - Source of truth: `src/admin/**`. `scripts/build-admin.mjs` (`aubr build:admin`) esbuild-bundles
