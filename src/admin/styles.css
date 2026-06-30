@@ -37,17 +37,20 @@
   body { font-family: system-ui, sans-serif; color: #222; background: #fafafa; margin: 0; }
   h1 { font-size: 1.5rem; }
   h2 { font-size: 1.1rem; margin: 0 0 .75rem; }
-  label { display: block; margin: .75rem 0; font-size: .9rem; }
-  input { display: block; width: 100%; box-sizing: border-box; font-size: 1rem; padding: .5rem; margin-top: .25rem; border: 1px solid #ccc; border-radius: .3rem; }
-  button { font-size: .95rem; padding: .5rem 1rem; border: 0; border-radius: .4rem; background: var(--accent); color: #222; cursor: pointer; }
-  button:disabled { opacity: .5; cursor: default; }
-  button.link { background: none; color: #1a5; padding: .3rem .5rem; }
-  button.danger { background: none; color: var(--danger); padding: .3rem .5rem; }
-  button.danger-solid { background: var(--danger); color: #fff; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: .5rem .25rem; border-bottom: 1px solid #eee; }
-  textarea { width: 100%; box-sizing: border-box; font: .9rem ui-monospace, monospace; padding: .5rem; border: 1px solid #ccc; border-radius: .3rem; }
-  select { font-size: .95rem; padding: .35rem; border: 1px solid #ccc; border-radius: .3rem; }
+  /* Bare-element rules are scoped `:not(.<basecoat-class>)` so the bridge ONLY styles
+     not-yet-migrated controls and never bleeds into a Basecoat component (`.btn`, `.input`,
+     `.table`, …). They are dropped as each area migrates. */
+  label:not(.label) { display: block; margin: .75rem 0; font-size: .9rem; }
+  input:not(.input) { display: block; width: 100%; box-sizing: border-box; font-size: 1rem; padding: .5rem; margin-top: .25rem; border: 1px solid #ccc; border-radius: .3rem; }
+  button:not(.btn) { font-size: .95rem; padding: .5rem 1rem; border: 0; border-radius: .4rem; background: var(--accent); color: #222; cursor: pointer; }
+  button:not(.btn):disabled { opacity: .5; cursor: default; }
+  button.link:not(.btn) { background: none; color: #1a5; padding: .3rem .5rem; }
+  button.danger:not(.btn) { background: none; color: var(--danger); padding: .3rem .5rem; }
+  button.danger-solid:not(.btn) { background: var(--danger); color: #fff; }
+  table:not(.table) { width: 100%; border-collapse: collapse; }
+  table:not(.table) th, table:not(.table) td { text-align: left; padding: .5rem .25rem; border-bottom: 1px solid #eee; }
+  textarea:not(.textarea) { width: 100%; box-sizing: border-box; font: .9rem ui-monospace, monospace; padding: .5rem; border: 1px solid #ccc; border-radius: .3rem; }
+  select:not(.select) { font-size: .95rem; padding: .35rem; border: 1px solid #ccc; border-radius: .3rem; }
   pre { background: #f6f6f6; border: 1px solid #eee; border-radius: .4rem; padding: .6rem .8rem; overflow: auto; font-size: .8rem; margin: .35rem 0; white-space: pre-wrap; word-break: break-word; }
   hr { border: 0; border-top: 1px solid #e5e5e5; margin: 1.5rem 0; }
 }

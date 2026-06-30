@@ -13,7 +13,7 @@ Prerequisite (satisfied): `rewrite-admin-panel-to-hono` is cut over and archived
 - [x] Restyle the Status home (`src/admin/pages/status.tsx`): warnings → Basecoat `alert` (destructive, inline Lucide icon), headline + job cards → Basecoat `card`/`section`, Refresh → `btn` ghost; kept the custom status-row/dot UI. **Playwright-verified** against `wrangler dev` (before/after screenshots)
 
 ## 3. Members (first island restyle)
-- [ ] Restyle the Members page + island (`pages/members.tsx`, `client/members.tsx`): table, onboard form, once-shown banner→`alert`, row actions → Basecoat kit; banner stays inline (no Toast JS); confirm island behavior (onboard/rotate/revoke/kroger) unchanged
+- [x] Restyle the Members island (`client/members.tsx`): onboard form (`input`+`btn`), table (`table`), row actions (`btn` ghost for rotate/kroger, `btn` destructive for revoke), failure → `alert`. Kept the `.minted` credentials callout as a panel-specific keep (its key/value layout doesn't fit a plain alert). Island behavior (onboard/rotate/revoke/kroger) unchanged. **Playwright-verified** (seeded members) — and caught + fixed a real bug: scoped the `@layer base` bridge `:not(.btn)`/`:not(.input)`/… so it never bleeds into a Basecoat component (protects every remaining migration)
 
 ## 4. Read-only areas
 - [ ] Data explorer (`pages/data.tsx`, 5 views): card/table/badge + tab/nav utilities; triage which of the 5 views earn their keep
