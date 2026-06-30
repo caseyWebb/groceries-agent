@@ -19,6 +19,16 @@ fi
 
 export PATH="$HOME/.local/bin:$PATH"
 
+# Apply the operator's identity to git. The environment injects CLAUDE_CODE_USER_EMAIL
+# from the web environment settings; CLAUDE_CODE_USER_NAME is set the same way.
+# Without this, git falls back to the Claude-default identity (noreply@anthropic.com).
+if [ -n "${CLAUDE_CODE_USER_EMAIL:-}" ]; then
+  git config --global user.email "$CLAUDE_CODE_USER_EMAIL"
+fi
+if [ -n "${CLAUDE_CODE_USER_NAME:-}" ]; then
+  git config --global user.name "$CLAUDE_CODE_USER_NAME"
+fi
+
 cd "$CLAUDE_PROJECT_DIR"
 
 # Trust this repo's mise.toml and install its pinned toolchain (node + aube).
