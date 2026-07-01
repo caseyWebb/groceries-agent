@@ -96,7 +96,7 @@ const Heatmap = ({
     <div class="cal-legend">
       <span class="muted small">
         {totals.cooks} cooks · {totals.activeDays} active days
-        {win !== "all" && win !== "year" ? " in window" : ""}
+        {win !== "all" ? " in window" : ""}
       </span>
       <span class="cal-scale">
         <span class="muted small">Less</span>

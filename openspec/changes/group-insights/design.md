@@ -39,8 +39,9 @@ To honor the panel's "seed from props, never fetch-on-mount" rule, the **SSR pag
 `readInsights(env, nowMs)` returns:
 ```
 { windows: [{key,label}...],
-  perWindow: { all|year|month|week: { recipes: RecipeRow[], sources: SourceRow[], totals } },
-  heatmap: { today: "YYYY-MM-DD", days: { date, count }[] }   // trailing 53 weeks, type IN (recipe,ad_hoc)
+  windowStart: { all|year|month|week: "YYYY-MM-DD" },   // "" for all-time
+  perWindow: { all|year|month|week: { recipes: RecipeRow[], sources: SourceRow[], totals: { cooks, favorites, activeDays } } },
+  heatmap: { today: "YYYY-MM-DD", weeks, cells: { date, count, level }[], months: { label, span }[] },  // trailing 53 weeks, type IN (recipe,ad_hoc)
   generatedAt }
 ```
 Split into a pure `mapInsights(rows, nowMs)` (fed raw `cooking_log`/`overlay`/`recipes`/`feeds` rows) + the thin IO wrapper, so windowing, ranking, rollup, and heatmap bucketing are tested without D1. `nowMs` is injected (never `Date.now()` inside the pure fn) for deterministic tests.
