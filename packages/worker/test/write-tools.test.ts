@@ -39,7 +39,8 @@ function fakeD1(slugs: string[]): FakeStore {
     kitchen_equipment: [],
     ready_to_eat: [],
     pantry: [],
-    aliases: [],
+    ingredient_identity: [],
+    ingredient_alias: [],
   };
 
   function tableOf(sql: string): string | null {
@@ -91,9 +92,11 @@ function fakeD1(slugs: string[]): FakeStore {
                 ? ["tenant", "slug"]
                 : table === "kitchen_equipment"
                   ? ["tenant", "slug"]
-                  : table === "aliases"
+                  : table === "ingredient_alias"
                     ? ["variant"]
-                    : ["tenant", "normalized_name"];
+                    : table === "ingredient_identity"
+                      ? ["id"]
+                      : ["tenant", "normalized_name"];
       const idx = tables[table].findIndex((r) => pk.every((k) => r[k] === row[k]));
       if (idx >= 0 && /ON CONFLICT/i.test(sql)) {
         tables[table][idx] = { ...tables[table][idx], ...row };
@@ -307,6 +310,27 @@ describe("applyPantryOperations", () => {
     expect(res.applied).toEqual([{ op: "add", name: "Olive Oil", merged: true }]);
     expect(res.items[0].quantity).toBe("low");
   });
+
+  it("an injected normalize merges surface-form variants onto one canonical id", () => {
+    // Pantry is food by construction, so production injects IngredientContext.resolve. A
+    // resolver mapping both scallion surface forms to `green onion` merges the add into the
+    // existing row rather than duplicating it.
+    const normalize = (s: string): string =>
+      ({ scallions: "green onion", "green onions": "green onion" })[s.toLowerCase()] ?? s.toLowerCase();
+    const existing: PantryItem[] = [
+      { name: "scallions", category: "fridge", quantity: "1 bunch", added_at: "2026-01-01", last_verified_at: "2026-06-01" },
+    ];
+    const res = applyPantryOperations(
+      existing,
+      [{ op: "add", item: { name: "green onions", quantity: "2 bunches" } }],
+      "2026-06-09",
+      normalize,
+    );
+    expect(res.items).toHaveLength(1);
+    expect(res.applied).toEqual([{ op: "add", name: "green onions", merged: true }]);
+    expect(res.items[0].quantity).toBe("2 bunches");
+    expect(res.items[0].added_at).toBe("2026-01-01"); // preserved
+  });
 });
 
 describe("markVerified", () => {
@@ -340,7 +364,7 @@ function collectTools(store: CorpusStore, username: string, env: Env = fakeD1([]
 }
 
 describe("update_aliases (D1-backed)", () => {
-  it("upserts mappings into the D1 aliases table, no git commit", async () => {
+  it("upserts mappings into the D1 identity + alias tables as human edits, no git commit", async () => {
     const d1 = fakeD1([]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);
     const res = await handlers.get("update_aliases")!({
@@ -349,10 +373,13 @@ describe("update_aliases (D1-backed)", () => {
     const out = JSON.parse(res.content[0].text) as { updated: number; commit_sha?: string };
     expect(out.updated).toBe(2);
     expect(out.commit_sha).toBeUndefined(); // D1-backed: not a GitHub commit
-    expect(d1.tables.aliases).toEqual([
-      { variant: "EVOO", canonical: "olive oil" },
-      { variant: "scallions", canonical: "green onions" },
+    // Variants are lowercased and written source='human' into the alias front-door.
+    expect(d1.tables.ingredient_alias.map((r) => ({ variant: r.variant, id: r.id, source: r.source }))).toEqual([
+      { variant: "evoo", id: "olive oil", source: "human" },
+      { variant: "scallions", id: "green onions", source: "human" },
     ]);
+    // The target ids are minted as base-level identity nodes.
+    expect(d1.tables.ingredient_identity.map((r) => r.id).sort()).toEqual(["green onions", "olive oil"]);
   });
 
   it("re-writing a variant upserts (no duplicate row)", async () => {
@@ -360,7 +387,9 @@ describe("update_aliases (D1-backed)", () => {
     const handlers = collectTools(storeWith({}), "everett", d1.env);
     await handlers.get("update_aliases")!({ aliases: { EVOO: "olive oil" } });
     await handlers.get("update_aliases")!({ aliases: { EVOO: "extra virgin olive oil" } });
-    expect(d1.tables.aliases).toEqual([{ variant: "EVOO", canonical: "extra virgin olive oil" }]);
+    expect(d1.tables.ingredient_alias.map((r) => ({ variant: r.variant, id: r.id }))).toEqual([
+      { variant: "evoo", id: "extra virgin olive oil" },
+    ]);
   });
 });
 
@@ -554,6 +583,19 @@ describe("update_preferences (merge-patch → D1)", () => {
     expect(byTerm.olive_oil).toBe('["Cobram"]');
     expect(byTerm.yellow_onion).toBe("[]");
     expect("canola_oil" in byTerm).toBe(false); // deleted → ambiguous
+  });
+
+  it("normalizes the brand-pref key to the matcher's lookup form (quantity stripped, brandKey)", async () => {
+    const d1 = fakeD1([]);
+    const handlers = collectTools(storeWith({}), "everett", d1.env);
+    // A raw, quantity-prefixed, mixed-case term must land under the SAME key the matcher reads:
+    // brandKey(normalizeIngredient("2 lb Ground Beef")) === "ground_beef".
+    await handlers.get("update_preferences")!({
+      patch: { brands: { "2 lb Ground Beef": ["Laura's Lean"] } },
+    });
+    const byTerm = Object.fromEntries(d1.tables.brand_prefs.map((r) => [r.term, r.ranks]));
+    expect(byTerm.ground_beef).toBe('["Laura\'s Lean"]');
+    expect("2 lb Ground Beef" in byTerm).toBe(false);
   });
 
   it("rejects an unknown top-level key toward custom, storing nothing", async () => {

@@ -7,9 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import { runTool } from "./errors.js";
-import { normalizeName } from "./grocery.js";
-import { upsertSkuMappings, readSkuCache, type NewSkuMapping } from "./corpus-db.js";
-import type { MatchContext, MatchResult } from "./matching.js";
+import { upsertSkuMappings, readSkuCache, ingredientContext, type NewSkuMapping } from "./corpus-db.js";
+import { normalizeIngredient, type MatchContext, type MatchResult } from "./matching.js";
 import {
   computeToBuy,
   placeOrder,
@@ -131,12 +130,18 @@ export function registerOrderTools(
 
         const list = await readGroceryList(env, tenantId);
         const pantryNames = await readPantryNames(env, tenantId);
+        // The canonical-id normalizer for the SKU-cache write key — same funnel the matcher
+        // keys its cache read on, so a learned mapping stores under the key it's looked up by.
+        const ingredientCtx = await ingredientContext(env);
 
+        // Key the user-supplied buy-name maps through the SAME funnel computeToBuy resolves
+        // food keys by (user-supplied buy-names are treated as food), so they line up with
+        // the food-keyed to-buy set. pantryNames already holds canonical ids (readPantryNames).
         const quantities: Record<string, number> = {};
         for (const [k, v] of Object.entries(input.quantities ?? {})) {
-          quantities[normalizeName(k)] = v;
+          quantities[ingredientCtx.resolve(k)] = v;
         }
-        const includePartials = new Set((input.include_partials ?? []).map(normalizeName));
+        const includePartials = new Set((input.include_partials ?? []).map((n) => ingredientCtx.resolve(n)));
 
         const { to_buy, partials } = computeToBuy({
           list,
@@ -144,16 +149,18 @@ export function registerOrderTools(
           pantryNames,
           quantities,
           includePartials,
+          resolve: (n) => ingredientCtx.resolve(n),
         });
 
         const overrides = new Map<string, Override>();
         for (const o of input.overrides ?? []) {
-          overrides.set(normalizeName(o.name), { sku: o.sku, brand: o.brand, size: o.size ?? null });
+          overrides.set(ingredientCtx.resolve(o.name), { sku: o.sku, brand: o.brand, size: o.size ?? null });
         }
 
         const deps: PlaceOrderDeps = {
           resolve: (name) => resolve(name),
           revalidateSku: (sku) => revalidateSku(sku),
+          normalize: (name) => normalizeIngredient(name, ingredientCtx.resolver.toId),
           commitSkuCache,
           cartAdd: async (lines) => {
             try {
@@ -165,7 +172,11 @@ export function registerOrderTools(
           advanceInCart,
         };
 
-        const result = await placeOrder(deps, to_buy, { overrides, preview: input.preview });
+        const result = await placeOrder(deps, to_buy, {
+          overrides,
+          preview: input.preview,
+          resolveKey: (n) => ingredientCtx.resolve(n),
+        });
         return { ...result, partials };
       }),
   );
