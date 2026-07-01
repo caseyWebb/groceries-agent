@@ -307,6 +307,9 @@
   .pv-link { color: var(--accent); word-break: break-all; }
 
   /* ── Usage (admin-ui-redesign-usage) ── */
+  /* Spacing below the "Cloudflare usage for <day> (UTC)…" caption, so it doesn't crowd the
+     headline stat-tile grid directly beneath it. */
+  .usage-caption { margin-bottom: 1rem; }
   /* Namespace palette: a small warm categorical trio + the generic "unlabeled" fallback,
      consistent with the mock's --kv-kroger/--kv-oauth/--kv-tenant swatches. Referenced by
      src/usage.ts's static binding→color table (NamespaceUsage.resolved.color). */

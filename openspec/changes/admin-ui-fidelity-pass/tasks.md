@@ -50,11 +50,11 @@
 
 ## 8. Usage
 
-- [ ] 8.1 Add spacing below the "Cloudflare usage for `<day>` (UTC)…" line.
-- [ ] 8.2 Fix the Usage area's container/card layout so cards do not exceed the container width (widen the container or correct the card sizing/wrapping).
-- [ ] 8.3 Confirm whether `KV_NAMESPACE_LABELS` is unset in the affected environment (per design.md's diagnosis: `resolveNamespaceLabel` correctly falls back to the grey `unlabeled` swatch when the var is absent — this is documented, gated behavior, not a lookup/CSS bug).
-- [ ] 8.4 If 8.3 confirms the var is simply unset, consider defaulting `KV_NAMESPACE_LABELS` from `wrangler.jsonc`'s own `kv_namespaces` ids at deploy time (scoped to deploy tooling) so a fresh deploy shows correct colors without a manual paste step; if out of scope for this change, document the manual step more prominently instead.
-- [ ] 8.5 Wire the sparkline hover-tooltip primitive (1.1) onto the Usage area's 30-day stacked KV sparkline segments.
+- [x] 8.1 Add spacing below the "Cloudflare usage for `<day>` (UTC)…" line.
+- [x] 8.2 Fix the Usage area's container/card layout so cards do not exceed the container width (widen the container or correct the card sizing/wrapping). Fixed by giving the Usage page the `wide` container (60rem, matching Data/Discovery/Logs/Config) — it was rendering in the narrower 44rem default, which crammed the 4-column stat-tile grid and the per-namespace-stacked meters.
+- [x] 8.3 Confirmed `KV_NAMESPACE_LABELS` is unset in the affected environment (per design.md's diagnosis) — but rather than stopping at "documented, gated behavior," `resolveNamespaceLabel` now AUTO-RESOLVES via a fallback chain: (a) the Cloudflare REST API's own namespace title (`GET /accounts/{id}/storage/kv/namespaces`, `fetchNamespaceTitles`), needing no operator config; (b) `KV_NAMESPACE_LABELS` as a fallback when the token lacks the REST call's "Workers KV Storage: Read" scope; (c) the raw id + generic color as a last resort. This is the root-cause fix for both the raw-id names AND the all-grey colors (same cause: an unresolved namespace falls back to the generic `unlabeled` swatch).
+- [x] 8.4 Superseded by 8.3's runtime auto-resolution (no deploy-tooling change needed): a fresh deploy now shows correct names/colors automatically, without a manual `KV_NAMESPACE_LABELS` paste step, as long as the analytics token also carries "Workers KV Storage: Read". Documented the scope requirement + the `KV_NAMESPACE_LABELS` fallback prominently in `docs/SELF_HOSTING.md`.
+- [x] 8.5 Wired the sparkline hover-tooltip primitive's `data-tip-title`/`data-tip-body` attributes (1.1) onto the Usage area's per-namespace KV-operation segments (`.kv-seg`) and the 30-day stacked KV sparkline columns (`.spark-col`), replacing the native `title` attribute. Also investigated a Workers AI neuron 30-day history series (mirroring the KV history widening): could not confirm a `date`-dimensioned `aiInferenceAdaptiveGroups` field against the live Cloudflare schema (network access to Cloudflare's docs was unavailable in this environment, and the module's own discipline requires live-schema verification before shipping a new GraphQL field) — rather than fabricate a series, the AI neuron meter renders today's actual value only, with an explanatory note, and no sparkline.
 
 ## 9. Discovery
 
