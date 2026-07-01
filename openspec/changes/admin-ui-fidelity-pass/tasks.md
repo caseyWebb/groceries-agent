@@ -9,16 +9,16 @@
 
 ## 2. Status homepage
 
-- [ ] 2.1 Remove the "Service Health" heading (health now lives in the global corner indicator only).
-- [ ] 2.2 Add an icon to each stat card (recipes, members, RSS feeds, cached SKUs) per the mock's `icon` field.
-- [ ] 2.3 Make the RSS Feeds stat tile navigate to the Config area's Discovery-feeds editor.
-- [ ] 2.4 Make the Cached SKUs stat tile navigate to the Data area's Stores explorer.
-- [ ] 2.5 Add a "checked `<relative age>`" label next to the Refresh action, reading the health snapshot's `generatedAt`.
-- [ ] 2.6 Render each job's summary counts (`jstat`s) as pills/badges using the primitive from 1.5.
-- [ ] 2.7 Cap the run-history sparkline's segment width and right-align the track so a still-populating sparkline (few runs) doesn't stretch/look broken.
-- [ ] 2.8 Wire the sparkline hover-tooltip primitive (1.1) onto each Status sparkline segment (run age, ok/fail, click-to-view-log).
-- [ ] 2.9 Add "OLDER"/"NOW" axis labels beneath the sparkline track.
-- [ ] 2.10 Add a border/shadow to stat cards and job/dependency item cards, matching the mock.
+- [x] 2.1 Remove the "Service Health" heading (health now lives in the global corner indicator only).
+- [x] 2.2 Add an icon to each stat card (recipes, members, RSS feeds, cached SKUs) per the mock's `icon` field.
+- [x] 2.3 Make the RSS Feeds stat tile navigate to the Config area's Discovery-feeds editor.
+- [x] 2.4 Make the Cached SKUs stat tile navigate to the Data area's Stores explorer.
+- [x] 2.5 Add a "checked `<relative age>`" label next to the Refresh action, reading the health snapshot's `generatedAt`.
+- [x] 2.6 Render each job's summary counts (`jstat`s) as pills/badges using the primitive from 1.5.
+- [x] 2.7 Cap the run-history sparkline's segment width and right-align the track so a still-populating sparkline (few runs) doesn't stretch/look broken.
+- [x] 2.8 Wire the sparkline hover-tooltip primitive (1.1) onto each Status sparkline segment (run age, ok/fail, click-to-view-log).
+- [x] 2.9 Add "OLDER"/"NOW" axis labels beneath the sparkline track.
+- [x] 2.10 Add a border/shadow to stat cards and job/dependency item cards, matching the mock.
 
 ## 3. Members
 
@@ -64,7 +64,7 @@
 
 ## 10. Logs
 
-- [ ] 10.1 Remove the left sidebar/submenu from the Logs area (`src/admin/pages/logs.tsx`) — render the all-jobs run log as the area's sole, full-width content, per the `operator-admin` spec delta.
+- [x] 10.1 Remove the left sidebar/submenu from the Logs area (`src/admin/pages/logs.tsx`) — render the all-jobs run log as the area's sole, full-width content, per the `operator-admin` spec delta.
 
 ## 11. Config
 

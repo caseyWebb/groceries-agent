@@ -78,14 +78,7 @@
   .jstat { display: inline-flex; align-items: center; gap: .35rem; background: color-mix(in oklch, var(--muted) 55%, transparent); border: 1px solid var(--border); border-radius: 999px; padding: .12rem .55rem; font-size: .72rem; }
   .jstat-k { color: var(--muted-foreground); }
   .jstat-v { font-family: var(--font-mono); font-weight: 600; color: #2a2a2a; }
-  /* Logs master/detail. */
-  .logs { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 1.25rem; }
-  .logs > * { min-width: 0; }
-  .log-sources { list-style: none; margin: .25rem 0 0; padding: 0; }
-  .log-source { border-radius: .35rem; }
-  .log-source.active { background: #fff7ee; }
-  .log-source-link { display: block; padding: .4rem .6rem; color: #555; text-decoration: none; font-size: .9rem; }
-  .log-source.active .log-source-link { color: #222; font-weight: 600; }
+  /* Logs — a single, full-width destination (no sidebar/submenu). */
   .log-head { display: flex; justify-content: space-between; align-items: center; }
   .log-actions { display: flex; gap: .75rem; align-items: center; }
   .entry-list { list-style: none; margin: 0; padding: 0; }
