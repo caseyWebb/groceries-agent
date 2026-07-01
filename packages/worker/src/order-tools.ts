@@ -8,8 +8,8 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { runTool } from "./errors.js";
 import { normalizeName } from "./grocery.js";
-import { upsertSkuMappings, readSkuCache, type NewSkuMapping } from "./corpus-db.js";
-import type { MatchContext, MatchResult } from "./matching.js";
+import { upsertSkuMappings, readSkuCache, ingredientContext, type NewSkuMapping } from "./corpus-db.js";
+import { normalizeIngredient, type MatchContext, type MatchResult } from "./matching.js";
 import {
   computeToBuy,
   placeOrder,
@@ -131,6 +131,9 @@ export function registerOrderTools(
 
         const list = await readGroceryList(env, tenantId);
         const pantryNames = await readPantryNames(env, tenantId);
+        // The canonical-id normalizer for the SKU-cache write key — same funnel the matcher
+        // keys its cache read on, so a learned mapping stores under the key it's looked up by.
+        const ingredientCtx = await ingredientContext(env);
 
         const quantities: Record<string, number> = {};
         for (const [k, v] of Object.entries(input.quantities ?? {})) {
@@ -154,6 +157,7 @@ export function registerOrderTools(
         const deps: PlaceOrderDeps = {
           resolve: (name) => resolve(name),
           revalidateSku: (sku) => revalidateSku(sku),
+          normalize: (name) => normalizeIngredient(name, ingredientCtx.resolver.toId),
           commitSkuCache,
           cartAdd: async (lines) => {
             try {

@@ -564,6 +564,19 @@ describe("update_preferences (merge-patch → D1)", () => {
     expect("canola_oil" in byTerm).toBe(false); // deleted → ambiguous
   });
 
+  it("normalizes the brand-pref key to the matcher's lookup form (quantity stripped, brandKey)", async () => {
+    const d1 = fakeD1([]);
+    const handlers = collectTools(storeWith({}), "everett", d1.env);
+    // A raw, quantity-prefixed, mixed-case term must land under the SAME key the matcher reads:
+    // brandKey(normalizeIngredient("2 lb Ground Beef")) === "ground_beef".
+    await handlers.get("update_preferences")!({
+      patch: { brands: { "2 lb Ground Beef": ["Laura's Lean"] } },
+    });
+    const byTerm = Object.fromEntries(d1.tables.brand_prefs.map((r) => [r.term, r.ranks]));
+    expect(byTerm.ground_beef).toBe('["Laura\'s Lean"]');
+    expect("2 lb Ground Beef" in byTerm).toBe(false);
+  });
+
   it("rejects an unknown top-level key toward custom, storing nothing", async () => {
     const d1 = fakeD1([]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);

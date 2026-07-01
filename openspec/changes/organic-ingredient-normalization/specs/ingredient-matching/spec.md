@@ -18,3 +18,8 @@ The system SHALL normalize the ingredient by stripping a leading quantity/unit, 
 
 - **WHEN** an ingredient has no alias entry
 - **THEN** the matcher normalizes to the quantity-stripped term and proceeds (as today), and the surface form is enqueued so a later capture tick can place it
+
+#### Scenario: A learned SKU mapping and a brand preference are written under the canonical id
+
+- **WHEN** `place_order` caches a mapping for a grocery line named "2 lb ground beef", or `update_preferences` sets a brand preference keyed "2 lb Ground Beef"
+- **THEN** the write keys on the canonical id the matcher reads by — `sku_cache.ingredient` = "ground beef" and the `brand_prefs.term` = `brandKey("ground beef")` = "ground_beef" — so the entry is found on the next resolution rather than fragmenting under the raw surface form

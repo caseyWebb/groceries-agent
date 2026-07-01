@@ -173,6 +173,14 @@ export interface PlaceOrderDeps {
    * override SKU that has gone unavailable is checkpointed, not blind-carted.
    */
   revalidateSku(sku: string): Promise<RevalidatedSku | null>;
+  /**
+   * Normalize an ingredient name to its canonical id — the SAME `normalizeIngredient`
+   * the matcher keys the cache read on, so a learned mapping is stored under the key it
+   * will be looked up by (a leading quantity / alias / `::` qualifier would otherwise make
+   * the write key `normalizeName`-shaped and never re-read). Capture already happened during
+   * resolution, so this is normalize-only.
+   */
+  normalize(name: string): string;
   /** Commit SKU-cache appends; returns the commit sha, or null when nothing was new. Throws on failure. */
   commitSkuCache(mappings: NewMapping[]): Promise<string | null>;
   /** Write the resolved lines to the Kroger cart. Throws on failure. */
@@ -207,9 +215,9 @@ function codeOf(e: unknown): string | undefined {
   return typeof c === "string" ? c : undefined;
 }
 
-function toMapping(line: ResolvedLine): NewMapping {
+function toMapping(line: ResolvedLine, normalize: (name: string) => string): NewMapping {
   return {
-    ingredient: normalizeName(line.name),
+    ingredient: normalize(line.name),
     sku: line.sku,
     brand: line.brand || undefined,
     size: line.size ?? undefined,
@@ -311,7 +319,7 @@ export async function placeOrder(
   // 1. SKU-cache append first — a pure hint, so committing it before the cart
   //    means a cart failure leaves the repo correct and the cart retryable.
   try {
-    await deps.commitSkuCache(resolved.map(toMapping));
+    await deps.commitSkuCache(resolved.map((l) => toMapping(l, deps.normalize)));
     result.sku_cache = { committed: true };
   } catch (e) {
     result.sku_cache = { committed: false, error: msg(e) };

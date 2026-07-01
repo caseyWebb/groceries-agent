@@ -8,7 +8,7 @@ import {
 } from "../src/order.js";
 import { packageCount } from "../src/order-tools.js";
 import type { GroceryItem } from "../src/grocery.js";
-import type { MatchResult } from "../src/matching.js";
+import { normalizeIngredient, type MatchResult } from "../src/matching.js";
 
 function item(name: string, over: Partial<GroceryItem> = {}): GroceryItem {
   return {
@@ -172,7 +172,7 @@ function makeDeps(
     revalidations?: Record<string, RevalidatedSku | null>;
   } = {},
 ) {
-  const calls = { sku: 0, cart: 0, advance: 0, reval: 0, cartLines: [] as unknown[] };
+  const calls = { sku: 0, cart: 0, advance: 0, reval: 0, cartLines: [] as unknown[], mappings: [] as { ingredient: string }[] };
   const fulfillable: RevalidatedSku = { brand: "Kroger", size: null, price: { regular: 1, promo: 0 }, on_sale: false };
   const deps: PlaceOrderDeps = {
     resolve: async (name) => resolutions[name.toLowerCase()] ?? unavailable,
@@ -181,8 +181,12 @@ function makeDeps(
       if (opts.revalidations && sku in opts.revalidations) return opts.revalidations[sku];
       return fulfillable;
     },
-    commitSkuCache: async () => {
+    // The real canonical-id normalizer (empty alias map) so a quantity-prefixed line caches
+    // under the key the matcher reads it back by — see the "canonical id" test below.
+    normalize: (name) => normalizeIngredient(name, {}),
+    commitSkuCache: async (mappings) => {
       calls.sku++;
+      calls.mappings = mappings;
       if (opts.skuCacheThrows) throw new Error("commit failed");
       return "sku-sha";
     },
@@ -213,6 +217,14 @@ describe("placeOrder", () => {
     expect(res.cart).toEqual({ written: true, count: 2 });
     expect(res.list).toEqual({ advanced: true });
     expect(calls).toMatchObject({ sku: 1, cart: 1, advance: 1 });
+  });
+
+  it("caches the learned mapping under the CANONICAL id (matcher's read key), not the raw name", async () => {
+    // A leading quantity in the grocery-list name must not fragment the shared cache: the
+    // matcher reads by normalizeIngredient (quantity-stripped), so the write must key the same.
+    const { deps, calls } = makeDeps({ "2 lb ground beef": confident("S9") });
+    await placeOrder(deps, toBuy("2 lb ground beef"));
+    expect(calls.mappings.map((m) => m.ingredient)).toEqual(["ground beef"]);
   });
 
   it("batches ambiguous/unavailable into the checkpoint and never carts them", async () => {

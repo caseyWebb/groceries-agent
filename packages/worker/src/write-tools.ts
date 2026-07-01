@@ -13,6 +13,7 @@ import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { type CorpusStore, readCorpusFile } from "./corpus-store.js";
 import { addAliases, ingredientContext } from "./corpus-db.js";
+import { brandKey } from "./matching.js";
 import { parseMarkdown } from "./parse.js";
 import { serializeMarkdown } from "./serialize.js";
 import { validateFile } from "./validate.js";
@@ -477,8 +478,14 @@ export function registerWriteTools(
 
         const brandsPatch = patch.brands;
         if (brandsPatch !== null && brandsPatch !== undefined && typeof brandsPatch === "object") {
+          // Key each brand-pref row on the matcher's lookup form — brandKey(canonical id) — so a
+          // write lands on the SAME key the matcher reads (`deps.brands[brandKey(normalizeIngredient(x))]`).
+          // A raw multi-word term ("ground beef") otherwise stored as "ground beef" but was read as
+          // "ground_beef" — a silent miss. resolve() also captures the (ingredient) term for the graph.
+          const ctx = await ingredientContext(env);
           for (const [term, value] of Object.entries(brandsPatch as Record<string, unknown>)) {
-            stmts.push(brandStmt(env, username, term, value === null ? null : (value as unknown[])));
+            const key = brandKey(ctx.resolve(term));
+            stmts.push(brandStmt(env, username, key, value === null ? null : (value as unknown[])));
           }
         }
         if (stmts.length > 0) await db(env).batch(stmts);
