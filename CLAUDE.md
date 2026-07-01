@@ -13,6 +13,10 @@ Read the deep docs rather than reverse-engineering from code:
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the determinism boundary, multi-tenant identity, data model, the Kroger matching pipeline, the cron jobs.
 - **[docs/TOOLS.md](docs/TOOLS.md)** — the MCP tool contract. **[docs/SCHEMAS.md](docs/SCHEMAS.md)** — file/D1 formats. **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)** — operator setup. **[AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md)** — the persona (not auto-loaded into dev sessions — intentional).
 
+## Working mode
+
+Unless otherwise specified, run in orchestrator (agent teams) mode. Don't work on things directly — the main thread is the arbiter and maintainer of context, delegating execution to subagents. The exception is active discovery/exploration and design discussions with the user, where the main thread stays in the conversation — but even then, collect grounding context through a subagent rather than reading it into the main thread. Defer to appropriate models, reaching for haiku and sonnet when they are well-capable.
+
 ## Toolchain & commands
 
 Build tooling is managed with **mise** (`mise.toml` pins Node 22 + **aube**, the package manager). Don't install globally. `aubr` = `aube run` (use it instead of `npm run`); `aube ci` is the lockfile-strict CI install. **`aube-lock.yaml` is the lockfile** and **`pnpm-workspace.yaml` defines the `packages/*` workspaces** — aube is pnpm-flavored (the packages depend on each other via the `workspace:*` protocol), so npm can't drive this repo; don't reintroduce a `package-lock.json`.
