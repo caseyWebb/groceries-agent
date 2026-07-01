@@ -117,10 +117,11 @@ const DERIVE_INTERVAL_MS = 20 * 60 * 60 * 1000;
  */
 export async function runArchetypeDerivationJob(env: Env, now: () => number = () => Date.now()): Promise<void> {
   const startedAt = now();
-  // Self-gate: skip (without touching health) if we ran within the interval, so a frequent cron
-  // tick doesn't re-spend the naming model — the timestamp only advances on a real run.
+  // Self-gate: skip (without touching health) if we SUCCEEDED within the interval, so a frequent
+  // cron tick doesn't re-spend the naming model. Gating on `ok` (not just recency) means a failed
+  // pass isn't starved for the interval — it retries on the next tick, like the other jobs.
   const last = await readJobHealth(env, "archetype-derive").catch(() => null);
-  if (last && startedAt - last.last_run_at < DERIVE_INTERVAL_MS) return;
+  if (last && last.ok && startedAt - last.last_run_at < DERIVE_INTERVAL_MS) return;
 
   try {
     const tenants = await directoryFromEnv(env).list();

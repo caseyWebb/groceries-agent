@@ -126,7 +126,9 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
           const entry = realSlug ? effective[realSlug] : undefined;
           const vec = realSlug ? embeddings.get(realSlug) : undefined;
           if (realSlug && entry && vec && !(entry as { reject?: unknown }).reject) {
-            locked.push(toDiversify(realSlug, entry.frontmatter as Record<string, unknown>, vec, 1));
+            // `effective[slug]` is a FLAT index entry (frontmatter fields directly on it) — NOT
+            // a `{ frontmatter }` wrapper (that shape only comes from filterRecipes). Pass it as-is.
+            locked.push(toDiversify(realSlug, entry as Record<string, unknown>, vec, 1));
           } else {
             lockedUnresolved.push(raw);
           }
@@ -166,7 +168,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
         }
 
         const frontmatterBySlug = new Map<string, Record<string, unknown>>();
-        for (const [slug, entry] of Object.entries(effective)) frontmatterBySlug.set(slug, entry.frontmatter as Record<string, unknown>);
+        for (const [slug, entry] of Object.entries(effective)) frontmatterBySlug.set(slug, entry as Record<string, unknown>);
 
         const ctx: ProposalCtx = {
           slots: shape.slots,
@@ -231,7 +233,7 @@ function buildPool(
   for (const r of ranked) {
     const vec = embeddings.get(r.slug);
     if (!vec) continue;
-    pool.push(toDiversify(r.slug, (effective[r.slug]?.frontmatter as Record<string, unknown>) ?? {}, vec, r.score, r.title, r.protein, r.cuisine, r.time_total));
+    pool.push(toDiversify(r.slug, (effective[r.slug] as Record<string, unknown>) ?? {}, vec, r.score, r.title, r.protein, r.cuisine, r.time_total));
   }
   return pool;
 }

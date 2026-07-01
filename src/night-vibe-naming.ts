@@ -94,9 +94,11 @@ function cleanPhrase(raw: string | undefined): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw
     .trim()
-    .replace(/^[-*\d.)\s]+/, "") // list markers
+    // Strip a real list marker only (requires a trailing separator), so a phrase-internal number
+    // like "5-spice braise" survives instead of losing its "5-".
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
     .replace(/^["']|["']$/g, "")
-    .replace(/[.]+$/, "")
+    .replace(/[.!?,;:]+$/, "") // trailing sentence punctuation the model sometimes adds
     .trim();
   const words = cleaned.split(/\s+/).length;
   return cleaned && words >= 2 && words <= 10 ? cleaned : null;

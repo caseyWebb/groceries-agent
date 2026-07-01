@@ -3,10 +3,12 @@
 -- night vibe, …) reconciling STATED preference (the palette/profile) against REVEALED behavior
 -- (the cooking log + in-app edits). A per-member queue the member confirms from either surface;
 -- the PRODUCER is pluggable (the deterministic signal cron, or the operator's frontier). `id`
--- is a STABLE hash of (tenant, kind, target) so re-enqueue is idempotent (INSERT OR IGNORE) and
--- a proposal the member already rejected is never re-surfaced ("reject is itself a signal").
+-- is a STABLE hash of (kind, target[, cadence bucket]) so re-enqueue is idempotent (INSERT OR
+-- IGNORE) and a proposal the member already rejected is never re-surfaced. Tenant is NOT in the
+-- hash — the PRIMARY KEY is (tenant, id), so a hash collision can at worst clobber within one
+-- tenant, never drop another member's proposal.
 CREATE TABLE IF NOT EXISTS pending_proposals (
-  id          TEXT NOT NULL,-- stable hash(tenant|kind|target) — dedup + no-re-propose
+  id          TEXT NOT NULL,      -- stable hash(kind|target[|cadence bucket]) — dedup + no-re-propose
   tenant      TEXT NOT NULL,      -- the member the proposal is for
   kind        TEXT NOT NULL,      -- add_vibe | adjust_cadence | prune_vibe
   target      TEXT,               -- the vibe id the proposal acts on
