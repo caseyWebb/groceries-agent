@@ -42,3 +42,7 @@ KROGER_CLIENT_SECRET=""
 # inert (panel stays 404) on any deployed host, so never set it in prod. Note: with this on,
 # /health reports the admin gate as `exposed` (expected locally).
 ADMIN_DEV_BYPASS="1"
+
+# Optional: the tenant id (allowlisted username) the Members roster badges "owner". A plain,
+# non-secret var (not inferred from onboarding order) — unset means no member is shown as owner.
+# OWNER_TENANT_ID="casey"
