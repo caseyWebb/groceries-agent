@@ -237,18 +237,19 @@
   .bar-tip.fail .bar-tip-title { color: #ff8b85; opacity: 1; }
   .bar-tip.fail .bar-tip-body { opacity: .95; }
 
-  /* SparklineTrack primitive (ui/kit.tsx): a max-width-capped, right-aligned segment track
-     (an under-populated series doesn't stretch to fill the row) + the OLDER/NOW axis caption. */
-  .spark-track-wrap { max-width: 22rem; margin-left: auto; }
+  /* SparklineTrack primitive (ui/kit.tsx): a full-width, fixed-slot segment track — an
+     under-populated series is padded on the older/left side with faint ghost slots so it still
+     fills the width — + the OLDER/NOW axis caption. */
   .spark-track { display: flex; gap: 2px; align-items: stretch; height: 22px; justify-content: flex-end; }
-  .spark-seg-tip, a.spark-seg-link { flex: 1 1 0; min-width: 2px; max-width: 10px; }
+  .spark-seg-tip, a.spark-seg-link { flex: 1 1 0; min-width: 2px; }
   .spark-seg-tip { display: block; border-radius: 1px; background: var(--accent); opacity: .85; cursor: default; }
   .spark-seg-tip.ok { background: #2da44e; opacity: 1; }
   .spark-seg-tip.fail { background: #cf222e; opacity: 1; }
+  .spark-seg-tip.ghost { background: var(--muted); opacity: .6; }
   a.spark-seg-link { display: flex; align-items: flex-end; text-decoration: none; }
   a.spark-seg-link .spark-seg-tip { width: 100%; }
   a.spark-seg-link:hover .spark-seg-tip { opacity: .65; }
-  .spark-axis { display: flex; justify-content: space-between; margin-top: .25rem; font-size: .68rem; color: var(--muted-foreground); max-width: 22rem; margin-left: auto; }
+  .spark-axis { display: flex; justify-content: space-between; margin-top: .25rem; font-size: .68rem; color: var(--muted-foreground); }
 
   /* ── Global corner health dock ── */
   .health-dock { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 60; display: flex; flex-direction: column; align-items: flex-end; gap: .6rem; }
