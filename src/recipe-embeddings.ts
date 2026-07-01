@@ -21,7 +21,7 @@ import { contentHash, generateDescription, type RecipeFacets } from "./descripti
 import { embedTexts } from "./embedding.js";
 import type { Env } from "./env.js";
 import { hashText } from "./hash.js";
-import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth, writeJobRun } from "./health.js";
 
 // Re-exported so existing importers (and tests) keep a single hash entry point.
 export { hashText } from "./hash.js";
@@ -251,16 +251,19 @@ export async function runEmbedJob(env: Env, deps: DerivedDeps): Promise<void> {
   const startedAt = deps.now();
   try {
     const r = await reconcileRecipeDerived(deps);
-    await writeJobHealth(env, "recipe-embed", {
+    const summary = {
+      described: r.described,
+      describePending: r.describePending,
+      embedded: r.embedded,
+      pruned: r.pruned,
+      pending: r.pending,
+    };
+    await writeJobHealth(env, "recipe-embed", { ok: true, last_run_at: startedAt, summary });
+    await writeJobRun(env, "recipe-embed", {
       ok: true,
-      last_run_at: startedAt,
-      summary: {
-        described: r.described,
-        describePending: r.describePending,
-        embedded: r.embedded,
-        pruned: r.pruned,
-        pending: r.pending,
-      },
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary,
     });
     // History point (usage-trends): doubles = [duration_ms, described, describePending, embedded, pruned, pending].
     recordUsagePoint(env, "recipe-embed", {
@@ -276,6 +279,12 @@ export async function runEmbedJob(env: Env, deps: DerivedDeps): Promise<void> {
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    await writeJobRun(env, "recipe-embed", {
+      ok: false,
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary: { error: msg },
+    });
     recordUsagePoint(env, "recipe-embed", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "recipe-embed", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing

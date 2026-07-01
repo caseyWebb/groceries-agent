@@ -23,7 +23,7 @@ import { dedupeFlyerHits, isFulfillable, isOnSale, type FlyerItem } from "./matc
 import { directoryFromEnv } from "./tenant.js";
 import { readPreferences } from "./profile-db.js";
 import { readFlyerTerms } from "./corpus-db.js";
-import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth, writeJobRun } from "./health.js";
 
 // KV keys. Rollups are per-location (`flyer:{locationId}`); the cursor and the
 // persisted sweep plan are single keys. All live in the existing KROGER_KV namespace.
@@ -356,16 +356,19 @@ export async function runWarmJob(env: Env, deps: WarmDeps, config: WarmConfig = 
   const startedAt = deps.now();
   try {
     const r = await runWarmTick(deps, config);
-    await writeJobHealth(env, "flyer-warm", {
+    const summary = {
+      action: r.action,
+      done: r.done,
+      sweep_started_at: r.sweep_started_at,
+      sweep_completed_at: r.sweep_completed_at,
+      errors: r.errors ?? 0,
+    };
+    await writeJobHealth(env, "flyer-warm", { ok: true, last_run_at: startedAt, summary });
+    await writeJobRun(env, "flyer-warm", {
       ok: true,
-      last_run_at: startedAt,
-      summary: {
-        action: r.action,
-        done: r.done,
-        sweep_started_at: r.sweep_started_at,
-        sweep_completed_at: r.sweep_completed_at,
-        errors: r.errors ?? 0,
-      },
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary,
     });
     // History point (usage-trends): doubles = [duration_ms, errors]. Additive, best-effort.
     recordUsagePoint(env, "flyer-warm", { ok: true, durationMs: deps.now() - startedAt, counts: [r.errors ?? 0] });
@@ -377,6 +380,12 @@ export async function runWarmJob(env: Env, deps: WarmDeps, config: WarmConfig = 
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    await writeJobRun(env, "flyer-warm", {
+      ok: false,
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary: { error: msg },
+    });
     recordUsagePoint(env, "flyer-warm", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "flyer-warm", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing

@@ -21,6 +21,7 @@ import { createR2CorpusStore, type CorpusStore, type DirEntry } from "./corpus-s
 import { parseMarkdown } from "./parse.js";
 import { readProfile } from "./profile-db.js";
 import { readPantry, readMealPlan, readGroceryList } from "./session-db.js";
+import { directoryFromEnv } from "./tenant.js";
 
 /** Default row cap for the potentially-large lookup tables (sku_cache, cooking_log). */
 const DEFAULT_ROW_LIMIT = 200;
@@ -244,6 +245,37 @@ export async function memberDetail(env: Env, tenantId: string): Promise<MemberDe
     cooking_log: cookingLog,
     recipe_notes: recipeNotes,
     store_notes: storeNotes,
+  };
+}
+
+// --- Corpus-counts (Status stat tiles) ---------------------------------------
+
+/** The Status area's page-level corpus stat tiles — aggregate counts only, no per-tenant data. */
+export interface CorpusCounts {
+  recipes: number;
+  members: number;
+  feeds: number;
+  cached_skus: number;
+}
+
+/**
+ * The four corpus stat-tile counts: indexed recipes, allowlisted members, RSS discovery
+ * feeds, and cached Kroger SKUs. Three plain `COUNT(*)` reads through `src/db.ts` plus the
+ * tenant directory's own list length (members live in `TENANT_KV`, not D1) — aggregate-only,
+ * no per-tenant identifier in the result.
+ */
+export async function corpusCounts(env: Env): Promise<CorpusCounts> {
+  const [recipes, feeds, skus, tenants] = await Promise.all([
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM recipes"),
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM feeds"),
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM sku_cache"),
+    directoryFromEnv(env).list(),
+  ]);
+  return {
+    recipes: recipes?.n ?? 0,
+    members: tenants.length,
+    feeds: feeds?.n ?? 0,
+    cached_skus: skus?.n ?? 0,
   };
 }
 

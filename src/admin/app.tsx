@@ -21,7 +21,8 @@ import {
   randomInviteCode,
   type AdminDeps,
 } from "../admin.js";
-import { buildHealthPayload, HEALTH_JOBS } from "../health.js";
+import { buildHealthPayload, readJobRuns, HEALTH_JOBS, type JobRun } from "../health.js";
+import { corpusCounts } from "../admin-data.js";
 import { MembersPage } from "./pages/members.js";
 import { StatusPage } from "./pages/status.js";
 import { registerDataRoutes } from "./pages/data.js";
@@ -109,11 +110,22 @@ app.onError((err, c) => {
   return c.json({ error: "upstream_unavailable", message }, 500);
 });
 
+// The number of recent runs the Status uptime sparkline shows per job (the retention cap in
+// src/health.ts is larger — this is just the display window the mock's density calls for).
+const STATUS_SPARKLINE_WINDOW = 30;
+
 // Home (`/admin`) is the Status service-health view, SSR'd from the same `buildHealthPayload`
-// the public `/health` uses (no client fetch, no decoder).
+// the public `/health` uses (no client fetch, no decoder), plus the corpus stat-tile counts and
+// each job's recent run history (for the uptime sparkline + healthy/unhealthy-since label).
 app.get("/", async (c) => {
-  const payload = await buildHealthPayload(c.env, HEALTH_JOBS);
-  return c.html(page(<StatusPage payload={payload} />));
+  const [payload, counts] = await Promise.all([buildHealthPayload(c.env, HEALTH_JOBS), corpusCounts(c.env)]);
+  const runsByJob: Record<string, JobRun[]> = {};
+  await Promise.all(
+    HEALTH_JOBS.map(async (name) => {
+      runsByJob[name] = await readJobRuns(c.env, name, STATUS_SPARKLINE_WINDOW);
+    }),
+  );
+  return c.html(page(<StatusPage payload={payload} counts={counts} runsByJob={runsByJob} />));
 });
 
 // SSR: the Members list, read by calling `listTenants` directly (no client fetch).

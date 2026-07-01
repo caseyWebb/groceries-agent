@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { StatusPage, jobStateOf, gateStateOf, relAge } from "../src/admin/pages/status.js";
-import type { HealthPayload } from "../src/health.js";
+import type { HealthPayload, JobRun } from "../src/health.js";
+import type { CorpusCounts } from "../src/admin-data.js";
 
 function payload(over: Partial<HealthPayload> = {}): HealthPayload {
   return {
@@ -14,7 +15,16 @@ function payload(over: Partial<HealthPayload> = {}): HealthPayload {
   };
 }
 
-const render = (p: HealthPayload): string => (StatusPage({ payload: p }) as { toString(): string }).toString();
+function counts(over: Partial<CorpusCounts> = {}): CorpusCounts {
+  return { recipes: 248, members: 12, feeds: 9, cached_skus: 4312, ...over };
+}
+
+function run(over: Partial<JobRun> = {}): JobRun {
+  return { id: "flyer-warm-1", ok: true, ran_at: 900_000, duration_ms: 100, summary: {}, ...over };
+}
+
+const render = (p: HealthPayload, c: CorpusCounts = counts(), runsByJob: Record<string, JobRun[]> = {}): string =>
+  (StatusPage({ payload: p, counts: c, runsByJob }) as { toString(): string }).toString();
 
 describe("Status helpers (the compiler-opaque logic worth pinning)", () => {
   it("collapses a job's ok/null wire shape to one state", () => {
@@ -69,5 +79,81 @@ describe("StatusPage SSR", () => {
 
   it("renders the AI-quota warning when exhausted", () => {
     expect(render(payload({ ok: false, ai_quota_exhausted: true }))).toContain("Workers AI quota exhausted");
+  });
+});
+
+describe("StatusPage SSR — corpus stat tiles", () => {
+  it("renders the four corpus stat tiles with their aggregate counts", () => {
+    const html = render(payload(), counts({ recipes: 248, members: 12, feeds: 9, cached_skus: 4312 }));
+    expect(html).toContain("Recipes");
+    expect(html).toContain("248");
+    expect(html).toContain("Members");
+    expect(html).toContain("12");
+    expect(html).toContain("RSS feeds");
+    expect(html).toContain("9");
+    expect(html).toContain("Cached SKUs");
+    expect(html).toContain("4,312");
+  });
+
+  it("the Recipes and Members tiles navigate to their areas; the others don't", () => {
+    const html = render(payload());
+    expect(html).toMatch(/<a class="stat-card stat-card-link" href="\/admin\/data">[\s\S]*?Recipes/);
+    expect(html).toMatch(/<a class="stat-card stat-card-link" href="\/admin\/members">[\s\S]*?Members/);
+    expect(html).not.toContain('href="/admin/data"><div class="stat-top"><span class="stat-label">RSS');
+  });
+});
+
+describe("StatusPage SSR — per-job uptime + since", () => {
+  it("renders the uptime sparkline with a % uptime label when a job has run history", () => {
+    const runs = [
+      run({ id: "r4", ok: true, ran_at: 4000 }),
+      run({ id: "r3", ok: true, ran_at: 3000 }),
+      run({ id: "r2", ok: false, ran_at: 2000 }),
+      run({ id: "r1", ok: true, ran_at: 1000 }),
+    ];
+    const html = render(payload(), counts(), { "flyer-warm": runs });
+    expect(html).toContain("75% uptime");
+    expect(html).toContain("4 runs");
+    expect(html).toContain("spark-bar ok");
+    expect(html).toContain("spark-bar fail");
+  });
+
+  it("shows Healthy since with the current-streak start instant", () => {
+    const runs = [
+      run({ id: "r3", ok: true, ran_at: 3_000 }),
+      run({ id: "r2", ok: true, ran_at: 2_000 }),
+      run({ id: "r1", ok: false, ran_at: 1_000 }),
+    ];
+    const html = render(payload(), counts(), { "flyer-warm": runs });
+    expect(html).toContain("Healthy since");
+  });
+
+  it("shows Unhealthy since when the job's current state is failing", () => {
+    const failing = payload({ jobs: [{ name: "flyer-warm", ok: false, last_run_at: 999_000, summary: {} }] });
+    const runs = [run({ id: "r2", ok: false, ran_at: 2_000 }), run({ id: "r1", ok: true, ran_at: 1_000 })];
+    const html = render(failing, counts(), { "flyer-warm": runs });
+    expect(html).toContain("Unhealthy since");
+  });
+
+  it("omits the sparkline entirely for a job with no run history", () => {
+    const html = render(payload(), counts(), {});
+    expect(html).not.toContain("uptime-pct");
+    expect(html).not.toContain("Run history");
+    expect(html).not.toContain("Healthy since");
+    expect(html).not.toContain("Unhealthy since");
+  });
+});
+
+describe("StatusPage SSR — Dependencies group", () => {
+  it("renders the D1 probe and the admin gate as a distinct Dependencies group", () => {
+    const html = render(payload());
+    expect(html).toContain("Dependencies");
+    expect(html).toContain("Background jobs");
+    const depsIdx = html.indexOf("Dependencies");
+    const jobsIdx = html.indexOf("Background jobs");
+    expect(jobsIdx).toBeGreaterThan(-1);
+    expect(depsIdx).toBeGreaterThan(jobsIdx);
+    expect(html).toContain("reachable");
+    expect(html).toContain("gated");
   });
 });

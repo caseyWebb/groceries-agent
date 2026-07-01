@@ -147,6 +147,16 @@
   /* Sparkline. */
   .spark { display: flex; align-items: flex-end; gap: 2px; height: 30px; }
   .spark-bar { flex: 1 1 0; min-width: 0; background: var(--accent); border-radius: 1px; opacity: .85; }
+  /* Two-tone run-history sparkline (Status job rows): ok bars in the accent, fail bars red. */
+  .spark-bar.ok { background: #2da44e; }
+  .spark-bar.fail { background: #cf222e; opacity: 1; }
+
+  /* Job-row meta line (last-run age · healthy/unhealthy-since) + the run-history uptime block. */
+  .job-meta { color: var(--muted-foreground); font-size: .82rem; }
+  .job-sep { color: var(--muted-foreground); }
+  .txt-bad { color: #cf222e; font-weight: 500; }
+  .uptime { margin-top: .55rem; }
+  .uptime-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .25rem; }
 
   /* Progress bar (Basecoat ships no progress in this pack). */
   .progress { height: .5rem; border-radius: 9999px; background: var(--muted); overflow: hidden; }

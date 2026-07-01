@@ -22,7 +22,7 @@ import { buildDiscoveryDeps, runDiscoverySweepJob } from "./discovery-sweep.js";
 import { loadDiscoveryConfig } from "./discovery-calibration.js";
 import { loadOperatorConfig } from "./operator-config.js";
 import { createR2CorpusStore } from "./corpus-store.js";
-import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, recordUsagePoint, notifyFailure } from "./health.js";
+import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, writeJobRun, recordUsagePoint, notifyFailure } from "./health.js";
 import { handleCookbook } from "./cookbook.js";
 import { handleSource } from "./source.js";
 import adminApp from "./admin/app.js";
@@ -131,6 +131,13 @@ export default {
       last_run_at: startedAt,
       summary,
     }).catch(() => {});
+    // Per-run history record (job_runs), beside the job_health upsert — best-effort, same shape.
+    await writeJobRun(env, "email", {
+      ok,
+      ran_at: startedAt,
+      duration_ms: Date.now() - startedAt,
+      summary,
+    });
     // History point (usage-trends): doubles = [duration_ms, accepted(0|1), written(0|1)]. The boolean
     // gate outcomes are emitted as 0/1 so the trend stays purely numeric; tenant-clean (no `from`).
     recordUsagePoint(env, "email", {

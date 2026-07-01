@@ -1,19 +1,25 @@
 // The Status area — the service-health home view (operator-admin), server-rendered. Calls
-// `buildHealthPayload` directly and renders the SAME `HealthPayload` the public `/health`
-// returns: background-job health, the D1 probe, and the operator admin-gate posture. The Elm
-// view's body-preserving 503-decode dance vanishes here — SSR calls the builder in-process,
-// so there is no fetch, no decoder, and no transport-vs-degraded ambiguity.
+// `buildHealthPayload`, the corpus-counts reader, and `readJobRuns` per job directly (SSR — no
+// island, no client fetch), and composes the foundation kit (`StatCardGrid`/`StatCard`,
+// `Item`/`ItemGroup`, `Sparkline`) over that data.
 //
 // The job wire shape `{ ok: bool|null, never_run? }` collapses to one `JobState`, and the
 // posture's four (non-exclusive) booleans derive one display `GateState` — both exhaustive
 // (admin/CLAUDE.md discipline). Absolute times render in UTC (SSR has no browser zone); the
 // timezone-independent relative age is the at-a-glance signal.
+//
+// The overall healthy/degraded rollup lives in the global health dock (shell-injected on every
+// admin page, admin-ui-redesign-foundation) — this view keeps the corpus tiles, the detailed
+// per-job rows (with their run-history uptime sparkline + healthy/unhealthy-since), and the live
+// dependencies as their own group.
 
 import type { Child } from "hono/jsx";
 import { Layout } from "../ui/layout.js";
+import { StatCardGrid, StatCard, ItemGroup, Item } from "../ui/kit.js";
 import { assertNever } from "../lib/remote.js";
-import type { HealthPayload, JobStatus } from "../../health.js";
+import { currentStreakStart, type HealthPayload, type JobStatus, type JobRun } from "../../health.js";
 import type { AdminPosture } from "../../admin.js";
+import type { CorpusCounts } from "../../admin-data.js";
 
 type JobState = "healthy" | "failing" | "neverRun";
 
@@ -70,6 +76,19 @@ function jobStateClassWord(s: JobState): [string, string] {
   }
 }
 
+function jobStateBadgeVariant(s: JobState): string {
+  switch (s) {
+    case "healthy":
+      return "secondary";
+    case "failing":
+      return "destructive";
+    case "neverRun":
+      return "outline";
+    default:
+      return assertNever(s);
+  }
+}
+
 function gateStateClassWord(s: GateState): [string, string] {
   switch (s) {
     case "exposed":
@@ -85,32 +104,27 @@ function gateStateClassWord(s: GateState): [string, string] {
   }
 }
 
-const StatusRow = ({
-  label,
-  cls,
-  word,
-  age,
-  ageTitle,
-  detail,
-}: {
-  label: string;
-  cls: string;
-  word: string;
-  age?: string;
-  ageTitle?: string;
-  detail?: Child;
-}) => (
-  <div class="status-row">
-    <div class="status-line">
-      <span class={`dot ${cls}`} />
-      <span class="status-label">{label}</span>
-      <span class={`status-word ${cls}`}>{word}</span>
-      <span class="status-age muted small" title={ageTitle ?? ""}>
-        {age ?? ""}
-      </span>
-    </div>
-    {detail}
-  </div>
+function gateStateBadgeVariant(s: GateState): string {
+  switch (s) {
+    case "exposed":
+      return "destructive";
+    case "gated":
+      return "secondary";
+    case "devBypass":
+    case "disabled":
+      return "outline";
+    default:
+      return assertNever(s);
+  }
+}
+
+/** A state glyph: a filled dot in the job/dependency's state color (the row's media slot). */
+const StateGlyph = ({ cls }: { cls: string }) => <span class={`sglyph ${cls}`}><span class={`dot ${cls}`} /></span>;
+
+const Badge = ({ variant, children }: { variant: string; children?: Child }) => (
+  <span class="badge" data-variant={variant === "default" ? undefined : variant}>
+    {children}
+  </span>
 );
 
 const SummaryBlock = ({ pairs }: { pairs: [string, string][] }) => (
@@ -124,26 +138,90 @@ const SummaryBlock = ({ pairs }: { pairs: [string, string][] }) => (
   </div>
 );
 
-const JobRow = ({ job, now }: { job: JobStatus; now: number }) => {
-  const [cls, word] = jobStateClassWord(jobStateOf(job));
-  const pairs = Object.entries(job.summary ?? {}).map(([k, v]) => [k, summaryValue(v)] as [string, string]);
+/** The "Healthy since" / "Unhealthy since" label, derived from the job's current run streak.
+ *  Null (no run history yet) renders nothing — the caller omits the whole uptime block. */
+const SinceLabel = ({ ok, since }: { ok: boolean; since: number }) => (
+  <span class={ok ? "" : "txt-bad"}>
+    {ok ? "Healthy since" : "Unhealthy since"} {fmtUtc(since)}
+  </span>
+);
+
+/** The per-job uptime sparkline: recent runs oldest→newest as ok/fail bars, with a % uptime
+ *  label. `runs` is newest-first (as `readJobRuns` returns) — reversed for the oldest→newest
+ *  bar order the mock specifies. Bar height is binary (ok bars full, fail bars short) since
+ *  `Sparkline` scales by value, not by a per-bar color — the color comes from a class override
+ *  per bar via inline composition below. */
+const Uptime = ({ runs }: { runs: JobRun[] }) => {
+  const ordered = [...runs].reverse(); // oldest → newest
+  const okCount = runs.filter((r) => r.ok).length;
+  const pct = Math.round((okCount / runs.length) * 100);
   return (
-    <StatusRow
-      label={job.name}
-      cls={cls}
-      word={word}
-      age={job.last_run_at != null ? relAge(now - job.last_run_at) : ""}
-      ageTitle={job.last_run_at != null ? fmtUtc(job.last_run_at) : ""}
-      detail={pairs.length > 0 ? <SummaryBlock pairs={pairs} /> : undefined}
-    />
+    <div class="uptime">
+      <div class="uptime-head">
+        <span class="uptime-cap muted small">Run history</span>
+        <span class="uptime-pct muted small">
+          {pct}% uptime · {runs.length} runs
+        </span>
+      </div>
+      <div class="spark">
+        {ordered.map((r) => (
+          <span class={`spark-bar ${r.ok ? "ok" : "fail"}`} style={`height:${r.ok ? 100 : 28}%`} title={fmtUtc(r.ran_at)} />
+        ))}
+      </div>
+    </div>
   );
 };
 
-const AdminRow = ({ posture }: { posture: AdminPosture }) => {
+const JobRow = ({ job, now, runs }: { job: JobStatus; now: number; runs: JobRun[] }) => {
+  const state = jobStateOf(job);
+  const [cls] = jobStateClassWord(state);
+  const pairs = Object.entries(job.summary ?? {}).map(([k, v]) => [k, summaryValue(v)] as [string, string]);
+  const streakStart = currentStreakStart(runs);
+  return (
+    <Item
+      outline
+      media={<StateGlyph cls={cls} />}
+      title={job.name}
+      description={
+        <span class="job-meta">
+          {job.last_run_at != null ? `Ran ${relAge(now - job.last_run_at)}` : "Never run"}
+          {streakStart != null ? (
+            <>
+              <span class="job-sep"> · </span>
+              <SinceLabel ok={job.ok === true} since={streakStart} />
+            </>
+          ) : null}
+        </span>
+      }
+      actions={<Badge variant={jobStateBadgeVariant(state)}>{jobStateClassWord(state)[1]}</Badge>}
+    >
+      {runs.length > 0 ? <Uptime runs={runs} /> : null}
+      {pairs.length > 0 ? <SummaryBlock pairs={pairs} /> : undefined}
+    </Item>
+  );
+};
+
+const DependencyRow = ({ label, cls, word }: { label: string; cls: string; word: string }) => (
+  <Item
+    outline
+    media={<StateGlyph cls={cls} />}
+    title={label}
+    actions={<Badge variant={cls === "ok" ? "secondary" : cls === "fail" ? "destructive" : "outline"}>{word}</Badge>}
+  />
+);
+
+const AdminDependencyRow = ({ posture }: { posture: AdminPosture }) => {
   const gs = gateStateOf(posture);
   const [cls, word] = gateStateClassWord(gs);
-  const detail = gs === "gated" && posture.email_allowlist ? <SummaryBlock pairs={[["email allowlist", "on"]]} /> : undefined;
-  return <StatusRow label="admin gate" cls={cls} word={word} detail={detail} />;
+  return (
+    <Item
+      outline
+      media={<StateGlyph cls={cls} />}
+      title="admin gate"
+      description={gs === "gated" && posture.email_allowlist ? <span class="job-meta">email allowlist on</span> : undefined}
+      actions={<Badge variant={gateStateBadgeVariant(gs)}>{word}</Badge>}
+    />
+  );
 };
 
 /** A destructive-alert warning icon (inline Lucide `triangle-alert`; Basecoat ships no icons). */
@@ -166,7 +244,15 @@ const WarnIcon = () => (
   </svg>
 );
 
-export const StatusPage = ({ payload }: { payload: HealthPayload }) => (
+export const StatusPage = ({
+  payload,
+  counts,
+  runsByJob,
+}: {
+  payload: HealthPayload;
+  counts: CorpusCounts;
+  runsByJob: Record<string, JobRun[]>;
+}) => (
   <Layout title="Status · grocery-agent admin" active="/admin">
     <div class="status-head">
       <h2>Service health</h2>
@@ -195,16 +281,25 @@ export const StatusPage = ({ payload }: { payload: HealthPayload }) => (
         </section>
       </div>
     ) : null}
-    {/* The overall healthy/degraded rollup lives in the global health dock (shell-injected on
-        every area); this view keeps the detailed per-job / D1 / admin-gate rows. */}
-    <div class="card">
-      <section>
-        {payload.jobs.map((job) => (
-          <JobRow job={job} now={payload.generated_at} />
-        ))}
-        <StatusRow label="d1" cls={payload.d1.ok ? "ok" : "fail"} word={payload.d1.ok ? "reachable" : "unreachable"} />
-        <AdminRow posture={payload.admin} />
-      </section>
-    </div>
+
+    <StatCardGrid>
+      <StatCard label="Recipes" value={counts.recipes.toLocaleString()} href="/admin/data" />
+      <StatCard label="Members" value={counts.members.toLocaleString()} href="/admin/members" />
+      <StatCard label="RSS feeds" value={counts.feeds.toLocaleString()} />
+      <StatCard label="Cached SKUs" value={counts.cached_skus.toLocaleString()} />
+    </StatCardGrid>
+
+    <p class="group-label">Background jobs</p>
+    <ItemGroup>
+      {payload.jobs.map((job) => (
+        <JobRow job={job} now={payload.generated_at} runs={runsByJob[job.name] ?? []} />
+      ))}
+    </ItemGroup>
+
+    <p class="group-label">Dependencies</p>
+    <ItemGroup>
+      <DependencyRow label="d1" cls={payload.d1.ok ? "ok" : "fail"} word={payload.d1.ok ? "reachable" : "unreachable"} />
+      <AdminDependencyRow posture={payload.admin} />
+    </ItemGroup>
   </Layout>
 );
