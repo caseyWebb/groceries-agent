@@ -222,3 +222,27 @@ export const AlertTriangleIcon = ({ size }: { size?: number }) => (
     <path d="M12 17h.01" />
   </Icon>
 );
+
+// ── Data explorer (admin-ui-redesign-data) ───────────────────────────────────────────────────
+
+export const SearchIcon = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <circle cx="11" cy="11" r="8" />
+    <path d="m21 21-4.3-4.3" />
+  </Icon>
+);
+
+export const StoreIcon = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M2 7h20l-1.8 6.3a1 1 0 0 1-1 .7H4.8a1 1 0 0 1-1-.7Z" />
+    <path d="M4 7V4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v3" />
+    <path d="M6 14v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6" />
+    <path d="M10 21v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4" />
+  </Icon>
+);
+
+export const FolderIcon = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+  </Icon>
+);

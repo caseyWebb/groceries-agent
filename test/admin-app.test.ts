@@ -4,6 +4,7 @@ import type { Env } from "../src/env.js";
 import type { KvStore } from "../src/kroger-user.js";
 import { redeemAuthNonce } from "../src/oauth.js";
 import { fakeD1 } from "./fake-d1.js";
+import { fakeR2 } from "./fake-r2.js";
 
 /** In-memory KV (single-page list) — satisfies the bindings the member ops touch. */
 function memKv(initial: Record<string, string> = {}): KVNamespace {
@@ -35,6 +36,7 @@ function makeEnv(over: Partial<Env> = {}, members: string[] = []): Env {
     TENANT_KV: memKv(kvInit),
     KROGER_KV: memKv(),
     DB: fakeD1().env.DB,
+    CORPUS: fakeR2().bucket,
     ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
     ...over,
   } as unknown as Env;
@@ -125,6 +127,44 @@ describe("admin Hono app", () => {
     const res = await app.request("/admin/api/tenants/ghost/kroger-login", { method: "POST" }, makeEnv());
     expect(res.status).toBe(404);
     expect((await res.json()) as { error: string }).toMatchObject({ error: "not_found" });
+  });
+});
+
+describe("admin Hono app — Data area routing (narrowed to Recipes/Stores/Guidance)", () => {
+  it("/admin/data defaults to the Recipes explorer", async () => {
+    const res = await app.request("/admin/data", {}, makeEnv());
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Recipes");
+    expect(html).toContain("pill active");
+  });
+
+  it("serves the Recipes, Stores, and Guidance routes", async () => {
+    for (const path of ["/admin/data/recipes", "/admin/data/stores", "/admin/data/guidance"]) {
+      const res = await app.request(path, {}, makeEnv());
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+    }
+  });
+
+  it("the sub-nav offers exactly Recipes, Stores, Guidance — no Members/Corpus/Discovery/System", async () => {
+    const res = await app.request("/admin/data", {}, makeEnv());
+    const html = await res.text();
+    const subNav = /<div class="data-nav">.*?<\/div>/s.exec(html)?.[0] ?? "";
+    expect(subNav).toContain(">Recipes<");
+    expect(subNav).toContain(">Stores<");
+    expect(subNav).toContain(">Guidance<");
+    expect(subNav).not.toContain(">Members<");
+    expect(subNav).not.toContain(">Corpus<");
+    expect(subNav).not.toContain(">Discovery<");
+    expect(subNav).not.toContain(">System<");
+  });
+
+  it("the dropped /admin/data/{members,corpus,discovery,system} routes are gone, not 500ing", async () => {
+    for (const path of ["/admin/data/members", "/admin/data/members/casey", "/admin/data/corpus", "/admin/data/discovery", "/admin/data/system"]) {
+      const res = await app.request(path, {}, makeEnv({}, ["casey"]));
+      expect(res.status).toBe(404);
+    }
   });
 });
 
