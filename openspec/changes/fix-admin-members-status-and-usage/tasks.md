@@ -1,11 +1,11 @@
 ## 1. Fix 1 — Members roster status from OAuth grants, not activity
 
-- [ ] 1.1 Add an `oauthGrantTenantIds(kv)` helper (or equivalent) that pages `OAUTH_KV` with `prefix: "grant:"`, extracts the `userId` segment from each `grant:<userId>:<grantId>` key name, and returns the `Set` of tenant ids with at least one grant — confirm the exact key format against the installed `@cloudflare/workers-oauth-provider` version (currently `0.8.1`) before wiring it in, per design.md Decision 1
-- [ ] 1.2 Add a unit test that seeds a synthetic `grant:*` key and asserts the parse extracts the correct tenant id, so a future provider-version bump that changes the key format fails loudly in CI rather than silently misreporting every member as pending
-- [ ] 1.3 Wire the new helper into `AdminDeps`/`listTenants` (`src/admin.ts`) as the source of `TenantRosterRow.status`, replacing the `tenant_activity`-row check; keep `tenant_activity` as the source of `joined`/`lastActive` only
-- [ ] 1.4 Update `listTenants`'s doc comment and `TenantRosterRow.status`'s field doc to describe the OAuth-grant-derived semantics (mirroring the existing Kroger-linked doc style)
-- [ ] 1.5 Update/add tests covering: a connected-but-idle member (grant exists, no/stale `tenant_activity`) reports `active`; a never-connected member reports `pending` even with a stray `tenant_activity` row
-- [ ] 1.6 Update `docs/SCHEMAS.md`/`docs/TOOLS.md` (whichever documents `TenantRosterRow`/the admin roster shape) to describe the new status semantics — no field shape change, only derivation semantics
+- [x] 1.1 Add an `oauthGrantTenantIds(kv)` helper (or equivalent) that pages `OAUTH_KV` with `prefix: "grant:"`, extracts the `userId` segment from each `grant:<userId>:<grantId>` key name, and returns the `Set` of tenant ids with at least one grant — confirm the exact key format against the installed `@cloudflare/workers-oauth-provider` version (currently `0.8.1`) before wiring it in, per design.md Decision 1
+- [x] 1.2 Add a unit test that seeds a synthetic `grant:*` key and asserts the parse extracts the correct tenant id, so a future provider-version bump that changes the key format fails loudly in CI rather than silently misreporting every member as pending
+- [x] 1.3 Wire the new helper into `AdminDeps`/`listTenants` (`src/admin.ts`) as the source of `TenantRosterRow.status`, replacing the `tenant_activity`-row check; keep `tenant_activity` as the source of `joined`/`lastActive` only
+- [x] 1.4 Update `listTenants`'s doc comment and `TenantRosterRow.status`'s field doc to describe the OAuth-grant-derived semantics (mirroring the existing Kroger-linked doc style)
+- [x] 1.5 Update/add tests covering: a connected-but-idle member (grant exists, no/stale `tenant_activity`) reports `active`; a never-connected member reports `pending` even with a stray `tenant_activity` row
+- [x] 1.6 Update `docs/SCHEMAS.md`/`docs/TOOLS.md` (whichever documents `TenantRosterRow`/the admin roster shape) to describe the new status semantics — no field shape change, only derivation semantics
 
 ## 2. Fix 2 — Position-based KV namespace colors
 
