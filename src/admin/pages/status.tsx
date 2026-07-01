@@ -179,6 +179,7 @@ const JobRow = ({ job, now, runs }: { job: JobStatus; now: number; runs: JobRun[
   return (
     <Item
       outline
+      class={cls === "fail" ? "job-item fail" : "job-item"}
       media={<StateGlyph cls={cls} />}
       title={job.name}
       description={

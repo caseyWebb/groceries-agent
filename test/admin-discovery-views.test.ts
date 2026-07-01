@@ -74,6 +74,23 @@ describe("DiscoveryView SSR — stat tiles", () => {
   });
 });
 
+describe("DiscoveryView SSR — Refresh header", () => {
+  it("shows a Refresh action with the freshest candidate's created_at as 'last sweep'", () => {
+    const candidates = [
+      candidate({ id: "1", outcome: "imported", created_at: "2026-06-30T10:00:00.000Z" }),
+      candidate({ id: "2", outcome: "duplicate", detail: { duplicate_of: "x" }, created_at: "2026-06-30T09:00:00.000Z" }),
+    ];
+    const html = render(DiscoveryView({ candidates, filter: "all", page: 0, now: NOW }));
+    expect(html).toMatch(/Refresh · last sweep 2h ago/);
+  });
+
+  it("omits the 'last sweep' context (renders bare Refresh) when there are no candidates", () => {
+    const html = render(DiscoveryView({ candidates: [], filter: "all", page: 0, now: NOW }));
+    expect(html).toMatch(/>Refresh<\/a>/);
+    expect(html).not.toContain("last sweep");
+  });
+});
+
 describe("DiscoveryView SSR — filter pills", () => {
   it("narrows the candidate list and resets to the first page when a pill is selected", () => {
     const candidates = [

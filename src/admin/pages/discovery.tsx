@@ -315,6 +315,10 @@ export const DiscoveryView = ({
   now: number;
 }) => {
   const total = candidates.length;
+  // `readDiscoveryCandidates` orders newest-first, so the freshest row's `created_at` is the
+  // cleanest available signal for "when did the sweep last touch this pipeline" — no separate
+  // job_health read needed for a header affordance.
+  const lastSweepAt = candidates[0]?.created_at ? new Date(candidates[0].created_at).getTime() : null;
   const imported = candidates.filter((c) => c.outcome === "imported").length;
   const importRate = total > 0 ? Math.round((imported / total) * 100) : 0;
   const parkedFailed = candidates.filter((c) => c.outcome === "error" || c.outcome === "failed").length;
@@ -329,6 +333,9 @@ export const DiscoveryView = ({
     <div class="discovery">
       <div class="area-head status-head">
         <h2>Discovery</h2>
+        <a href={href(filter, page)} class="btn" data-variant="ghost" data-size="sm">
+          Refresh{lastSweepAt != null ? ` · last sweep ${relAge(lastSweepAt, now)}` : ""}
+        </a>
       </div>
 
       <StatCardGrid>

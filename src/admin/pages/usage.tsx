@@ -46,15 +46,27 @@ const NotConfigured = ({ children }: { children?: Child }) => (
 
 // ── Account resources: per-namespace-stacked KV meters + their 30-day sparkline ────────────────
 
+/** A short per-binding descriptor for the three known KV namespaces (`wrangler.jsonc`
+ *  `kv_namespaces`) — purely a display nicety (this view's own concern, not `src/usage.ts`'s
+ *  data model), so an unresolved/operator-relabeled namespace just omits the note rather than
+ *  guessing at one. */
+const NAMESPACE_NOTES: Record<string, string> = {
+  KROGER_KV: "Kroger SKU/session cache",
+  OAUTH_KV: "OAuth tokens + grants",
+  TENANT_KV: "Per-tenant ephemeral state",
+};
+
 /** The namespace legend above the meters: one swatch + resolved label (the CF-REST-auto-resolved
- *  or `KV_NAMESPACE_LABELS`-mapped binding name, or the raw id as a last resort) + the raw id as
- *  the hover title, per namespace observed in today's snapshot. */
+ *  or `KV_NAMESPACE_LABELS`-mapped binding name, or the raw id as a last resort) + a short
+ *  descriptor for a known binding + the raw id as the hover title, per namespace observed in
+ *  today's snapshot. */
 const NamespaceLegend = ({ namespaces }: { namespaces: NamespaceUsage[] }) => (
   <div class="kv-legend">
     {namespaces.map((ns) => (
       <span class="kv-leg" title={ns.namespace_id}>
         <span class="kv-leg-dot" style={`background:${ns.resolved.color}`} />
         <span class="kv-leg-name">{ns.resolved.label}</span>
+        {NAMESPACE_NOTES[ns.resolved.label] ? <span class="kv-leg-note muted">{NAMESPACE_NOTES[ns.resolved.label]}</span> : null}
       </span>
     ))}
   </div>

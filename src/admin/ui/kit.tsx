@@ -328,10 +328,12 @@ export const Switch = ({ name, checked }: { name?: string; checked?: boolean }) 
   </label>
 );
 
-/** The `--slider-value` percent Basecoat's Vega stylesheet reads to paint the filled portion of
- *  the track (`linear-gradient(to right, var(--primary) var(--slider-value), var(--muted) …)`);
- *  Basecoat's own fallback is a hardcoded `20%`, which is what every slider showed before this
- *  fix (kit.tsx never set the var, so every slider defaulted to it regardless of `value`). */
+/** The `--slider-value` percent. Basecoat's Vega stylesheet does NOT read this var — its track is
+ *  a flat `bg-muted` with no gradient — so `styles.css`'s own `.slider` rule is what consumes it,
+ *  painting a `linear-gradient(to right, var(--accent) 0 var(--slider-value), var(--muted) …)`
+ *  on WebKit (and the `--moz-range-track`/`--moz-range-progress` equivalent on Firefox). Before
+ *  that consumer rule existed, every slider rendered a flat, unfilled `.slider { width: 100% }`
+ *  track regardless of `value` — this var alone did nothing without it. */
 export function sliderFillPct(min: number, max: number, value: number): number {
   if (max <= min) return 0;
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));

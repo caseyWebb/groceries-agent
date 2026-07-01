@@ -162,6 +162,10 @@
   .spark-bar.ok { background: #2da44e; }
   .spark-bar.fail { background: #cf222e; opacity: 1; }
 
+  /* A failing job's row gets a subtle red-tinted card so it reads as "wrong" at a glance, not
+     just via its badge/dot. */
+  .job-item.fail { border-color: color-mix(in oklch, var(--destructive) 35%, var(--border)); background: color-mix(in oklch, var(--destructive) 3%, #fff); }
+
   /* Job-row meta line (last-run age · healthy/unhealthy-since) + the run-history uptime block. */
   .job-meta { color: var(--muted-foreground); font-size: .82rem; }
   .job-sep { color: var(--muted-foreground); }
@@ -180,7 +184,42 @@
   .switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 1rem; height: 1rem; border-radius: 50%; background: #fff; transition: transform .12s; }
   .switch input:checked + .switch-track { background: var(--accent); }
   .switch input:checked + .switch-track::after { transform: translateX(.9rem); }
-  .slider { width: 100%; }
+
+  /* Range-input track fill. Basecoat's Vega pack does NOT read `--slider-value` — its own
+     track is a flat `bg-muted` with no gradient — so this rule is the only thing painting the
+     filled portion of a `Slider` (kit.tsx sets `--slider-value` as a percent). WebKit paints the
+     gradient on the runnable-track pseudo-element; Firefox has no equivalent "gradient stop" API,
+     so it gets a flat `--moz-range-track` (muted) with `--moz-range-progress` (accent) layered on
+     top for the filled segment — the two engines' idiomatic mechanisms for the same visual. */
+  .slider { width: 100%; -webkit-appearance: none; appearance: none; background: transparent; height: 1.1rem; }
+  .slider::-webkit-slider-runnable-track {
+    height: .4rem;
+    border-radius: 9999px;
+    background: linear-gradient(to right, var(--accent) 0 var(--slider-value, 0%), var(--muted) var(--slider-value, 0%) 100%);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: .95rem;
+    height: .95rem;
+    margin-top: calc((.4rem - .95rem) / 2);
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
+  .slider::-moz-range-track { height: .4rem; border-radius: 9999px; background: var(--muted); }
+  .slider::-moz-range-progress { height: .4rem; border-radius: 9999px; background: var(--accent); }
+  .slider::-moz-range-thumb {
+    width: .95rem;
+    height: .95rem;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
 
   /* Dropdown menu (presentational shell; an island toggles [hidden] on the popover). */
   .dropdown-menu { position: relative; display: inline-flex; }
@@ -482,7 +521,7 @@
   .cfg-probe.fail { color: #cf222e; }
 
   /* The "Add" panel beneath a corpus table (feeds / flyer terms / aliases / email sources). */
-  .cfg-add { margin-top: .1rem; background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs); padding: .85rem 1rem 1rem; }
+  .cfg-add { margin-top: .9rem; background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs); padding: .85rem 1rem 1rem; }
   .cfg-add-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #999; font-weight: 600; display: block; margin-bottom: .1rem; }
   .cfg-add-norm { width: 10rem; }
 

@@ -189,6 +189,16 @@ describe("StatusPage SSR — per-job uptime + since", () => {
   });
 });
 
+describe("StatusPage SSR — failing job styling", () => {
+  it("gives a failing job's row the job-item fail class for the red-tinted card treatment", () => {
+    const healthy = render(payload({ jobs: [{ name: "flyer-warm", ok: true, last_run_at: 999_000, summary: {} }] }));
+    const failing = render(payload({ jobs: [{ name: "flyer-warm", ok: false, last_run_at: 999_000, summary: {} }] }));
+    expect(healthy).toContain('class="item item-outline job-item"');
+    expect(healthy).not.toContain("job-item fail");
+    expect(failing).toContain('class="item item-outline job-item fail"');
+  });
+});
+
 describe("StatusPage SSR — Dependencies group", () => {
   it("renders the D1 probe and the admin gate as a distinct Dependencies group", () => {
     const html = render(payload());
