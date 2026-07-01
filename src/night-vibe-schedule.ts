@@ -1,15 +1,19 @@
 // The LEVEL-1 "shape the week" leg for `propose_meal_plan`: cadence-as-debt scheduling over a
 // per-tenant night-vibe palette. Each night vibe carries a target PERIOD P (days) — "a simple
 // pasta ~weekly", "a big project cook ~monthly" — and we track when it was last satisfied
-// (slot provenance) so OVERDUE vibes bid harder for this week's N slots.
+// (slot provenance) so OVERDUE vibes bid harder for this plan's N slots.
 //
 //   debt(vibe)     = days_since(last_satisfied) / P        (0 = just done, 1 = exactly due)
 //   samplingWeight = base · debtCurve(debt) · weatherMult  (debtCurve monotonic + CAPPED, so
-//                    an ancient vibe can't monopolize the week)
+//                    an ancient vibe can't monopolize the plan)
 //
 // `sampleWeek` force-places pinned + high-debt vibes first, then fills the rest by SEEDED
-// weighted sampling WITHOUT replacement (no vibe repeats within a week). Over-subscription
-// resolves by debt rank; losers roll over (their debt keeps climbing). Deterministic (seed).
+// BOUNDED-MULTIPLICITY weighted sampling: each non-forced vibe may be drawn up to
+// `max(1, floor(window / vibe_period))` times, where `window` is the planning window in days
+// (see `planning_cadence_days`) — a weekly-period vibe (period 7) in a 14-day window can
+// legitimately fill 2 slots, not just 1. A vibe with no period (or a period ≥ the window) caps
+// at 1, matching the plan's previous at-most-once behavior. Over-subscription resolves by debt
+// rank; losers roll over (their debt keeps climbing). Deterministic (seed).
 //
 // A spike against synthetic backlogs surfaced one refinement encoded here: under a realistic
 // backlog, force-placed overdue vibes ate every slot and weather never shaped the outcome. So
@@ -33,6 +37,9 @@ export interface NightVibeSpec {
   weather_affinity?: string[];
   /** Weather-vibes that suppress this vibe (any match applies the penalty). */
   weather_antipathy?: string[];
+  /** Target cadence period in days — the divisor for this vibe's occurrence cap within a
+   *  planning window (`max(1, floor(window / cadence_days))`). Absent/null → cap 1. */
+  cadence_days?: number | null;
 }
 
 /** Tunable knobs for the debt curve, weather multiplier, and forcing. */
@@ -167,6 +174,64 @@ export function weightedSampleWithoutReplacement<T extends { id: string; weight:
   return keyed.slice(0, Math.max(0, k)).map((x) => x.it);
 }
 
+/** A vibe's occurrence cap within a planning window: `max(1, floor(window / vibe_period))`.
+ *  No period (or a period ≥ the window) → cap 1, the plan's original at-most-once behavior. */
+export function occurrenceCap(vibePeriod: number | null | undefined, window: number): number {
+  if (vibePeriod == null || vibePeriod <= 0 || window <= 0) return 1;
+  return Math.max(1, Math.floor(window / vibePeriod));
+}
+
+/** A per-draw cooldown multiplier applied to a vibe's weight right after it's drawn, so a
+ *  recurring vibe's occurrences spread across the window rather than clustering adjacently.
+ *  Restored to normal (1×) after one draw — a short, local nudge, not a hard exclusion. */
+const RECURRENCE_COOLDOWN = 0.15;
+
+/**
+ * Seeded BOUNDED-MULTIPLICITY weighted sampling of `k` slots from `items` (each carrying its own
+ * `cap` — the max times it may be drawn). Draw-by-draw: each draw runs one Efraimidis–Spirakis
+ * pick (`key = u^{1/w}`, top-1) over every vibe whose remaining count is still > 0, then
+ * decrements that vibe's remaining count (removing it from the pool only once exhausted) and
+ * applies `RECURRENCE_COOLDOWN` to its weight for the *next* draw only, so a just-placed vibe is
+ * less likely (not impossible) to land on the immediately following slot. Stops when `k` slots
+ * are filled or every ticket is exhausted. Deterministic given `rng`.
+ */
+export function boundedMultiplicitySample<T extends { id: string; weight: number; cap: number }>(
+  items: T[],
+  k: number,
+  rng: () => number,
+): T[] {
+  const remaining = new Map(items.map((it) => [it.id, Math.max(0, it.cap)]));
+  const cooldown = new Map<string, number>(); // id -> multiplier applied to THIS draw only
+  const out: T[] = [];
+
+  for (let draw = 0; draw < Math.max(0, k); draw++) {
+    const eligible = items.filter((it) => (remaining.get(it.id) ?? 0) > 0);
+    if (eligible.length === 0) break;
+
+    let best: T | null = null;
+    let bestKey = -Infinity;
+    for (const it of eligible) {
+      const mult = cooldown.get(it.id) ?? 1;
+      const w = it.weight * mult > 0 ? it.weight * mult : 1e-9;
+      const u = Math.max(rng(), 1e-12);
+      const key = Math.pow(u, 1 / w);
+      if (key > bestKey || (key === bestKey && best !== null && it.id.localeCompare(best.id) < 0)) {
+        bestKey = key;
+        best = it;
+      }
+    }
+    if (!best) break;
+
+    out.push(best);
+    remaining.set(best.id, (remaining.get(best.id) ?? 1) - 1);
+    // Cooldown resets each draw (spacing is local, not a permanent penalty); only the
+    // just-drawn vibe carries one into the NEXT draw.
+    cooldown.clear();
+    if ((remaining.get(best.id) ?? 0) > 0) cooldown.set(best.id, RECURRENCE_COOLDOWN);
+  }
+  return out;
+}
+
 /** One placed slot: which vibe, why it landed, and its scheduling signals. */
 export interface WeekSlot {
   id: string;
@@ -181,16 +246,27 @@ export interface SampledWeek {
   rolledOver: string[];
   /** Every vibe's weight/debt/flags, weight-descending, for diagnostics. */
   weights: { id: string; weight: number; debt: number; forced: boolean; pinned: boolean }[];
+  /** Each non-forced vibe's occurrence cap this plan (`max(1, floor(window / vibe_period))`),
+   *  for diagnostics/inspection — a forced (pinned/overdue) vibe is placed at most once and
+   *  isn't included here (its cardinality isn't governed by the window). */
+  occurrenceCaps: { id: string; cap: number }[];
 }
 
 /**
- * Shape one week of `n` vibe slots. Deterministic given `seed`.
+ * Shape one plan of `n` vibe slots over a `window`-day planning horizon. Deterministic given
+ * `seed`.
  *   1. Compute weights (debtCurve · weather).
  *   2. Place PINNED vibes (debt-desc), up to n — sticky, exempt from the reserve.
  *   3. Place OVERDUE vibes (debt ≥ forceDueAt, debt-desc) up to `n − minSampledSlots` (so the
  *      weighted pool — where weather matters — keeps at least `minSampledSlots` when it can
  *      supply them). Excess overdue vibes roll over.
- *   4. Fill the remaining slots by seeded weighted sampling WITHOUT replacement over the rest.
+ *   4. Fill the remaining slots by seeded BOUNDED-MULTIPLICITY weighted sampling over the rest:
+ *      each non-forced vibe may be drawn up to `max(1, floor(window / vibe_period))` times (a
+ *      weekly vibe in a 14-day window can fill 2 slots), with a short per-draw cooldown so
+ *      repeat draws of the same vibe don't cluster on adjacent slots.
+ *
+ * `window` defaults to `n` (the plan's own night count) when omitted, which reproduces the
+ * previous at-most-once behavior for every vibe (a period ≥ its own window caps at 1).
  */
 export function sampleWeek(
   palette: NightVibeSpec[],
@@ -199,10 +275,13 @@ export function sampleWeek(
   n: number,
   seed = 1,
   params: Partial<CadenceParams> = {},
+  window?: number,
 ): SampledWeek {
   const p: CadenceParams = { ...DEFAULT_CADENCE_PARAMS, ...params };
   const rng = mulberry32(seed);
   const weights = computeWeights(palette, weatherVibes, debtByVibe, p);
+  const effectiveWindow = window ?? n;
+  const periodById = new Map(palette.map((v) => [v.id, v.cadence_days ?? null]));
 
   const slots: WeekSlot[] = [];
   const used = new Set<string>();
@@ -213,7 +292,8 @@ export function sampleWeek(
   const sampleablePool = weights.filter((w) => !w.forced);
   const reserve = sampleablePool.length > 0 ? Math.min(p.minSampledSlots, n) : 0;
 
-  // Step 2: pinned first (sticky, ignore the reserve), ranked by debt.
+  // Step 2: pinned first (sticky, ignore the reserve), ranked by debt. A pinned vibe is a
+  // single force-place per id, not itself repeated.
   const pinned = weights.filter((w) => w.pinned).sort((a, b) => b.debt - a.debt || a.id.localeCompare(b.id));
   for (const w of pinned) {
     if (slots.length < n) {
@@ -225,6 +305,8 @@ export function sampleWeek(
   }
 
   // Step 3: overdue (non-pinned forced), ranked by debt, but leave `reserve` slots for weather.
+  // Force-placement cardinality is unaffected by the window — a palette shouldn't declare the
+  // same vibe overdue twice, and this is a single force-place per vibe id.
   const overdue = weights
     .filter((w) => w.forced && !w.pinned)
     .sort((a, b) => b.debt - a.debt || a.id.localeCompare(b.id));
@@ -238,11 +320,19 @@ export function sampleWeek(
     }
   }
 
-  // Step 4: fill the rest by seeded weighted sampling over the non-forced, unused vibes.
+  // Step 4: fill the rest by seeded BOUNDED-MULTIPLICITY weighted sampling over the non-forced,
+  // not-yet-placed vibes — each gets an occurrence cap derived from its own period vs. the window.
   const remaining = n - slots.length;
+  const occurrenceCaps: { id: string; cap: number }[] = [];
   if (remaining > 0) {
-    const pool = weights.filter((w) => !used.has(w.id) && !w.forced);
-    for (const s of weightedSampleWithoutReplacement(pool, remaining, rng)) {
+    const pool = weights
+      .filter((w) => !used.has(w.id) && !w.forced)
+      .map((w) => {
+        const cap = occurrenceCap(periodById.get(w.id), effectiveWindow);
+        occurrenceCaps.push({ id: w.id, cap });
+        return { ...w, cap };
+      });
+    for (const s of boundedMultiplicitySample(pool, remaining, rng)) {
       slots.push({ id: s.id, reason: "sampled", debt: round4(s.debt), weight: round4(s.weight) });
       used.add(s.id);
     }
@@ -254,5 +344,6 @@ export function sampleWeek(
     weights: weights
       .map((w) => ({ id: w.id, weight: round4(w.weight), debt: round4(w.debt), forced: w.forced, pinned: w.pinned }))
       .sort((a, b) => b.weight - a.weight),
+    occurrenceCaps,
   };
 }

@@ -213,6 +213,26 @@ describe("assembleProposal", () => {
     expect(r.uncovered_at_risk).toEqual([]);
   });
 
+  // --- Recurring vibes (planning-cadence) -----------------------------------------------------
+
+  it("a vibe sampled into two slots resolves to two different recipes, not the same one twice", () => {
+    // Two slots share the SAME vibe id (as a period-aware recurring vibe now can) and draw from
+    // the SAME pool — the cross-slot usedSlugs mechanism must still pick two distinct recipes.
+    const pastaA = cand("spaghetti-carbonara", "pork", "italian", [1, 0, 0], 0.9);
+    const pastaB = cand("cacio-e-pepe", "none", "italian", [0.9, 0.1, 0], 0.85);
+    const pool = [pastaA, pastaB];
+    const ctx = baseCtx({
+      slots: [slot("pasta-night"), slot("pasta-night")],
+      poolByVibe: new Map([["pasta-night", pool]]),
+      embeddingBySlug: embMap(pastaA, pastaB),
+    });
+    const r = assembleProposal(ctx);
+    const pastaSlots = r.plan.filter((s) => s.vibe_id === "pasta-night" && s.main);
+    expect(pastaSlots).toHaveLength(2);
+    const slugs = pastaSlots.map((s) => s.main!.slug);
+    expect(new Set(slugs).size).toBe(2); // two DIFFERENT recipes, not the same one twice
+  });
+
   it("coverage can't conjure an item outside the (already-gated) pool", () => {
     // The only at-risk cover isn't a pool survivor → coverage never admits it; it stays uncovered.
     const onVibe = cand("on-vibe", "tofu", "asian", [1, 0, 0], 0.9);

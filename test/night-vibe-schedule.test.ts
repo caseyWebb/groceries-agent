@@ -4,6 +4,7 @@ import {
   debtCurve,
   weatherMultiplier,
   sampleWeek,
+  occurrenceCap,
   DEFAULT_CADENCE_PARAMS,
   type NightVibeSpec,
 } from "../src/night-vibe-schedule.js";
@@ -96,5 +97,150 @@ describe("sampleWeek", () => {
       shapes.add(sampleWeek(palette, [], debts, 3, s).slots.map((x) => x.id).sort().join(","));
     }
     expect(shapes.size).toBeGreaterThan(1);
+  });
+});
+
+describe("occurrenceCap", () => {
+  it("is max(1, floor(window / period))", () => {
+    expect(occurrenceCap(7, 14)).toBe(2);
+    expect(occurrenceCap(7, 21)).toBe(3);
+    expect(occurrenceCap(30, 14)).toBe(1); // floored up to the minimum
+    expect(occurrenceCap(14, 14)).toBe(1); // window == period → still 1
+    expect(occurrenceCap(null, 14)).toBe(1);
+    expect(occurrenceCap(undefined, 14)).toBe(1);
+  });
+});
+
+describe("sampleWeek — period-aware bounded-multiplicity repeatability", () => {
+  it("a weekly vibe (cadence_days: 7) may recur up to twice in a 14-day window", () => {
+    // A single non-forced vibe filling many slots must hit its cap, not repeat unboundedly.
+    const palette: NightVibeSpec[] = [
+      { id: "pasta", cadence_days: 7 },
+      { id: "other-a" },
+      { id: "other-b" },
+      { id: "other-c" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    const counts = new Map<string, number>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const wk = sampleWeek(palette, [], debts, 4, seed, DEFAULT_CADENCE_PARAMS, 14);
+      const pastaCount = wk.slots.filter((s) => s.id === "pasta").length;
+      expect(pastaCount).toBeLessThanOrEqual(2); // cap = floor(14/7) = 2
+      counts.set(seed.toString(), pastaCount);
+    }
+    // Over many seeds, pasta should actually reach 2 occurrences at least once (the cap is
+    // reachable, not merely a theoretical ceiling nothing exercises).
+    expect([...counts.values()].some((c) => c === 2)).toBe(true);
+  });
+
+  it("a monthly vibe (cadence_days: 30) stays capped at one occurrence in a 14-day window", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "big-project", cadence_days: 30 },
+      { id: "other-a" },
+      { id: "other-b" },
+      { id: "other-c" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    for (let seed = 1; seed <= 20; seed++) {
+      const wk = sampleWeek(palette, [], debts, 4, seed, DEFAULT_CADENCE_PARAMS, 14);
+      expect(wk.slots.filter((s) => s.id === "big-project").length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("a window shorter than or equal to a vibe's period preserves at-most-once behavior", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "pasta", cadence_days: 7 },
+      { id: "other-a" },
+      { id: "other-b" },
+      { id: "other-c" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    for (let seed = 1; seed <= 20; seed++) {
+      // window (7) == period (7) → cap 1
+      const wk = sampleWeek(palette, [], debts, 4, seed, DEFAULT_CADENCE_PARAMS, 7);
+      expect(wk.slots.filter((s) => s.id === "pasta").length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("omitting window defaults it to n, reproducing today's at-most-once behavior", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "pasta", cadence_days: 7 },
+      { id: "other-a" },
+      { id: "other-b" },
+      { id: "other-c" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    for (let seed = 1; seed <= 20; seed++) {
+      const wk = sampleWeek(palette, [], debts, 4, seed); // no window arg
+      expect(new Set(wk.slots.map((s) => s.id)).size).toBe(wk.slots.length); // no repeats
+    }
+  });
+
+  it("is deterministic given the same seed, including which vibes recur and how many times", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "pasta", cadence_days: 7 },
+      { id: "soup", cadence_days: 14 },
+      { id: "other-a" },
+      { id: "other-b" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    const w1 = sampleWeek(palette, [], debts, 6, 7, DEFAULT_CADENCE_PARAMS, 14).slots.map((s) => s.id);
+    const w2 = sampleWeek(palette, [], debts, 6, 7, DEFAULT_CADENCE_PARAMS, 14).slots.map((s) => s.id);
+    expect(w1).toEqual(w2);
+  });
+
+  it("preserves pinned/overdue precedence over the bounded-multiplicity pool", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "regular", pinned: true },
+      { id: "overdue-one", cadence_days: 7 },
+      { id: "weekly", cadence_days: 7 },
+      { id: "other" },
+    ];
+    const debts = new Map([
+      ["regular", 0],
+      ["overdue-one", 5], // ≥ forceDueAt
+      ["weekly", 0],
+      ["other", 0],
+    ]);
+    const wk = sampleWeek(palette, [], debts, 4, 3, DEFAULT_CADENCE_PARAMS, 14);
+    const regular = wk.slots.find((s) => s.id === "regular");
+    const overdue = wk.slots.find((s) => s.id === "overdue-one");
+    expect(regular?.reason).toBe("pinned");
+    expect(overdue?.reason).toBe("overdue");
+    // pinned/overdue are placed exactly once each, never repeated by the window.
+    expect(wk.slots.filter((s) => s.id === "regular").length).toBe(1);
+    expect(wk.slots.filter((s) => s.id === "overdue-one").length).toBe(1);
+  });
+
+  it("over-subscription still rolls over forced vibes that don't fit", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "a", cadence_days: 7 },
+      { id: "b", cadence_days: 7 },
+      { id: "c", cadence_days: 7 },
+      { id: "d", cadence_days: 7 },
+    ];
+    const debts = new Map([["a", 5], ["b", 4], ["c", 3], ["d", 2]]); // all overdue
+    const wk = sampleWeek(palette, [], debts, 2, 1, DEFAULT_CADENCE_PARAMS, 14);
+    expect(wk.slots.length).toBe(2);
+    expect(wk.rolledOver.length).toBe(2);
+  });
+
+  it("spreads a recurring vibe's occurrences rather than always landing it adjacent", () => {
+    // With a sparse-enough alternative pool, the cooldown should sometimes separate the two
+    // pasta occurrences rather than forcing them onto consecutive slots every single seed.
+    const palette: NightVibeSpec[] = [
+      { id: "pasta", cadence_days: 7 },
+      { id: "a" },
+      { id: "b" },
+      { id: "c" },
+    ];
+    const debts = new Map(palette.map((v) => [v.id, 0]));
+    let sawSeparated = false;
+    for (let seed = 1; seed <= 60; seed++) {
+      const wk = sampleWeek(palette, [], debts, 4, seed, DEFAULT_CADENCE_PARAMS, 14);
+      const idxs = wk.slots.map((s, i) => (s.id === "pasta" ? i : -1)).filter((i) => i >= 0);
+      if (idxs.length === 2 && idxs[1] - idxs[0] > 1) sawSeparated = true;
+    }
+    expect(sawSeparated).toBe(true);
   });
 });

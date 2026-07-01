@@ -37,6 +37,8 @@ export interface ProposeDeps {
 /** Per-slot recall: how many candidates to rank before the cross-slot diversify narrows. */
 const POOL_K = 24;
 const DEFAULT_NIGHTS = 5;
+/** Fallback planning window (days) when the caller has no `planning_cadence_days` set. */
+const DEFAULT_PLANNING_WINDOW_DAYS = 7;
 
 function str(v: unknown): string | null {
   return typeof v === "string" ? v : null;
@@ -90,6 +92,11 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
           ]);
 
         const nightCount = nights ?? num((prefs as Record<string, unknown> | null)?.default_cooking_nights) ?? DEFAULT_NIGHTS;
+        // The planning WINDOW is a separate knob from the night count: it's how far out the
+        // caller plans/shops (planning_cadence_days), driving the weather horizon and the
+        // vibe-recurrence caps below — a longer window does NOT by itself mean more cooking
+        // nights (default_cooking_nights already resolved that, above, independent of window).
+        const window = num((prefs as Record<string, unknown> | null)?.planning_cadence_days) ?? DEFAULT_PLANNING_WINDOW_DAYS;
 
         if (palette.length === 0) {
           return { plan: [], variety: { distinct_proteins: 0, distinct_cuisines: 0, mean_pairwise_sim: 0, max_pairwise_sim: 0 }, uncovered_at_risk: [], diagnostics: { seed: resolvedSeed, lambda: 0, nights: nightCount, filled: 0, empty: 0 }, note: "no night vibes in the palette — add some with add_night_vibe, then propose again" };
@@ -165,7 +172,9 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
         for (const v of palette) {
           debtByVibe.set(v.id, v.cadence_days ? debt(lastSatisfied.get(v.id) ?? null, v.cadence_days, now) : 0);
         }
-        const weather = await fetchWeatherForecast(resolveZip(prefs), 7).catch(() => null);
+        // The weather forecast horizon IS the planning window (fetchWeatherForecast clamps to
+        // its own supported range, e.g. 1–16 days, rather than failing on an oversized window).
+        const weather = await fetchWeatherForecast(resolveZip(prefs), window).catch(() => null);
         const weatherVibes = weather && "forecast" in weather ? [...new Set(weather.forecast.flatMap((d) => d.meal_vibes))] : [];
 
         const specs: NightVibeSpec[] = palette.map((v) => ({
@@ -174,8 +183,9 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
           pinned: v.pinned,
           weather_affinity: v.weather_affinity,
           weather_antipathy: v.weather_antipathy,
+          cadence_days: v.cadence_days,
         }));
-        const shape = sampleWeek(specs, weatherVibes, debtByVibe, nightsToFill, resolvedSeed, DEFAULT_CADENCE_PARAMS);
+        const shape = sampleWeek(specs, weatherVibes, debtByVibe, nightsToFill, resolvedSeed, DEFAULT_CADENCE_PARAMS, window);
         const paletteById = new Map(palette.map((v) => [v.id, v]));
 
         // Level 2 — rank each sampled slot's candidates into a pool.
