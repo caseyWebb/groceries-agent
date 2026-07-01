@@ -26,7 +26,7 @@
 
 ## 4. Worker liveness/health (Phase 2)
 
-- [ ] 4.1 `src/health.ts`: per-scraper `fresh`/`stale`/`never` derivation + contract-skew, from the key roster + push activity; expose to the Access-gated admin readers (no secret leakage).
+- [x] 4.1 Liveness rollup `readScraperLiveness` (`src/ingest-db.ts`): per-scraper + per-source `fresh`/`stale`/`never` (health-posture vocabulary) + contract-skew + 24h/7d counts + the 24h throughput funnel (arrival from `ingest_pushes`, downstream from pushed `discovery_log` outcomes) + recent-pushes log, from the key roster + a new `ingest_pushes` history table (migration `0028`, recorded per POST, retention-pruned on the sweep). Feeds the admin Status + Discovery › Scrapers views (group 6). Tested in `test/ingest.test.ts`.
 
 ## 5. Admin — Config › Ingest Keys (Phase 2)
 

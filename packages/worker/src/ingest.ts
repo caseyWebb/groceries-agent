@@ -13,7 +13,13 @@
 
 import { parseIngestEnvelope, parseRecipeItem, type BatchResponse, type ItemResult } from "@grocery-agent/contract";
 import type { Env } from "./env.js";
-import { lookupIngestKey, touchIngestKey, insertIngestCandidate, ingestCandidateUrls } from "./ingest-db.js";
+import {
+  lookupIngestKey,
+  touchIngestKey,
+  insertIngestCandidate,
+  ingestCandidateUrls,
+  recordIngestPush,
+} from "./ingest-db.js";
 import { readDiscoveryRejections } from "./corpus-db.js";
 import { loadSettledUrls } from "./discovery-db.js";
 import { recipeSourceMap } from "./recipe-index.js";
@@ -72,7 +78,15 @@ export async function handleIngest(request: Request, env: Env, now: number = Dat
     return json({ error: "bad_payload", message: "body is not valid JSON" }, 400);
   }
   const env0 = parseIngestEnvelope(body);
-  if (!env0.ok) return json({ error: "bad_payload", message: env0.error }, 400);
+  if (!env0.ok) {
+    const src = typeof (body as { source?: unknown })?.source === "string" ? (body as { source: string }).source : "unknown";
+    await recordIngestPush(
+      env,
+      { keyId: key.id, source: src || "unknown", received: 0, accepted: 0, deduped: 0, rejected: 0, result: "bad_payload" },
+      now,
+    ).catch(() => {});
+    return json({ error: "bad_payload", message: env0.error }, 400);
+  }
   const batch = env0.value;
 
   // Record liveness (last_used + reported versions) now that the key + envelope are valid.
@@ -149,5 +163,19 @@ export async function handleIngest(request: Request, env: Env, now: number = Dat
   }
 
   const response: BatchResponse = { received: batch.recipes.length, accepted, deduped, rejected, results };
+  // Record the push for the admin liveness/recent-pushes view (best-effort).
+  await recordIngestPush(
+    env,
+    {
+      keyId: key.id,
+      source: batch.source,
+      received: batch.recipes.length,
+      accepted,
+      deduped,
+      rejected,
+      result: deduped > 0 || rejected > 0 ? "partial" : "accepted",
+    },
+    now,
+  ).catch(() => {});
   return json(response, 200);
 }

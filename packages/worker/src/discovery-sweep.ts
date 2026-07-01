@@ -20,7 +20,7 @@ import type { Env } from "./env.js";
 import { createR2CorpusStore } from "./corpus-store.js";
 import { directoryFromEnv } from "./tenant.js";
 import { readFeeds, readDiscoveryInbox, readDiscoveryRejections } from "./corpus-db.js";
-import { readIngestCandidates, deleteIngestCandidate } from "./ingest-db.js";
+import { readIngestCandidates, deleteIngestCandidate, pruneIngestPushes } from "./ingest-db.js";
 import { recipeSourceMap, loadRecipeEmbeddings } from "./recipe-index.js";
 import { extractRecipeSources, canonicalizeUrl, buildNewRecipe } from "./discovery.js";
 import { parseFeed } from "./feeds.js";
@@ -1036,6 +1036,8 @@ export async function runDiscoverySweepJob(
     const r = await runDiscoverySweep(deps, config);
     const cutoff = new Date(startedAt - config.logRetentionDays * 86_400_000).toISOString();
     const pruned = await pruneDiscoveryLog(env, cutoff);
+    // Same retention window prunes the ingest push-history (the admin liveness tail). Best-effort.
+    await pruneIngestPushes(env, startedAt - config.logRetentionDays * 86_400_000).catch(() => {});
     // Standing infrastructure-failure count (not just this tick's): an idle tick after an
     // outage must still read as degraded until the `failed` rows clear, so the health record
     // reflects the system's actual state, not just the latest run's activity. THAT is what a

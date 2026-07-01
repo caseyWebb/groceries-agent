@@ -86,6 +86,27 @@ export async function loadSettledUrls(env: Env): Promise<Set<string>> {
   return set;
 }
 
+/** Count PUSHED-candidate outcomes since `sinceIso`, bucketed for the admin ingest funnel's
+ *  downstream (imported / no-match / duplicate / parked). Reads the small pushed subset and
+ *  buckets in JS. */
+export async function countPushedOutcomesSince(
+  env: Env,
+  sinceIso: string,
+): Promise<{ imported: number; noMatch: number; duplicate: number; parked: number }> {
+  const rows = await db(env).all<{ outcome: string }>(
+    "SELECT outcome FROM discovery_log WHERE pushed = 1 AND created_at >= ?1",
+    sinceIso,
+  );
+  const out = { imported: 0, noMatch: 0, duplicate: 0, parked: 0 };
+  for (const { outcome } of rows) {
+    if (outcome === "imported") out.imported++;
+    else if (outcome === "no_match" || outcome === "dietary_gated") out.noMatch++;
+    else if (outcome === "duplicate") out.duplicate++;
+    else if (outcome === "error" || outcome === "failed") out.parked++;
+  }
+  return out;
+}
+
 /** Every URL already evaluated by a prior tick (the dedup set — don't reprocess). */
 export async function loadEvaluatedUrls(env: Env): Promise<Set<string>> {
   const rows = await db(env).all<{ url: string | null }>(

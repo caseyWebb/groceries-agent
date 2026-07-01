@@ -6,6 +6,12 @@
 
 import { db } from "./db.js";
 import type { Env } from "./env.js";
+import { CONTRACT_VERSION, type PushResult } from "@grocery-agent/contract";
+import { countPushedOutcomesSince } from "./discovery-db.js";
+
+/** A scraper is `fresh` if its most recent push is within this window, else `stale`; `never` = no push. */
+export const FRESH_WINDOW_MS = 6 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** SHA-256 hex of a string (Web Crypto — runs on workerd; the key-secret lookup hash). */
 async function sha256Hex(s: string): Promise<string> {
@@ -63,7 +69,7 @@ export async function mintIngestKey(
 
 /** Revoke a key by id (immediate — the next push with it is rejected). */
 export async function revokeIngestKey(env: Env, id: string): Promise<boolean> {
-  const res = await db(env).run("UPDATE ingest_keys SET status = 'revoked' WHERE id = ?1", id);
+  const res = await db(env).run("UPDATE ingest_keys SET status = ?2 WHERE id = ?1", id, "revoked");
   return res.changes > 0;
 }
 
@@ -182,4 +188,193 @@ export async function ingestCandidateUrls(env: Env): Promise<Set<string>> {
 /** Remove one pushed candidate by url — called once it reaches a terminal outcome. */
 export async function deleteIngestCandidate(env: Env, url: string): Promise<void> {
   await db(env).run("DELETE FROM ingest_candidates WHERE url = ?1", url);
+}
+
+// ── ingest_pushes (push history → the admin liveness rollup) ───────────────────
+
+export interface IngestPushRow {
+  id: string;
+  key_id: string;
+  source: string;
+  received: number;
+  accepted: number;
+  deduped: number;
+  rejected: number;
+  result: PushResult;
+  created_at: number;
+}
+
+/** Record one authenticated POST /admin/api/ingest batch (best-effort observability). */
+export async function recordIngestPush(
+  env: Env,
+  p: { keyId: string; source: string; received: number; accepted: number; deduped: number; rejected: number; result: PushResult },
+  now: number = Date.now(),
+): Promise<void> {
+  await db(env).run(
+    "INSERT INTO ingest_pushes (id, key_id, source, received, accepted, deduped, rejected, result, created_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    crypto.randomUUID(),
+    p.keyId,
+    p.source,
+    p.received,
+    p.accepted,
+    p.deduped,
+    p.rejected,
+    p.result,
+    now,
+  );
+}
+
+/** Recent push rows since `sinceMs` (default: all), most-recent-first, bounded. */
+export async function readIngestPushes(env: Env, sinceMs = 0, limit = 500): Promise<IngestPushRow[]> {
+  return db(env).all<IngestPushRow>(
+    "SELECT id, key_id, source, received, accepted, deduped, rejected, result, created_at FROM ingest_pushes " +
+      "WHERE created_at >= ?1 ORDER BY created_at DESC LIMIT ?2",
+    sinceMs,
+    Math.max(1, Math.min(limit, 1000)),
+  );
+}
+
+/** Prune push rows older than `beforeMs` (retention). Returns rows removed. */
+export async function pruneIngestPushes(env: Env, beforeMs: number): Promise<number> {
+  const res = await db(env).run("DELETE FROM ingest_pushes WHERE created_at < ?1", beforeMs);
+  return res.changes;
+}
+
+// ── the liveness rollup (Discovery › Scrapers + Status) ───────────────────────
+
+export type Health = "fresh" | "stale" | "never";
+
+export interface SourceLiveness {
+  name: string;
+  lastPush: number | null;
+  health: Health;
+  pushes24h: number;
+  pushes7d: number;
+}
+export interface ScraperLiveness {
+  id: string;
+  label: string;
+  prefix: string;
+  created: number;
+  status: string;
+  scraperVersion: string | null;
+  contractVersion: string | null;
+  skew: boolean;
+  lastPush: number | null;
+  health: Health;
+  pushes24h: number;
+  pushes7d: number;
+  sourceCount: number;
+  sources: SourceLiveness[];
+}
+export interface RecentPush {
+  id: string;
+  at: number;
+  scraper: string;
+  source: string;
+  count: number;
+  deduped: number;
+  rejected: number;
+  result: PushResult;
+}
+export interface ScraperRollup {
+  contractVersion: string;
+  scrapers: ScraperLiveness[];
+  activeScrapers: ScraperLiveness[];
+  funnel: { arrival: { received: number; accepted: number; deduped: number; swept: number }; downstream: { imported: number; noMatch: number; duplicate: number; parked: number } };
+  pushes: RecentPush[];
+  stats: { activeScrapers: number; fresh: number; stale: number; sources: number; pushes24h: number };
+}
+
+function healthFor(lastPush: number | null, now: number): Health {
+  if (lastPush == null) return "never";
+  return now - lastPush <= FRESH_WINDOW_MS ? "fresh" : "stale";
+}
+
+/**
+ * The admin liveness rollup — per-scraper + per-source health/skew/counts, the 24h throughput
+ * funnel (arrival from ingest_pushes; downstream from pushed discovery_log outcomes), and the
+ * recent-pushes log. Computed in JS from the key roster + a bounded push read (the fake-D1 has
+ * no GROUP BY, and the row counts are small).
+ */
+export async function readScraperLiveness(env: Env, now: number = Date.now()): Promise<ScraperRollup> {
+  const since7d = now - 7 * DAY_MS;
+  const since24h = now - DAY_MS;
+  const [keys, pushes7d, downstream] = await Promise.all([
+    listIngestKeys(env),
+    readIngestPushes(env, since7d),
+    countPushedOutcomesSince(env, new Date(since24h).toISOString()),
+  ]);
+  const labelOf = new Map(keys.map((k) => [k.id, k.label]));
+
+  const scrapers: ScraperLiveness[] = keys.map((k) => {
+    const mine = pushes7d.filter((p) => p.key_id === k.id);
+    // Per-source rollup (accepted-bearing pushes count toward last-push/counts).
+    const bySource = new Map<string, IngestPushRow[]>();
+    for (const p of mine) (bySource.get(p.source) ?? bySource.set(p.source, []).get(p.source)!).push(p);
+    const sources: SourceLiveness[] = [...bySource.entries()]
+      .map(([name, rows]) => {
+        const times = rows.map((r) => r.created_at);
+        return {
+          name,
+          lastPush: times.length ? Math.max(...times) : null,
+          health: healthFor(times.length ? Math.max(...times) : null, now),
+          pushes24h: rows.filter((r) => r.created_at >= since24h).length,
+          pushes7d: rows.length,
+        };
+      })
+      .sort((a, b) => (b.lastPush ?? 0) - (a.lastPush ?? 0));
+    const lastPush = k.last_used_at ?? (mine.length ? Math.max(...mine.map((p) => p.created_at)) : null);
+    return {
+      id: k.id,
+      label: k.label,
+      prefix: k.key_prefix,
+      created: k.created_at,
+      status: k.status,
+      scraperVersion: k.last_scraper_version,
+      contractVersion: k.last_contract_version,
+      skew: k.last_contract_version != null && k.last_contract_version !== CONTRACT_VERSION,
+      lastPush,
+      health: healthFor(lastPush, now),
+      pushes24h: mine.filter((p) => p.created_at >= since24h).length,
+      pushes7d: mine.length,
+      sourceCount: sources.length,
+      sources,
+    };
+  });
+  const activeScrapers = scrapers.filter((s) => s.status === "active");
+
+  const in24h = pushes7d.filter((p) => p.created_at >= since24h);
+  const arrival = {
+    received: in24h.reduce((n, p) => n + p.received, 0),
+    accepted: in24h.reduce((n, p) => n + p.accepted, 0),
+    deduped: in24h.reduce((n, p) => n + p.deduped, 0),
+    swept: in24h.reduce((n, p) => n + p.accepted, 0),
+  };
+  const pushes: RecentPush[] = pushes7d.slice(0, 40).map((p) => ({
+    id: p.id,
+    at: p.created_at,
+    scraper: labelOf.get(p.key_id) ?? p.key_id,
+    source: p.source,
+    count: p.accepted,
+    deduped: p.deduped,
+    rejected: p.rejected,
+    result: p.result,
+  }));
+
+  return {
+    contractVersion: CONTRACT_VERSION,
+    scrapers,
+    activeScrapers,
+    funnel: { arrival, downstream },
+    pushes,
+    stats: {
+      activeScrapers: activeScrapers.length,
+      fresh: activeScrapers.filter((s) => s.health === "fresh").length,
+      stale: activeScrapers.filter((s) => s.health === "stale").length,
+      sources: activeScrapers.reduce((n, s) => n + s.sourceCount, 0),
+      pushes24h: activeScrapers.reduce((n, s) => n + s.pushes24h, 0),
+    },
+  };
 }

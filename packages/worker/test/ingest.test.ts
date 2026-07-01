@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { handleIngest } from "../src/ingest.js";
-import { mintIngestKey } from "../src/ingest-db.js";
+import { mintIngestKey, readScraperLiveness, revokeIngestKey, FRESH_WINDOW_MS } from "../src/ingest-db.js";
 import { CONTRACT_VERSION, type BatchResponse } from "@grocery-agent/contract";
 import { fakeD1 } from "./fake-d1.js";
 
@@ -11,7 +11,7 @@ import { fakeD1 } from "./fake-d1.js";
 const NOW = 1_800_000_000_000;
 
 function freshEnv() {
-  return fakeD1({ tables: { ingest_keys: [], ingest_candidates: [] } });
+  return fakeD1({ tables: { ingest_keys: [], ingest_candidates: [], ingest_pushes: [] } });
 }
 
 const validItem = (n: number) => ({
@@ -104,5 +104,69 @@ describe("handleIngest", () => {
     const body = (await res.json()) as BatchResponse;
     expect(body).toMatchObject({ received: 2, accepted: 1, deduped: 1 });
     expect(f.tables.ingest_candidates).toHaveLength(1);
+  });
+
+  it("records the push for the liveness/recent-pushes view", async () => {
+    const f = freshEnv();
+    const { secret } = await mintIngestKey(f.env, "home-nas", NOW);
+    await handleIngest(req(secret, batch([validItem(1)])), f.env, NOW);
+    expect(f.tables.ingest_pushes).toHaveLength(1);
+    expect(f.tables.ingest_pushes[0]).toMatchObject({ source: "NYT Cooking", accepted: 1, result: "accepted" });
+  });
+});
+
+describe("readScraperLiveness", () => {
+  function envWith(tables: Record<string, Record<string, unknown>[]>) {
+    return fakeD1({ tables: { ingest_keys: [], ingest_candidates: [], ingest_pushes: [], ...tables } }).env;
+  }
+
+  it("rolls up a fresh scraper with a per-source breakdown and no skew", async () => {
+    const env = envWith({});
+    const { id } = await mintIngestKey(env, "home-nas", NOW);
+    const { touchIngestKey, recordIngestPush } = await import("../src/ingest-db.js");
+    await touchIngestKey(env, id, "1.4.2", CONTRACT_VERSION, NOW - 1000);
+    await recordIngestPush(env, { keyId: id, source: "NYT Cooking", received: 5, accepted: 5, deduped: 0, rejected: 0, result: "accepted" }, NOW - 1000);
+    await recordIngestPush(env, { keyId: id, source: "Serious Eats", received: 3, accepted: 3, deduped: 0, rejected: 0, result: "accepted" }, NOW - 2000);
+    const r = await readScraperLiveness(env, NOW);
+    const s = r.scrapers.find((x) => x.id === id)!;
+    expect(s.health).toBe("fresh");
+    expect(s.skew).toBe(false);
+    expect(s.sourceCount).toBe(2);
+    expect(s.sources.map((x) => x.name).sort()).toEqual(["NYT Cooking", "Serious Eats"]);
+    expect(s.pushes24h).toBe(2);
+    expect(r.stats.fresh).toBe(1);
+    expect(r.funnel.arrival.received).toBe(8);
+  });
+
+  it("flags contract skew and marks a silent scraper stale", async () => {
+    const env = envWith({});
+    const { id } = await mintIngestKey(env, "old-synology", NOW);
+    const { touchIngestKey, recordIngestPush } = await import("../src/ingest-db.js");
+    // Reported an OLD contract version, and last pushed > the fresh window ago.
+    const longAgo = NOW - FRESH_WINDOW_MS - 60_000;
+    await touchIngestKey(env, id, "1.3.0", "v0-old", longAgo);
+    await recordIngestPush(env, { keyId: id, source: "ATK", received: 1, accepted: 1, deduped: 0, rejected: 0, result: "accepted" }, longAgo);
+    const r = await readScraperLiveness(env, NOW);
+    const s = r.scrapers.find((x) => x.id === id)!;
+    expect(s.skew).toBe(true);
+    expect(s.health).toBe("stale");
+  });
+
+  it("reports a minted-but-never-used key as never", async () => {
+    const env = envWith({});
+    const { id } = await mintIngestKey(env, "kitchen-backup", NOW);
+    const r = await readScraperLiveness(env, NOW);
+    const s = r.scrapers.find((x) => x.id === id)!;
+    expect(s.health).toBe("never");
+    expect(s.sourceCount).toBe(0);
+  });
+
+  it("excludes a revoked key from the active set", async () => {
+    const env = envWith({});
+    const { id } = await mintIngestKey(env, "old-laptop", NOW);
+    await revokeIngestKey(env, id);
+    const r = await readScraperLiveness(env, NOW);
+    expect(r.activeScrapers.find((x) => x.id === id)).toBeUndefined();
+    expect(r.scrapers.find((x) => x.id === id)?.status).toBe("revoked");
   });
 });

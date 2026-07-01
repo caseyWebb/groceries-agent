@@ -41,6 +41,7 @@ const PK: Record<string, string[]> = {
   // walled-source ingest (recipe-ingestion)
   ingest_keys: ["id"],
   ingest_candidates: ["id"],
+  ingest_pushes: ["id"],
 };
 
 // Tables whose `id` PK is AUTOINCREMENT: an INSERT that omits `id` gets the next one,
@@ -63,6 +64,7 @@ const GLOBAL_TABLES = new Set([
   "bug_reports",
   "ingest_keys",
   "ingest_candidates",
+  "ingest_pushes",
 ]);
 
 export function fakeD1(
