@@ -797,7 +797,7 @@ Example rows (one row per email; the `body` carries the recipe links the agent e
 
 ## ingest_keys (D1 table, shared) — walled-source scraper keys
 
-The **ingest-key roster** (recipe-ingestion). One row per **scraper machine**; a key authenticates `POST /admin/api/ingest` as a bearer credential — a deliberate, key-authed carve-out from the Cloudflare Access gate (a headless home scraper has no Access JWT). The plaintext secret is shown **once** at mint and never stored: only a SHA-256 hash (the lookup key) + a short display prefix are persisted. `last_used_at` and the last-reported scraper/contract versions drive the admin liveness + contract-skew views. Schema: `migrations/d1/0025_ingest_keys.sql`.
+The **ingest-key roster** (recipe-ingestion). One row per **scraper machine**; a key authenticates `POST /admin/api/ingest` as a bearer credential — a deliberate, key-authed carve-out from the Cloudflare Access gate (a headless home scraper has no Access JWT). The plaintext secret is shown **once** at mint and never stored: only a SHA-256 hash (the lookup key) + a short display prefix are persisted. `last_used_at` and the last-reported scraper/contract versions drive the admin liveness + contract-skew views. Schema: `migrations/d1/0029_ingest_keys.sql`.
 
 ```sql
 -- D1 ingest_keys table. PRIMARY KEY (id); UNIQUE (key_hash), indexed for the auth lookup.
@@ -816,7 +816,7 @@ Auth is SHA-256 hash equality (`WHERE key_hash = ? AND status = 'active'`) — a
 
 ## ingest_candidates (D1 table, shared) — the pushed-content inbox
 
-The scraper push inbox (recipe-ingestion). `POST /admin/api/ingest` persists each accepted, non-duplicate recipe item here with its **pre-parsed content**; the discovery sweep drains it as a **third intake source** (beside feeds + the email inbox), classifying/matching/importing **without a fetch** (`acquire` returns the attached content). A row lives until the candidate reaches a **terminal** outcome (imported / rejected / contract-park), then it is deleted; a **transient** infrastructure failure KEEPS the row so the next tick retries from the stored content (no re-fetch, no `discovery_log` spam). Deduped by canonical `url`. Schema: `migrations/d1/0026_ingest_candidates.sql`.
+The scraper push inbox (recipe-ingestion). `POST /admin/api/ingest` persists each accepted, non-duplicate recipe item here with its **pre-parsed content**; the discovery sweep drains it as a **third intake source** (beside feeds + the email inbox), classifying/matching/importing **without a fetch** (`acquire` returns the attached content). A row lives until the candidate reaches a **terminal** outcome (imported / rejected / contract-park), then it is deleted; a **transient** infrastructure failure KEEPS the row so the next tick retries from the stored content (no re-fetch, no `discovery_log` spam). Deduped by canonical `url`. Schema: `migrations/d1/0030_ingest_candidates.sql`.
 
 ```sql
 -- D1 ingest_candidates table. PRIMARY KEY (id); UNIQUE (url) is the dedup key.

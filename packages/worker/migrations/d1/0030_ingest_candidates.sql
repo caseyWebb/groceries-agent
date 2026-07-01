@@ -1,4 +1,4 @@
--- 0026_ingest_candidates — the pushed-content inbox (recipe-ingestion).
+-- 0030_ingest_candidates — the pushed-content inbox (recipe-ingestion).
 --
 -- POST /admin/api/ingest persists each ACCEPTED, non-duplicate recipe item here with
 -- its pre-parsed content; the discovery sweep drains it (a third intake source beside

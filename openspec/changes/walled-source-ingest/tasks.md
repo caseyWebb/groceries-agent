@@ -8,9 +8,9 @@
 
 ## 2. Worker ingest endpoint + keys (Phase 1)
 
-- [x] 2.1 Migration `0025_ingest_keys.sql` (id, label, key_hash, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version).
-- [x] 2.2 Migration `0026_ingest_candidates.sql` (id, url UNIQUE, title, content JSON, origin, key_id, received_at) — the pushed-content inbox.
-- [x] 2.3 Migration `0027_discovery_log_pushed.sql` — add `pushed` + `origin` columns to `discovery_log`.
+- [x] 2.1 Migration `0029_ingest_keys.sql` (id, label, key_hash, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version).
+- [x] 2.2 Migration `0030_ingest_candidates.sql` (id, url UNIQUE, title, content JSON, origin, key_id, received_at) — the pushed-content inbox.
+- [x] 2.3 Migration `0031_discovery_log_pushed.sql` — add `pushed` + `origin` columns to `discovery_log`.
 - [x] 2.4 `src/ingest-db.ts` (through `src/db.ts`): key mint (hash + prefix, secret returned once), revoke, hash lookup-by-secret, `last_used`/version stamp, list; pushed-candidate insert (INSERT OR IGNORE) + read + url-set + delete. (The per-scraper/per-source **liveness rollup** travels with the admin UI in group 4.)
 - [x] 2.5 `src/ingest.ts`: the `POST /admin/api/ingest` handler — key auth, envelope + per-item validation (`parseIngestEnvelope`/`parseRecipeItem`), arrival dedup (corpus/rejections/**settled**-log/in-flight inbox, with the walled-park supersede exception), persist accepted candidates, `{ received, accepted, deduped, rejected, results }` response; best-effort per-key KV rate limit. Tested in `test/ingest.test.ts`.
 - [x] 2.6 `src/index.ts`: route `POST /admin/api/ingest` to `handleIngest` **before** the `/admin` dispatch — an explicit key-authed exemption from the Access gate (exact path only; every other `/admin*` stays Access-gated).

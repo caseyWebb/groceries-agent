@@ -1,4 +1,4 @@
--- 0028_ingest_pushes — the walled-source push history (recipe-ingestion), backing the admin
+-- 0032_ingest_pushes — the walled-source push history (recipe-ingestion), backing the admin
 -- Discovery › Scrapers liveness rollup: per-(scraper, source) last-push + 24h/7d counts, the
 -- throughput funnel, and the recent-pushes log. One row per authenticated POST /admin/api/ingest
 -- batch. Retention-pruned (a rolling window; liveness only needs the recent tail).
