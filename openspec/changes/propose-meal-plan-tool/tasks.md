@@ -22,11 +22,11 @@
 
 ## 4. Slot provenance
 
-- [ ] 4.1 Migrations: additive `meal_plan.from_vibe` and `cooking_log.satisfied_vibe` (both nullable).
-- [ ] 4.2 `src/meal-plan.ts` + write path: accept/preserve `from_vibe` on add/upsert; the `recipe` slug invariant and reconcile behavior unchanged.
-- [ ] 4.3 `log_cooked` (`src/cooking-write.ts`): copy the cleared planned row's `from_vibe` → `satisfied_vibe` in the **same transaction** as the insert + plan-clear; off-plan cooks leave it null.
-- [ ] 4.4 `last_satisfied(vibe)` derived query (`MAX(date)` over `satisfied_vibe`) wired into the cadence-debt read; tests for atomic copy, off-plan null, and the derived query.
-- [ ] 4.5 Docs lockstep: `docs/SCHEMAS.md` (the two columns), `docs/TOOLS.md` (`update_meal_plan`/`log_cooked` note).
+- [x] 4.1 Migration `0026_slot_provenance.sql`: additive `meal_plan.from_vibe` + `cooking_log.satisfied_vibe` (both nullable) + `idx_cooking_log_satisfied_vibe`. Applies cleanly.
+- [x] 4.2 `src/meal-plan.ts` (PlannedItem/MealPlanOp/coercePlanned/applyMealPlanOps) + `src/session-db.ts` (row decode + `mealPlanUpsertStmt`) + `update_meal_plan` op schema: accept/preserve `from_vibe`; the `recipe` slug invariant is unchanged (pure test in `test/meal-plan.test.ts`).
+- [x] 4.3 `log_cooked` (`src/cooking-write.ts`): reads the planned row's `from_vibe` and sets `satisfied_vibe` on the cooking-log INSERT in the same batch as the plan-clear; off-plan cooks leave it null (test in `test/cooking-write.test.ts` + `fake-d1` LOWER(recipe) support).
+- [x] 4.4 `readVibeLastSatisfied` (`MAX(date)` over `satisfied_vibe`) in `src/night-vibe-db.ts` — consumed by the proposal's debt read (Phase 3).
+- [x] 4.5 Docs lockstep: `docs/SCHEMAS.md` (both columns), `docs/TOOLS.md` (`update_meal_plan` from_vibe note).
 
 ## 5. Profile reconciliation
 

@@ -117,6 +117,20 @@ export async function deleteNightVibe(env: Env, tenant: string, id: string): Pro
   return r.changes > 0;
 }
 
+/** The caller's derived `last_satisfied(vibe)` — `MAX(date)` over cooking-log rows attributed
+ *  to each vibe by slot provenance (`satisfied_vibe`). Vibe id → YYYY-MM-DD. Off-plan cooks
+ *  (null `satisfied_vibe`) never appear, so an unsatisfied vibe is simply absent (max debt). */
+export async function readVibeLastSatisfied(env: Env, tenant: string): Promise<Map<string, string>> {
+  const rows = await db(env).all<{ satisfied_vibe: string; d: string }>(
+    "SELECT satisfied_vibe, MAX(date) AS d FROM cooking_log " +
+      "WHERE tenant = ?1 AND satisfied_vibe IS NOT NULL GROUP BY satisfied_vibe",
+    tenant,
+  );
+  const map = new Map<string, string>();
+  for (const r of rows) if (r.satisfied_vibe && r.d) map.set(r.satisfied_vibe, r.d);
+  return map;
+}
+
 /** The caller's night-vibe vectors (vibe id → embedding), skipping NULL/garbage rows —
  *  the Level-2 fill's query vectors. An unembedded vibe is simply absent (not-yet-indexed). */
 export async function readNightVibeVectors(env: Env, tenant: string): Promise<Map<string, number[]>> {
