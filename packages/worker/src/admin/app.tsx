@@ -33,7 +33,7 @@ import {
 import { corpusCounts, memberDetail, recipeTitles } from "../admin-data.js";
 import { MembersPage } from "./pages/members.js";
 import { MemberDetailPage, PendingMemberDetailPage, sectionOfSlug } from "./pages/member-detail.js";
-import { StatusPage } from "./pages/status.js";
+import { StatusPage, STATUS_SPARKLINE_WINDOW } from "./pages/status.js";
 import { registerDataRoutes } from "./pages/data.js";
 import { fetchUsage, fetchUsageTrends, fetchToolUsage } from "../usage.js";
 import { UsagePage } from "./pages/usage.js";
@@ -130,10 +130,6 @@ app.onError((err, c) => {
   const message = err instanceof Error ? err.message : String(err);
   return c.json({ error: "upstream_unavailable", message }, 500);
 });
-
-// The number of recent runs the Status uptime sparkline shows per job (the retention cap in
-// src/health.ts is larger — this is just the display window the mock's density calls for).
-const STATUS_SPARKLINE_WINDOW = 30;
 
 // Home (`/admin`) is the Status service-health view, SSR'd from the same `buildHealthPayload`
 // the public `/health` uses (no client fetch, no decoder), plus the corpus stat-tile counts and

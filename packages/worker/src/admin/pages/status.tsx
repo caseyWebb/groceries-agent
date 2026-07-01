@@ -23,6 +23,10 @@ import type { CorpusCounts } from "../../admin-data.js";
 import type { ScraperLiveness } from "../../ingest-db.js";
 import { CONTRACT_VERSION } from "@grocery-agent/contract";
 
+// The run-history window: how many recent runs are fetched, and the fixed number of sparkline
+// slots rendered (a shorter history is ghost-padded up to it).
+export const STATUS_SPARKLINE_WINDOW = 30;
+
 type JobState = "healthy" | "failing" | "neverRun";
 
 /** Collapse `{ ok: bool|null, never_run? }` to one state: null/never-run → neverRun. */
@@ -168,7 +172,7 @@ const Uptime = ({ runs }: { runs: JobRun[] }) => {
           {pct}% uptime · {runs.length} runs
         </span>
       </div>
-      <SparklineTrack segments={segments} axis />
+      <SparklineTrack segments={segments} axis slots={STATUS_SPARKLINE_WINDOW} />
     </div>
   );
 };

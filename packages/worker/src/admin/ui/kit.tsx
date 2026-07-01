@@ -265,50 +265,58 @@ export interface TipSegment {
   ariaLabel?: string;
 }
 
-/** A capped-width, right-aligned track of tip-bearing segments (mirrors the mock's
- *  `uptime-track`): segments never stretch to fill an under-populated series (a still-warming-up
- *  job's 3-of-30 runs render as 3 normal-width bars flush right, not 3 bars stretched to fill the
- *  row), and each segment carries the `data-tip-*` attributes the client script reads. `axis`
- *  renders the "OLDER"/"NOW" caption row beneath the track when true. */
+/** A full-width track of tip-bearing segments: when a `slots` target exceeds the number of real
+ *  segments, the older (left) side is padded with non-interactive ghost placeholder bars so the
+ *  track fills its container and the newest run stays anchored at the right (NOW) edge. Each real
+ *  segment carries the `data-tip-*` attributes the client script reads. `axis` renders the
+ *  "OLDER"/"NOW" caption row beneath the track when true. */
 export const SparklineTrack = ({
   segments,
   axis,
+  slots,
   class: cls,
 }: {
   segments: TipSegment[];
   axis?: boolean;
+  slots?: number;
   class?: string;
-}) => (
-  <div class={cx("spark-track-wrap", cls)}>
-    <div class="spark-track">
-      {segments.map((s) => {
-        const body = (
-          <span
-            class={cx("spark-seg-tip", s.state)}
-            style={`height:${Math.max(8, Math.round(s.frac * 100))}%`}
-            data-tip-title={s.tipTitle}
-            data-tip-body={s.tipBody}
-            data-tip-variant={s.tipVariant}
-            aria-label={s.ariaLabel}
-          />
-        );
-        return s.href != null ? (
-          <a class="spark-seg-link" href={s.href}>
-            {body}
-          </a>
-        ) : (
-          body
-        );
-      })}
-    </div>
-    {axis ? (
-      <div class="spark-axis">
-        <span>OLDER</span>
-        <span>NOW</span>
+}) => {
+  const ghostCount = slots != null ? Math.max(0, slots - segments.length) : 0;
+  return (
+    <div class={cx("spark-track-wrap", cls)}>
+      <div class="spark-track">
+        {Array.from({ length: ghostCount }, () => (
+          <span class="spark-seg-tip ghost" aria-hidden="true" />
+        ))}
+        {segments.map((s) => {
+          const body = (
+            <span
+              class={cx("spark-seg-tip", s.state)}
+              style={`height:${Math.max(8, Math.round(s.frac * 100))}%`}
+              data-tip-title={s.tipTitle}
+              data-tip-body={s.tipBody}
+              data-tip-variant={s.tipVariant}
+              aria-label={s.ariaLabel}
+            />
+          );
+          return s.href != null ? (
+            <a class="spark-seg-link" href={s.href}>
+              {body}
+            </a>
+          ) : (
+            body
+          );
+        })}
       </div>
-    ) : null}
-  </div>
-);
+      {axis ? (
+        <div class="spark-axis">
+          <span>OLDER</span>
+          <span>NOW</span>
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 /** A determinate progress bar (0–100). */
 export const Progress = ({ value }: { value: number }) => {
