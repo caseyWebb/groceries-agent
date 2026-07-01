@@ -15,7 +15,7 @@
 //     list never claims in_cart for items that aren't actually in the cart).
 //     Every outcome is reported honestly and independently.
 
-import { normalizeName, type GroceryItem } from "./grocery.js";
+import { normalizeName, groceryKey, type GroceryItem } from "./grocery.js";
 import type { MatchResult, CandidateView } from "./matching.js";
 
 /** A computed buy line before resolution: ingredient-level, package count. */
@@ -49,10 +49,18 @@ export interface ComputeToBuyInput {
   list: GroceryItem[];
   menuNeeds?: MenuNeed[];
   pantryNames: Set<string>;
-  /** Per-name package count override (default 1). Keyed by normalized name. */
+  /** Per-name package count override (default 1). Keyed by the resolved (canonical-id) key. */
   quantities?: Record<string, number>;
-  /** Normalized names the user confirmed buying despite a pantry hit. */
+  /** Resolved keys the user confirmed buying despite a pantry hit. */
   includePartials?: Set<string>;
+  /**
+   * Map a name to its dedup/join key — `IngredientContext.resolve` in production, so a food
+   * item's key is the canonical id and a pantry on-hand cancels its grocery/menu counterpart
+   * across surface forms ("scallions" ≡ a pantry "green onion"). Defaults to `normalizeName`,
+   * preserving today's behavior for callers/tests that don't inject one. `pantryNames`,
+   * `quantities`, and `includePartials` are expected keyed by the SAME function.
+   */
+  resolve?: (n: string) => string;
 }
 
 /**
@@ -63,22 +71,26 @@ export interface ComputeToBuyInput {
 export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
   const quantities = input.quantities ?? {};
   const includePartials = input.includePartials ?? new Set<string>();
+  const resolve = input.resolve ?? normalizeName;
 
-  // Accumulate by normalized name so list + menu needs dedupe cleanly. `needQty`
-  // is the package count carried on a menu need (max across merges); the separate
-  // `quantities` map overrides it below.
+  // Accumulate by the resolved key (canonical id for food) so list + menu needs dedupe
+  // across surface forms. `needQty` is the package count carried on a menu need (max across
+  // merges); the separate `quantities` map overrides it below.
   const merged = new Map<string, { name: string; for_recipes: string[]; needQty?: number }>();
 
   for (const it of input.list) {
     if (it.status !== "active") continue;
-    const key = normalizeName(it.name);
+    // Food-guarded per item: a food row keys on the canonical id, a non-food row on
+    // normalizeName — the SAME key its D1 row (and pantry subtraction) is stored under.
+    const key = groceryKey(it.name, it.kind, it.domain, resolve);
     const entry = merged.get(key) ?? { name: it.name, for_recipes: [] };
     entry.for_recipes = [...new Set([...entry.for_recipes, ...it.for_recipes])];
     merged.set(key, entry);
   }
 
   for (const need of input.menuNeeds ?? []) {
-    const key = normalizeName(need.name);
+    // Menu needs are recipe ingredients = food → resolve to the canonical id.
+    const key = resolve(need.name);
     const entry = merged.get(key) ?? { name: need.name, for_recipes: [] };
     entry.for_recipes = [...new Set([...entry.for_recipes, ...(need.for_recipes ?? [])])];
     // Honor a per-need package count; take the max when several needs merge.
@@ -190,10 +202,20 @@ export interface PlaceOrderDeps {
 }
 
 export interface PlaceOrderOptions {
-  /** Previously-ambiguous items the user dispositioned, keyed by normalized name. */
+  /**
+   * Previously-ambiguous items the user dispositioned, keyed by the resolved (canonical-id)
+   * name via `resolveKey`. Must be keyed by the SAME function passed as `resolveKey` so a
+   * dispositioned line matches its to-buy line across surface forms.
+   */
   overrides?: Map<string, Override>;
   /** Resolve and report only — no cart write, no commits. */
   preview?: boolean;
+  /**
+   * Map a to-buy line name to the override-map key. `IngredientContext.resolve` in production
+   * (the SAME funnel `order-tools` keys the override map with); defaults to `normalizeName` so
+   * an un-threaded caller keeps today's behavior.
+   */
+  resolveKey?: (n: string) => string;
 }
 
 export interface PlaceOrderResult {
@@ -237,6 +259,7 @@ export async function placeOrder(
 ): Promise<PlaceOrderResult> {
   const overrides = options.overrides ?? new Map<string, Override>();
   const preview = options.preview ?? false;
+  const resolveKey = options.resolveKey ?? normalizeName;
 
   const resolved: ResolvedLine[] = [];
   const checkpoint: CheckpointLine[] = [];
@@ -246,7 +269,7 @@ export async function placeOrder(
   // resolved/checkpoint in input order so the output is deterministic.
   const outcomes = await Promise.all(
     toBuy.map(async (item) => {
-      const ov = overrides.get(normalizeName(item.name));
+      const ov = overrides.get(resolveKey(item.name));
       if (ov) {
         // A forced SKU bypasses the matcher, but is still revalidated for current
         // availability + price before it can reach the cart. Fulfillable → resolve

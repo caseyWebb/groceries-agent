@@ -259,14 +259,14 @@ Example rows:
 
 ## pantry (per-tenant, D1 session state)
 
-Live inventory. Agent-writable. Updated as side effect of menu generation and ad-hoc messages. Stored as rows in the D1 `pantry` table (`PRIMARY KEY (tenant, normalized_name)`; `idx_pantry_category(tenant, category)` backs the `read_pantry` category filter). `notes` is an optional short freeform string. Adds are `INSERT … ON CONFLICT DO UPDATE` (keep `added_at`, refresh `last_verified_at`, overlay the rest); reads/writes are row-level and strongly consistent. The schema below describes each item object's shape:
+Live inventory. Agent-writable. Updated as side effect of menu generation and ad-hoc messages. Stored as rows in the D1 `pantry` table (`PRIMARY KEY (tenant, normalized_name)`; `idx_pantry_category(tenant, category)` backs the `read_pantry` category filter). `notes` is an optional short freeform string. Adds are `INSERT … ON CONFLICT DO UPDATE` (keep `added_at`, refresh `last_verified_at`, overlay the rest); reads/writes are row-level and strongly consistent. Pantry has no `kind`/`domain` — it's kitchen inventory, food by construction — so `normalized_name` is always the canonical ingredient id resolved through the `IngredientContext` funnel (`resolve(name)`: normalize **and** capture), the same key `sku_cache` and recipe `ingredients_key` use, so a pantry "chicken breast" and a grocery/menu need for "2 lb chicken breast" join on the same id. The schema below describes each item object's shape:
 
 ```sql
 -- D1 pantry table — one row per item. PRIMARY KEY (tenant, normalized_name).
 -- idx_pantry_category on (tenant, category).
 tenant           TEXT  -- owning user
 name             TEXT  -- display name (e.g. "olive oil")
-normalized_name  TEXT  -- normalized for dedup/lookup
+normalized_name  TEXT  -- canonical ingredient id via the IngredientContext funnel (resolve)
 quantity         TEXT  -- full | partial | low | "<count>" for countables
 category         TEXT  -- pantry | fridge | freezer | spices
 prepared_from    TEXT  -- recipe slug if this is cooked/prepared from a recipe; else NULL
@@ -316,14 +316,14 @@ Example rows:
 
 ## grocery list (per-tenant, D1 session state)
 
-The buy list — committed intent for the next order. Ingredient/product-level and **SKU-free**: resolution to a Kroger SKU happens once, at order time, against current availability, so the list never pins a brand/SKU that could go stale between capture and order. Stored as rows in the D1 `grocery_list` table (`PRIMARY KEY (tenant, normalized_name)`; `for_recipes` is a JSON column; `idx_grocery_status(tenant, status)` backs the `read_grocery_list` status filter). Agent-writable side-effect data (NOT user-curated config). Distinct from pantry (observation: what's in the kitchen) and `stockup` (conditional intent: buy IF on sale). Items are keyed by normalized `name` — re-adding an existing name merges (row upsert) rather than duplicating; the order/cart status transitions (`place_order`, the in-store walk) are row updates. The schema below describes each item object's shape:
+The buy list — committed intent for the next order. Ingredient/product-level and **SKU-free**: resolution to a Kroger SKU happens once, at order time, against current availability, so the list never pins a brand/SKU that could go stale between capture and order. Stored as rows in the D1 `grocery_list` table (`PRIMARY KEY (tenant, normalized_name)`; `for_recipes` is a JSON column; `idx_grocery_status(tenant, status)` backs the `read_grocery_list` status filter). Agent-writable side-effect data (NOT user-curated config). Distinct from pantry (observation: what's in the kitchen) and `stockup` (conditional intent: buy IF on sale). Items are keyed by `normalized_name` — re-adding an existing name merges (row upsert) rather than duplicating; the order/cart status transitions (`place_order`, the in-store walk) are row updates. For a **food** row (`kind: grocery` and `domain` absent/`grocery` — the `isFoodItem` guard), that key is the canonical ingredient id via the `IngredientContext` funnel (`resolve(name)`: normalize **and** capture), so "scallions" and "green onions" merge into one row; a **non-food** row (`household`/`other` kind, or a non-grocery `domain` like home-improvement/garden/pharmacy) stays on `normalizeName(name)` (lowercase + whitespace-collapse) and is never resolved or captured, keeping non-food vocabulary out of the ingredient identity graph. The schema below describes each item object's shape:
 
 ```sql
 -- D1 grocery_list table — one row per item. PRIMARY KEY (tenant, normalized_name).
 -- idx_grocery_status on (tenant, status).
 tenant           TEXT  -- owning user
 name             TEXT  -- order-time search term (display name; required)
-normalized_name  TEXT  -- normalized for dedup/upsert keying
+normalized_name  TEXT  -- canonical ingredient id (food) via the IngredientContext funnel, else normalizeName(name)
 quantity         TEXT  -- loose BUY amount: "1 bottle" | "enough for the week" | count
 kind             TEXT  -- grocery | household | other
 domain           TEXT  -- which store-TYPE it's bought at (default "grocery"; open vocab)

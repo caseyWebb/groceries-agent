@@ -310,6 +310,27 @@ describe("applyPantryOperations", () => {
     expect(res.applied).toEqual([{ op: "add", name: "Olive Oil", merged: true }]);
     expect(res.items[0].quantity).toBe("low");
   });
+
+  it("an injected normalize merges surface-form variants onto one canonical id", () => {
+    // Pantry is food by construction, so production injects IngredientContext.resolve. A
+    // resolver mapping both scallion surface forms to `green onion` merges the add into the
+    // existing row rather than duplicating it.
+    const normalize = (s: string): string =>
+      ({ scallions: "green onion", "green onions": "green onion" })[s.toLowerCase()] ?? s.toLowerCase();
+    const existing: PantryItem[] = [
+      { name: "scallions", category: "fridge", quantity: "1 bunch", added_at: "2026-01-01", last_verified_at: "2026-06-01" },
+    ];
+    const res = applyPantryOperations(
+      existing,
+      [{ op: "add", item: { name: "green onions", quantity: "2 bunches" } }],
+      "2026-06-09",
+      normalize,
+    );
+    expect(res.items).toHaveLength(1);
+    expect(res.applied).toEqual([{ op: "add", name: "green onions", merged: true }]);
+    expect(res.items[0].quantity).toBe("2 bunches");
+    expect(res.items[0].added_at).toBe("2026-01-01"); // preserved
+  });
 });
 
 describe("markVerified", () => {

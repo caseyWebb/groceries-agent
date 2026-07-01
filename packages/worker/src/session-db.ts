@@ -16,7 +16,8 @@
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { ToolError } from "./errors.js";
-import { normalizeName } from "./grocery.js";
+import { normalizeName, groceryKey } from "./grocery.js";
+import { ingredientContext, emptyIngredientContext } from "./corpus-db.js";
 import {
   applyPantryOperations,
   markVerified,
@@ -94,8 +95,14 @@ export async function readPantry(env: Env, tenant: string, filter: PantryFilter 
   return rows.map(pantryItemOf);
 }
 
-/** An UPSERT statement for one pantry item (merge rule: keep added_at, overlay rest). */
-function pantryUpsertStmt(env: Env, tenant: string, item: PantryItem): D1PreparedStatement {
+/** An UPSERT statement for one pantry item (merge rule: keep added_at, overlay rest). Pantry
+ *  is food by construction, so `normalized_name` is `resolve(name)` (the canonical id). */
+export function pantryUpsertStmt(
+  env: Env,
+  tenant: string,
+  item: PantryItem,
+  resolve: (n: string) => string,
+): D1PreparedStatement {
   const name = String(item.name);
   return db(env).prepare(
     "INSERT INTO pantry (tenant, name, normalized_name, quantity, category, prepared_from, " +
@@ -106,7 +113,7 @@ function pantryUpsertStmt(env: Env, tenant: string, item: PantryItem): D1Prepare
       "notes = excluded.notes",
     tenant,
     name,
-    normalizeName(name),
+    resolve(name),
     item.quantity ?? null,
     item.category ?? null,
     item.prepared_from ?? null,
@@ -127,13 +134,17 @@ export async function applyPantryRowOps(
   operations: PantryOperation[],
   today: string,
 ): Promise<Pick<PantryApplyResult, "applied" | "conflicts">> {
+  // Pantry is food by construction — funnel every row through the canonical-id resolver
+  // (normalize + best-effort capture). A resolver read failure degrades to lowercase/strip
+  // with capture disabled, never failing the write.
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readPantry(env, tenant);
-  const result = applyPantryOperations(current, operations, today);
-  const byName = new Map(result.items.map((it) => [normalizeName(String(it.name)), it]));
+  const result = applyPantryOperations(current, operations, today, ctx.resolve);
+  const byName = new Map(result.items.map((it) => [ctx.resolve(String(it.name)), it]));
 
   const stmts: D1PreparedStatement[] = [];
   for (const a of result.applied) {
-    const key = normalizeName(a.name);
+    const key = ctx.resolve(a.name);
     if (a.op === "remove") {
       stmts.push(
         db(env).prepare("DELETE FROM pantry WHERE tenant = ?1 AND normalized_name = ?2", tenant, key),
@@ -141,7 +152,7 @@ export async function applyPantryRowOps(
     } else {
       // add (upsert) or verify (last_verified_at refresh) — UPSERT the resulting row.
       const item = byName.get(key);
-      if (item) stmts.push(pantryUpsertStmt(env, tenant, item));
+      if (item) stmts.push(pantryUpsertStmt(env, tenant, item, ctx.resolve));
     }
   }
   if (stmts.length > 0) await db(env).batch(stmts);
@@ -155,13 +166,14 @@ export async function markPantryVerifiedRows(
   names: string[],
   today: string,
 ): Promise<{ verified: string[]; missing: string[] }> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readPantry(env, tenant);
-  const { items, verified, missing } = markVerified(current, names, today);
-  const byName = new Map(items.map((it) => [normalizeName(String(it.name)), it]));
+  const { items, verified, missing } = markVerified(current, names, today, ctx.resolve);
+  const byName = new Map(items.map((it) => [ctx.resolve(String(it.name)), it]));
   const stmts: D1PreparedStatement[] = [];
   for (const name of verified) {
-    const item = byName.get(normalizeName(name));
-    if (item) stmts.push(pantryUpsertStmt(env, tenant, item));
+    const item = byName.get(ctx.resolve(name));
+    if (item) stmts.push(pantryUpsertStmt(env, tenant, item, ctx.resolve));
   }
   if (stmts.length > 0) await db(env).batch(stmts);
   return { verified, missing };
@@ -296,8 +308,15 @@ export async function readGroceryList(env: Env, tenant: string, status?: string)
   return rows.map(groceryItemOf);
 }
 
-/** An UPSERT statement for one grocery-list item. */
-function groceryUpsertStmt(env: Env, tenant: string, item: GroceryItem): D1PreparedStatement {
+/** An UPSERT statement for one grocery-list item. `normalized_name` keys on the canonical id
+ *  (`resolve`) for a FOOD row and `normalizeName` for a non-food row (`groceryKey`'s guard) —
+ *  the SAME function `computeToBuy` / the pure ops use, so the store never corrupts. */
+export function groceryUpsertStmt(
+  env: Env,
+  tenant: string,
+  item: GroceryItem,
+  resolve: (n: string) => string,
+): D1PreparedStatement {
   return db(env).prepare(
     "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, " +
       "source, for_recipes, note, added_at, ordered_at) " +
@@ -308,7 +327,7 @@ function groceryUpsertStmt(env: Env, tenant: string, item: GroceryItem): D1Prepa
       "for_recipes = excluded.for_recipes, note = excluded.note, ordered_at = excluded.ordered_at",
     tenant,
     item.name,
-    normalizeName(item.name),
+    groceryKey(item.name, item.kind, item.domain, resolve),
     item.quantity,
     item.kind,
     item.domain,
@@ -328,9 +347,10 @@ export async function addGroceryRow(
   input: GroceryAddInput,
   today: string,
 ): Promise<{ item: GroceryItem; merged: boolean }> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  const result: AddResult = addToGroceryList(current, input, today);
-  await db(env).batch([groceryUpsertStmt(env, tenant, result.item)]);
+  const result: AddResult = addToGroceryList(current, input, today, ctx.resolve);
+  await db(env).batch([groceryUpsertStmt(env, tenant, result.item, ctx.resolve)]);
   return { item: result.item, merged: result.merged };
 }
 
@@ -341,14 +361,15 @@ export async function updateGroceryRow(
   name: string,
   patch: GroceryUpdateInput,
 ): Promise<GroceryItem> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
   let result: UpdateResult;
   try {
-    result = updateGroceryItem(current, name, patch);
+    result = updateGroceryItem(current, name, patch, ctx.resolve);
   } catch {
     throw new ToolError("not_found", `No grocery-list item named: ${name}`, { name });
   }
-  await db(env).batch([groceryUpsertStmt(env, tenant, result.item)]);
+  await db(env).batch([groceryUpsertStmt(env, tenant, result.item, ctx.resolve)]);
   return result.item;
 }
 
@@ -358,14 +379,29 @@ export async function removeGroceryRow(
   tenant: string,
   name: string,
 ): Promise<{ found: boolean }> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  const { found } = removeGroceryItem(current, name);
+  const { found } = removeGroceryItem(current, name, ctx.resolve);
   if (!found) return { found: false };
-  await db(env).run(
-    "DELETE FROM grocery_list WHERE tenant = ?1 AND normalized_name = ?2",
-    tenant,
-    normalizeName(name),
-  );
+  // Lookup-by-bare-name carries no kind/domain, so the target may be keyed under EITHER
+  // candidate: the resolved canonical id (food) or normalizeName (non-food). Delete both
+  // (deduped when they coincide) so a case/quantity/alias-varying removal hits its row.
+  const resolved = ctx.resolve(name);
+  const plain = normalizeName(name);
+  if (resolved === plain) {
+    await db(env).run(
+      "DELETE FROM grocery_list WHERE tenant = ?1 AND normalized_name = ?2",
+      tenant,
+      resolved,
+    );
+  } else {
+    await db(env).run(
+      "DELETE FROM grocery_list WHERE tenant = ?1 AND normalized_name IN (?2, ?3)",
+      tenant,
+      resolved,
+      plain,
+    );
+  }
   return { found: true };
 }
 
@@ -379,11 +415,15 @@ export async function advanceInCartRows(
   lines: { name: string }[],
   today: string,
 ): Promise<void> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  const byKey = new Map(current.map((it) => [normalizeName(it.name), it]));
+  // Advanced lines are resolved grocery purchases (food) — key existing rows by their
+  // groceryKey (food → resolve, non-food → normalizeName) and each line by resolve so a
+  // food purchase matches its row across surface forms.
+  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
   const stmts: D1PreparedStatement[] = [];
   for (const line of lines) {
-    const key = normalizeName(line.name);
+    const key = ctx.resolve(line.name);
     const existing = byKey.get(key);
     const next: GroceryItem = existing
       ? { ...existing, status: "in_cart" }
@@ -399,7 +439,7 @@ export async function advanceInCartRows(
           added_at: today,
           ordered_at: null,
         };
-    stmts.push(groceryUpsertStmt(env, tenant, next));
+    stmts.push(groceryUpsertStmt(env, tenant, next, ctx.resolve));
   }
   if (stmts.length > 0) await db(env).batch(stmts);
 }

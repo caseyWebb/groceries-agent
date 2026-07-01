@@ -56,9 +56,49 @@ export function normalizeName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function findIndex(items: GroceryItem[], name: string): number {
-  const key = normalizeName(name);
-  return items.findIndex((it) => normalizeName(it.name) === key);
+/**
+ * Whether a grocery row is a **food** item — the only rows routed through the ingredient
+ * identity funnel (canonical-id dedup + capture). `household` / `other` kinds and non-grocery
+ * domains (home-improvement, garden, pharmacy) stay on `normalizeName` and never enter the
+ * identity graph, so it only ever ingests real food vocabulary. Both signals default to
+ * `grocery` (the schema defaults), so an unqualified item is food. (Pantry has no kind/domain —
+ * it is kitchen inventory, food by construction — so pantry callers do not consult this.)
+ */
+export function isFoodItem(kind?: string, domain?: string): boolean {
+  return (kind ?? "grocery") === "grocery" && (domain ?? "grocery") === "grocery";
+}
+
+/**
+ * The dedup / D1 `normalized_name` key for a grocery row: the canonical ingredient id
+ * (`resolve` = normalize + capture) for a food row, else `normalizeName`. `resolve` is the
+ * injected `IngredientContext.resolve`; it defaults to `normalizeName` so the pure ops and
+ * their unit tests keep today's behavior when no resolver is threaded (production always
+ * injects `ctx.resolve`).
+ */
+export function groceryKey(
+  name: string,
+  kind: string | undefined,
+  domain: string | undefined,
+  resolve: (n: string) => string = normalizeName,
+): string {
+  return isFoodItem(kind, domain) ? resolve(name) : normalizeName(name);
+}
+
+/**
+ * Find an item matching `name`. A lookup-by-bare-name carries no kind/domain, so it
+ * matches BOTH candidate keys: an item matches when its `groceryKey` (food → `resolve`,
+ * non-food → `normalizeName`) equals `resolve(name)` OR `normalizeName(name)`. This finds
+ * a food target across surface forms and a non-food target without knowing foodness upfront.
+ * `resolve` defaults to `normalizeName`, so an un-threaded caller keeps today's behavior
+ * (both candidate keys collapse to `normalizeName(name)`).
+ */
+function findIndex(items: GroceryItem[], name: string, resolve: (n: string) => string = normalizeName): number {
+  const resolved = resolve(name);
+  const plain = normalizeName(name);
+  return items.findIndex((it) => {
+    const key = groceryKey(it.name, it.kind, it.domain, resolve);
+    return key === resolved || key === plain;
+  });
 }
 
 function uniq(values: string[]): string[] {
@@ -79,9 +119,14 @@ export function addToGroceryList(
   items: GroceryItem[],
   input: GroceryAddInput,
   today: string,
+  resolve: (n: string) => string = normalizeName,
 ): AddResult {
   const next = items.map((it) => ({ ...it, for_recipes: [...it.for_recipes] }));
-  const idx = findIndex(next, input.name);
+  // The add's foodness is known from the input — a NON-food add must never touch the
+  // capturing resolver (decision #5: non-food stays on normalizeName and never enters the
+  // identity graph), so gate the injected resolver by the food guard before matching.
+  const keyResolve = isFoodItem(input.kind, input.domain) ? resolve : normalizeName;
+  const idx = findIndex(next, input.name, keyResolve);
 
   if (idx >= 0) {
     const existing = next[idx];
@@ -124,8 +169,9 @@ export function updateGroceryItem(
   items: GroceryItem[],
   name: string,
   patch: GroceryUpdateInput,
+  resolve: (n: string) => string = normalizeName,
 ): UpdateResult {
-  const idx = findIndex(items, name);
+  const idx = findIndex(items, name, resolve);
   if (idx < 0) throw new Error(`not found: ${name}`);
   const next = items.map((it) => ({ ...it, for_recipes: [...it.for_recipes] }));
   next[idx] = {
@@ -140,8 +186,9 @@ export function updateGroceryItem(
 export function removeGroceryItem(
   items: GroceryItem[],
   name: string,
+  resolve: (n: string) => string = normalizeName,
 ): { items: GroceryItem[]; found: boolean } {
-  const idx = findIndex(items, name);
+  const idx = findIndex(items, name, resolve);
   if (idx < 0) return { items, found: false };
   return { items: items.filter((_, i) => i !== idx), found: true };
 }

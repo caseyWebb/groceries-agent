@@ -92,6 +92,31 @@ describe("pantry → D1 rows", () => {
     });
     expect([...(await readPantryNames(env, "everett"))]).toEqual(["olive oil"]);
   });
+
+  it("a food pantry add stores the CANONICAL id as normalized_name (funnel via ingredient_alias)", async () => {
+    // Seed the identity graph so "scallions" resolves to the survivor `green onion`; the add
+    // must key the row under that canonical id, not normalizeName("scallions").
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [{ id: "green onion", base: "green onion", representative: null }],
+        ingredient_alias: [{ variant: "scallions", id: "green onion" }],
+        novel_ingredient_terms: [],
+      },
+    });
+    await applyPantryRowOps(env, "everett", [{ op: "add", item: { name: "Scallions" } }], TODAY);
+    expect(tables.pantry).toHaveLength(1);
+    expect(tables.pantry[0]).toMatchObject({ name: "Scallions", normalized_name: "green onion" });
+  });
+
+  it("a novel food pantry add captures the term into novel_ingredient_terms", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
+    });
+    await applyPantryRowOps(env, "everett", [{ op: "add", item: { name: "2 lb Gochujang" } }], TODAY);
+    // normalizeIngredient strips the quantity → the canonical form keyed + captured.
+    expect(tables.pantry[0].normalized_name).toBe("gochujang");
+    expect(tables.novel_ingredient_terms.map((r) => r.term)).toEqual(["gochujang"]);
+  });
 });
 
 describe("meal plan → D1 rows", () => {
@@ -182,6 +207,56 @@ describe("grocery list → D1 rows", () => {
     expect((await removeGroceryRow(env, "everett", "ghost")).found).toBe(false);
     expect(tables.grocery_list).toHaveLength(1);
     expect((await removeGroceryRow(env, "everett", "Milk")).found).toBe(true);
+    expect(tables.grocery_list).toHaveLength(0);
+  });
+
+  it("a food grocery add keys normalized_name on the canonical id; a re-add via an alias merges", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [{ id: "green onion", base: "green onion", representative: null }],
+        ingredient_alias: [
+          { variant: "scallions", id: "green onion" },
+          { variant: "green onions", id: "green onion" },
+        ],
+        novel_ingredient_terms: [],
+      },
+    });
+    const first = await addGroceryRow(env, "everett", { name: "Scallions", for_recipes: ["stir-fry"] }, TODAY);
+    expect(first.merged).toBe(false);
+    expect(tables.grocery_list[0].normalized_name).toBe("green onion");
+    // A different surface form of the SAME food merges into the one row.
+    const second = await addGroceryRow(env, "everett", { name: "green onions", for_recipes: ["soup"] }, TODAY);
+    expect(second.merged).toBe(true);
+    expect(tables.grocery_list).toHaveLength(1);
+    expect(JSON.parse(tables.grocery_list[0].for_recipes as string).sort()).toEqual(["soup", "stir-fry"]);
+  });
+
+  it("a non-food grocery add stays on normalizeName and never captures", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
+    });
+    await addGroceryRow(env, "everett", { name: "AA Batteries", kind: "household" }, TODAY);
+    expect(tables.grocery_list[0].normalized_name).toBe("aa batteries"); // normalizeName, not a captured id
+    expect(tables.novel_ingredient_terms).toHaveLength(0); // non-food never enters the graph
+  });
+
+  it("remove deletes a food row addressed by an alias surface form (dual-key delete)", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [{ id: "green onion", base: "green onion", representative: null }],
+        ingredient_alias: [
+          { variant: "scallions", id: "green onion" },
+          { variant: "green onions", id: "green onion" },
+        ],
+        grocery_list: [
+          { tenant: "everett", name: "Scallions", normalized_name: "green onion", status: "active", kind: "grocery", domain: "grocery", for_recipes: "[]" },
+        ],
+        novel_ingredient_terms: [],
+      },
+    });
+    // Remove by a DIFFERENT surface form — must resolve to the same canonical id and delete the row.
+    const res = await removeGroceryRow(env, "everett", "green onions");
+    expect(res.found).toBe(true);
     expect(tables.grocery_list).toHaveLength(0);
   });
 

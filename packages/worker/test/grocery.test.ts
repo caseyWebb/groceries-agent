@@ -3,11 +3,17 @@ import {
   addToGroceryList,
   removeGroceryItem,
   updateGroceryItem,
+  isFoodItem,
   normalizeName,
   type GroceryItem,
 } from "../src/grocery.js";
 
 const TODAY = "2026-06-09";
+
+// A stub IngredientContext.resolve that merges scallion surface forms onto one id; every
+// other term degrades to normalizeName (the funnel's miss behavior).
+const stubResolve = (n: string): string =>
+  ({ scallions: "green onion", "green onions": "green onion" })[n.trim().toLowerCase()] ?? normalizeName(n);
 
 function base(): GroceryItem[] {
   return [
@@ -25,6 +31,57 @@ function base(): GroceryItem[] {
     },
   ];
 }
+
+describe("isFoodItem", () => {
+  it("is true only when kind and domain are both grocery/absent", () => {
+    expect(isFoodItem()).toBe(true); // defaults → food
+    expect(isFoodItem("grocery", "grocery")).toBe(true);
+    expect(isFoodItem("grocery", undefined)).toBe(true);
+    expect(isFoodItem(undefined, "grocery")).toBe(true);
+    // A non-grocery domain excludes even a grocery kind (the pharmacy edge case).
+    expect(isFoodItem("grocery", "pharmacy")).toBe(false);
+    // A non-grocery kind excludes.
+    expect(isFoodItem("household", "grocery")).toBe(false);
+    expect(isFoodItem("other", "grocery")).toBe(false);
+    expect(isFoodItem("household")).toBe(false);
+  });
+});
+
+describe("food-guarded funnel dedup", () => {
+  it("a food add merges surface-form variants when a resolver is injected", () => {
+    const seed = addToGroceryList([], { name: "scallions" }, TODAY, stubResolve).items;
+    const { items, merged } = addToGroceryList(seed, { name: "green onions", for_recipes: ["stir-fry"] }, TODAY, stubResolve);
+    expect(merged).toBe(true); // both resolve to `green onion`
+    expect(items).toHaveLength(1);
+    expect(items[0].for_recipes).toEqual(["stir-fry"]);
+  });
+
+  it("a non-food item is keyed by normalizeName, never resolved (no cross-form merge)", () => {
+    // Even though the resolver knows nothing about batteries, a household item must stay on
+    // normalizeName — and two distinct household names must NOT collapse.
+    const seed = addToGroceryList([], { name: "AA batteries", kind: "household" }, TODAY, stubResolve).items;
+    const { items, merged } = addToGroceryList(seed, { name: "AAA batteries", kind: "household" }, TODAY, stubResolve);
+    expect(merged).toBe(false);
+    expect(items).toHaveLength(2);
+    // Re-adding the SAME household name still merges by normalizeName.
+    const reAdd = addToGroceryList(items, { name: "aa batteries", kind: "household" }, TODAY, stubResolve);
+    expect(reAdd.merged).toBe(true);
+    expect(reAdd.items).toHaveLength(2);
+  });
+
+  it("remove finds a food row across surface forms via the injected resolver", () => {
+    const seed = addToGroceryList([], { name: "scallions" }, TODAY, stubResolve).items;
+    const { items, found } = removeGroceryItem(seed, "green onions", stubResolve);
+    expect(found).toBe(true);
+    expect(items).toHaveLength(0);
+  });
+
+  it("update patches a food row addressed by a different surface form", () => {
+    const seed = addToGroceryList([], { name: "scallions" }, TODAY, stubResolve).items;
+    const { item } = updateGroceryItem(seed, "green onions", { status: "in_cart" }, stubResolve);
+    expect(item.status).toBe("in_cart");
+  });
+});
 
 describe("addToGroceryList", () => {
   it("creates a new item with active defaults and no SKU field", () => {

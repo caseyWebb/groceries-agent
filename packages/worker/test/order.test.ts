@@ -146,6 +146,35 @@ describe("computeToBuy", () => {
     expect(line.assumed_quantity).toBe(true);
   });
 
+  it("cancels a grocery item against its pantry counterpart across surface forms (food resolve)", () => {
+    // A grocery "scallions" and a pantry "green onion" are the same food. With a resolver
+    // mapping both to `green onion` and pantryNames holding the canonical id, the grocery line
+    // subtracts to a partial — the surface-form pantry cancellation the funnel exists to enable.
+    const resolve = (n: string): string =>
+      ({ scallions: "green onion", "green onions": "green onion" })[n.trim().toLowerCase()] ?? n.trim().toLowerCase();
+    const r = computeToBuy({
+      list: [item("scallions"), item("eggs")],
+      pantryNames: new Set(["green onion"]),
+      resolve,
+    });
+    expect(r.to_buy.map((t) => t.name)).toEqual(["eggs"]);
+    expect(r.partials.map((p) => p.name)).toEqual(["scallions"]);
+  });
+
+  it("keeps a non-food item on normalizeName even when a resolver is injected", () => {
+    // A household item must NOT be resolved: its key stays normalizeName, so a food resolver
+    // that would collapse it is bypassed and it is bought normally.
+    const resolve = (n: string): string =>
+      ({ "aa batteries": "battery" })[n.trim().toLowerCase()] ?? n.trim().toLowerCase();
+    const r = computeToBuy({
+      list: [item("AA batteries", { kind: "household", domain: "grocery" })],
+      pantryNames: new Set(["battery"]), // would cancel IF it were resolved — but it isn't
+      resolve,
+    });
+    expect(r.to_buy.map((t) => t.name)).toEqual(["AA batteries"]);
+    expect(r.partials).toEqual([]);
+  });
+
   it("takes the max when two menu needs merge to one name", () => {
     const r = computeToBuy({
       list: [],

@@ -37,15 +37,22 @@ function nameOf(op: PantryOperation): string {
   return typeof n === "string" ? n : "";
 }
 
-function matches(item: PantryItem, name: string): boolean {
-  return typeof item.name === "string" && item.name.toLowerCase() === name.toLowerCase();
+function matches(item: PantryItem, name: string, normalize: (s: string) => string): boolean {
+  return typeof item.name === "string" && normalize(item.name) === normalize(name);
 }
 
-/** Apply pantry operations in order, returning the new item list plus a report. */
+/**
+ * Apply pantry operations in order, returning the new item list plus a report. `normalize`
+ * maps a name to its match/dedup key; it defaults to `.toLowerCase()` (today's behavior, so
+ * existing callers/tests are unaffected). Production injects `IngredientContext.resolve` —
+ * pantry is food by construction (kitchen inventory), so it always keys on the canonical id,
+ * merging surface-form variants ("scallions" ≡ "green onions").
+ */
 export function applyPantryOperations(
   items: PantryItem[],
   operations: PantryOperation[],
   today: string,
+  normalize: (s: string) => string = (s) => s.toLowerCase(),
 ): PantryApplyResult {
   let next: PantryItem[] = items.map((it) => ({ ...it }));
   const applied: AppliedOp[] = [];
@@ -59,7 +66,7 @@ export function applyPantryOperations(
         conflicts.push({ op: "add", name, reason: "add requires a name (set `name` or `item.name`)" });
         continue;
       }
-      const existingIdx = next.findIndex((it) => matches(it, name));
+      const existingIdx = next.findIndex((it) => matches(it, name, normalize));
       if (existingIdx >= 0) {
         const existing = next[existingIdx];
         next[existingIdx] = {
@@ -86,7 +93,7 @@ export function applyPantryOperations(
 
     if (op.op === "remove") {
       const before = next.length;
-      next = next.filter((it) => !matches(it, name));
+      next = next.filter((it) => !matches(it, name, normalize));
       if (next.length === before) {
         conflicts.push({ op: "remove", name, reason: "no pantry item with that name" });
       } else {
@@ -96,7 +103,7 @@ export function applyPantryOperations(
     }
 
     // verify
-    const target = next.find((it) => matches(it, name));
+    const target = next.find((it) => matches(it, name, normalize));
     if (!target) {
       conflicts.push({ op: "verify", name, reason: "no pantry item with that name" });
     } else {
@@ -113,12 +120,13 @@ export function markVerified(
   items: PantryItem[],
   names: string[],
   today: string,
+  normalize: (s: string) => string = (s) => s.toLowerCase(),
 ): { items: PantryItem[]; verified: string[]; missing: string[] } {
   const next = items.map((it) => ({ ...it }));
   const verified: string[] = [];
   const missing: string[] = [];
   for (const name of names) {
-    const target = next.find((it) => matches(it, name));
+    const target = next.find((it) => matches(it, name, normalize));
     if (target) {
       target.last_verified_at = today;
       verified.push(name);

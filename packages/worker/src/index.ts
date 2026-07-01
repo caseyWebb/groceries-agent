@@ -23,6 +23,7 @@ import { buildFacetDeps, runFacetJob } from "./recipe-classify.js";
 import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
 import { buildDiscoveryDeps, runDiscoverySweepJob } from "./discovery-sweep.js";
 import { buildNormalizeDeps, runNormalizeJob } from "./ingredient-normalize.js";
+import { reconcileGroceryPantryKeys } from "./grocery-pantry-reconcile.js";
 import { loadDiscoveryConfig } from "./discovery-calibration.js";
 import { loadOperatorConfig } from "./operator-config.js";
 import { createR2CorpusStore } from "./corpus-store.js";
@@ -194,6 +195,10 @@ export default {
       // The ingredient-normalization capture job is independent of the recipe pipeline
       // (it drains the novel-term queue); it rides the internal env.AI/D1 budget like classify.
       runNormalizeJob(env, buildNormalizeDeps(env)),
+      // Re-key stale FOOD grocery/pantry rows onto the canonical id (D2 backfill). Idempotent +
+      // bounded; a no-op once every row is canonical, so it self-terminates. Independent of the
+      // recipe pipeline (touches only the per-tenant pantry/grocery tables).
+      reconcileGroceryPantryKeys(env),
     ]);
     // Phase 2: the index projection (merges the fresh classified facets + authored overrides).
     const phase2 = await Promise.allSettled([runProjectionJob(env, buildProjectionDeps(env, corpus))]);

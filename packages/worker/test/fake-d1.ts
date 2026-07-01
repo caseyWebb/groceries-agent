@@ -178,6 +178,9 @@ export function fakeD1(
           if (/LOWER\(recipe\) = LOWER\(\?2\)/i.test(sql))
             return String(r.recipe).toLowerCase() !== String(binds[1]).toLowerCase();
           if (/recipe = \?2/i.test(sql)) return r.recipe !== binds[1];
+          // Dual-key remove: `normalized_name IN (?2, ?3)` deletes rows matching either bind.
+          if (/normalized_name IN \(\?2, \?3\)/i.test(sql))
+            return r.normalized_name !== binds[1] && r.normalized_name !== binds[2];
           if (/normalized_name = \?2/i.test(sql)) return r.normalized_name !== binds[1];
           return false; // tenant-wide delete
         });
