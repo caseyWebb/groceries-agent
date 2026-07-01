@@ -21,6 +21,8 @@ import { createR2CorpusStore, type CorpusStore, type DirEntry } from "./corpus-s
 import { parseMarkdown } from "./parse.js";
 import { readProfile } from "./profile-db.js";
 import { readPantry, readMealPlan, readGroceryList } from "./session-db.js";
+import { directoryFromEnv } from "./tenant.js";
+import { embedText, cosineSimilarity } from "./embedding.js";
 
 /** Default row cap for the potentially-large lookup tables (sku_cache, cooking_log). */
 const DEFAULT_ROW_LIMIT = 200;
@@ -186,6 +188,157 @@ export async function recipeDetail(env: Env, slug: string): Promise<RecipeDetail
   };
 }
 
+// --- Recipes: keyword / hybrid search ----------------------------------------
+
+/** The Recipes explorer's search mode — a discriminated toggle, not a bare string. */
+export type SearchMode = "keyword" | "hybrid";
+
+/** One search hit: the matched slug plus its relevance (Hybrid only). */
+export interface RecipeSearchHit {
+  slug: string;
+  /** Blended relevance in Hybrid mode; null in Keyword mode (no ranking, just AND-match). */
+  score: number | null;
+  /** True when a Hybrid hit cleared the relevance floor via the semantic term without a
+   *  full keyword match — the "surfaced semantically" badge. Always false in Keyword mode. */
+  semantic: boolean;
+}
+
+/**
+ * `searchRecipes`'s result, discriminated on how the ranking was actually produced —
+ * NOT the mode the caller asked for. Keyword mode always returns `"keyword"` (it never
+ * touches Workers AI, so it cannot degrade). Hybrid mode returns `"hybrid"` when the
+ * embed call + `recipe_derived` read both succeeded, or `"hybrid-degraded"` when either
+ * failed (a Workers AI outage or neuron-quota exhaustion, both real and expected —
+ * `/health` has its own `ai_quota_exhausted` flag for the same condition) — in which
+ * case `results` falls back to the plain keyword match for the same query rather than
+ * throwing into the read path. The degraded state is a variant of the result, not a
+ * boolean bolted onto a hybrid success, so a caller can't render "hybrid" chrome over
+ * keyword data by mistake.
+ */
+export type RecipeSearchResult =
+  | { mode: "keyword"; results: RecipeSearchHit[] }
+  | { mode: "hybrid"; results: RecipeSearchHit[] }
+  | { mode: "hybrid-degraded"; results: RecipeSearchHit[] };
+
+/** The indexed metadata one recipe's keyword/semantic search reads — a superset of
+ *  `RecipeListEntry`, pulled once per search (title/slug/facets), joined against a
+ *  `recipe_derived.embedding` bulk read for Hybrid mode. */
+interface SearchableRecipe {
+  slug: string;
+  title: string | null;
+  protein: string | null;
+  cuisine: string | null;
+  course: string | null;
+  tags: string | null;
+  ingredients_key: string | null;
+}
+
+/** Hybrid blend weights + the semantic-surfaced relevance floor. Tunable constants, not
+ *  part of the contract (see operator-data-explorer's "keyword and hybrid semantic search"
+ *  requirement) — mirrors the design mock's feel, revisited after real corpus use. */
+const HYBRID_KEYWORD_WEIGHT = 0.7;
+const HYBRID_SEMANTIC_WEIGHT = 0.45;
+const HYBRID_RELEVANCE_FLOOR = 0.18;
+
+function tokenize(query: string): string[] {
+  return query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** The lowercased haystack a keyword search matches tokens against: title, slug, protein,
+ *  cuisine, course, tags, and `ingredients_key` — the fields `recipeList` already indexes. */
+function keywordHaystack(r: SearchableRecipe): string {
+  const parts = [r.slug, r.title ?? "", r.protein ?? "", r.cuisine ?? "", r.course ?? "", r.tags ?? "", r.ingredients_key ?? ""];
+  return parts.join(" ").toLowerCase();
+}
+
+/** Fraction of `tokens` present as a substring of `haystack` (0 when `tokens` is empty). */
+function tokenCoverage(tokens: string[], haystack: string): number {
+  if (tokens.length === 0) return 0;
+  return tokens.filter((t) => haystack.includes(t)).length / tokens.length;
+}
+
+/**
+ * Search the recipe corpus: Keyword mode is an AND-of-tokens substring match over the
+ * indexed metadata (title/slug/protein/cuisine/course/tags/ingredients_key), unranked
+ * (no score). Hybrid mode additionally embeds the query ONCE (`embedText`, one Workers AI
+ * call — never per recipe) and blends keyword-token coverage with cosine similarity
+ * against each recipe's stored `recipe_derived.embedding`, using the same primitives
+ * `semantic-recipe-search`'s ranked mode and the cookbook's similar-recipes feature both
+ * call — but NOT that tool's per-tenant re-ranks (favorites/freshness/pantry), which have
+ * no meaning for a cross-tenant operator search (design.md Decision 1). A recipe with no
+ * stored embedding is excluded from Hybrid's ranking but stays findable in Keyword mode.
+ * An empty query returns the full corpus unranked in either mode — no AI call.
+ *
+ * Hybrid mode DEGRADES rather than throws: if the query embed (`embedText`) or the
+ * `recipe_derived` vector read fails — a Workers AI outage or neuron-quota exhaustion,
+ * both real, expected states, not a caller bug — this falls back to the plain keyword
+ * match for the same query and returns `mode: "hybrid-degraded"` instead of propagating
+ * the `ToolError`. Matches the admin readers' "degrade rather than throw into the read
+ * path" discipline: the operator's recipe explorer stays usable during an AI outage
+ * instead of hard-500ing the whole list. Keyword mode is untouched — it never calls
+ * Workers AI, so it cannot degrade.
+ */
+export async function searchRecipes(env: Env, query: string, mode: SearchMode): Promise<RecipeSearchResult> {
+  const rows = await db(env).all<SearchableRecipe>(
+    "SELECT slug, title, protein, cuisine, course, tags, ingredients_key FROM recipes",
+  );
+  const q = query.trim();
+  if (q === "") {
+    const results = rows.map((r) => ({ slug: r.slug, score: null, semantic: false }));
+    return { mode, results };
+  }
+
+  const tokens = tokenize(q);
+
+  const keywordResults = (): RecipeSearchHit[] =>
+    rows
+      .filter((r) => tokenCoverage(tokens, keywordHaystack(r)) === 1)
+      .map((r) => ({ slug: r.slug, score: null, semantic: false }));
+
+  if (mode === "keyword") {
+    return { mode: "keyword", results: keywordResults() };
+  }
+
+  // Hybrid: one embed call for the query, one bulk read of stored recipe vectors. Either
+  // failing (Workers AI outage/quota) degrades to the keyword results rather than throwing.
+  let queryVector: number[];
+  let derivedRows: { slug: string; embedding: string }[];
+  try {
+    [queryVector, derivedRows] = await Promise.all([
+      embedText(env, q),
+      db(env).all<{ slug: string; embedding: string }>(
+        "SELECT slug, embedding FROM recipe_derived WHERE embedding IS NOT NULL",
+      ),
+    ]);
+  } catch {
+    return { mode: "hybrid-degraded", results: keywordResults() };
+  }
+
+  const vectors = new Map<string, number[]>();
+  for (const d of derivedRows) {
+    try {
+      const parsed = JSON.parse(d.embedding);
+      if (Array.isArray(parsed)) vectors.set(d.slug, parsed as number[]);
+    } catch {
+      // A malformed stored vector degrades to "no embedding" for this slug, never a throw.
+    }
+  }
+
+  const hits: RecipeSearchHit[] = [];
+  for (const r of rows) {
+    const vector = vectors.get(r.slug);
+    if (!vector) continue; // not yet reconciled — absent from Hybrid, still in Keyword
+    const kwFrac = tokenCoverage(tokens, keywordHaystack(r));
+    const semanticSim = Math.max(0, cosineSimilarity(queryVector, vector));
+    const score = Math.min(1, kwFrac * HYBRID_KEYWORD_WEIGHT + semanticSim * HYBRID_SEMANTIC_WEIGHT);
+    if (score < HYBRID_RELEVANCE_FLOOR) continue;
+    const semantic = kwFrac < 1 && semanticSim > 0;
+    hits.push({ slug: r.slug, score, semantic });
+  }
+  hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return { mode: "hybrid", results: hits };
+}
+
 // --- Member 360 view ---------------------------------------------------------
 
 /** One member's complete per-tenant state. Reuses the canonical profile/session readers. */
@@ -247,6 +400,54 @@ export async function memberDetail(env: Env, tenantId: string): Promise<MemberDe
   };
 }
 
+/**
+ * Batch-resolve recipe titles for a small set of slugs (the member-detail meal-plan/grocery
+ * sections need a title alongside the slug `memberDetail()` already returns; cooking_log
+ * carries its own protein/cuisine columns directly, so it needs no join). One `IN (...)`
+ * query, never N per-slug reads. Slugs missing from `recipes` are simply absent from the map.
+ */
+export async function recipeTitles(env: Env, slugs: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(slugs)].filter(Boolean);
+  if (unique.length === 0) return new Map();
+  const placeholders = unique.map((_, i) => `?${i + 1}`).join(", ");
+  const rows = await db(env).all<{ slug: string; title: string }>(
+    `SELECT slug, title FROM recipes WHERE slug IN (${placeholders})`,
+    ...unique,
+  );
+  return new Map(rows.map((r) => [r.slug, r.title]));
+}
+
+// --- Corpus-counts (Status stat tiles) ---------------------------------------
+
+/** The Status area's page-level corpus stat tiles — aggregate counts only, no per-tenant data. */
+export interface CorpusCounts {
+  recipes: number;
+  members: number;
+  feeds: number;
+  cached_skus: number;
+}
+
+/**
+ * The four corpus stat-tile counts: indexed recipes, allowlisted members, RSS discovery
+ * feeds, and cached Kroger SKUs. Three plain `COUNT(*)` reads through `src/db.ts` plus the
+ * tenant directory's own list length (members live in `TENANT_KV`, not D1) — aggregate-only,
+ * no per-tenant identifier in the result.
+ */
+export async function corpusCounts(env: Env): Promise<CorpusCounts> {
+  const [recipes, feeds, skus, tenants] = await Promise.all([
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM recipes"),
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM feeds"),
+    db(env).first<{ n: number }>("SELECT COUNT(*) AS n FROM sku_cache"),
+    directoryFromEnv(env).list(),
+  ]);
+  return {
+    recipes: recipes?.n ?? 0,
+    members: tenants.length,
+    feeds: feeds?.n ?? 0,
+    cached_skus: skus?.n ?? 0,
+  };
+}
+
 // --- Flat lookup / operational tables ----------------------------------------
 
 /**
@@ -263,20 +464,6 @@ interface TableSpec {
 }
 
 const TABLE_SPECS: Record<string, TableSpec> = {
-  // corpus / shared lookups
-  aliases: { columns: ["variant", "canonical"], order: "variant" },
-  flyer_terms: { columns: ["term"], order: "term" },
-  feeds: { columns: ["url", "name", "weight", "tags"], order: "url" },
-  stores: { columns: ["slug", "name", "domain", "extra"], order: "slug" },
-  store_notes: {
-    columns: ["id", "store", "author", "body", "tags", "private", "created_at"],
-    order: "created_at DESC",
-  },
-  sku_cache: {
-    columns: ["ingredient", "location_id", "sku", "brand", "size", "last_used"],
-    order: "last_used DESC",
-    bounded: true,
-  },
   // discovery pipeline
   discovery_candidates: {
     columns: ["id", "url", "source", "subject", "body", "discovered_at", "status"],
@@ -300,9 +487,14 @@ const TABLE_SPECS: Record<string, TableSpec> = {
   schema_meta: { columns: ["key", "value"], order: "key" },
 };
 
-/** Which flat tables belong to each Data view (so the route can scope the allowlist). */
+/**
+ * Which flat tables belong to each group. No live Data-area route reaches `readTable`
+ * anymore (Recipes/Stores/Guidance have purpose-built readers; Members/Corpus tables moved
+ * to the Members/Config areas' own readers) — `discovery`/`system` stay as an inert,
+ * harmless allowlist (System has no redesigned home yet; design.md recommends leaving
+ * these rather than coupling this change's scope to a System redesign that doesn't exist).
+ */
 export const TABLE_GROUPS = {
-  corpus: ["aliases", "flyer_terms", "feeds", "stores", "store_notes", "sku_cache"],
   discovery: ["discovery_candidates", "discovery_senders", "discovery_members", "discovery_rejections"],
   system: ["reconcile_errors", "bug_reports", "schema_meta"],
 } as const;
@@ -339,6 +531,168 @@ export async function readTable(env: Env, group: TableGroup, table: string): Pro
     table,
     columns: spec.columns,
     rows: spec.bounded ? rows.slice(0, DEFAULT_ROW_LIMIT) : rows,
+  };
+}
+
+// --- Stores: shared registry list + per-store detail -------------------------
+
+/** One row of the Stores list: identity basics only (no SKU/notes counts join needed
+ *  beyond a cheap count, so the list stays a single bulk read like `recipeList`). */
+export interface StoreListEntry {
+  slug: string;
+  name: string;
+  domain: string | null;
+  chain: string | null;
+  notes_count: number;
+  skus_count: number;
+}
+
+/** A cached Kroger SKU row, scoped to one store's `location_id`. */
+export interface SkuRow {
+  ingredient: string;
+  sku: string;
+  brand: string | null;
+  size: string | null;
+  last_used: string | null;
+}
+
+/** One store note, grouped server-side by its first tag (default `general`). */
+export interface StoreNoteRow {
+  id: string;
+  author: string;
+  body: string;
+  tags: string[];
+  private: boolean;
+  created_at: string | null;
+}
+
+/** The store-note tag-convention groups (design.md Decision 2 — first tag, default `general`). */
+export type StoreNoteGroup = "layout" | "location" | "stock" | "general";
+const STORE_NOTE_GROUPS: StoreNoteGroup[] = ["layout", "location", "stock", "general"];
+
+/** The cross-tier record assembled for one store slug. */
+export interface StoreDetail {
+  slug: string;
+  name: string;
+  domain: string | null;
+  chain: string | null;
+  label: string | null;
+  address: string | null;
+  location_id: string | null;
+  /** Cached SKUs for this store's `location_id`; empty (not an error) when there's no
+   *  `location_id` (a non-Kroger chain) or none have been looked up yet. */
+  skus: SkuRow[];
+  /** Notes grouped by tag convention; every group key is present (possibly empty). */
+  notes: Record<StoreNoteGroup, StoreNoteRow[]>;
+}
+
+function parseJsonObject(text: unknown): Record<string, unknown> {
+  if (typeof text !== "string" || text === "") return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonArray(text: unknown): string[] {
+  if (typeof text !== "string" || text === "") return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Every store in the shared registry, with a notes/SKU count for the list rows. Three
+ *  bulk reads joined in memory — no per-store fetch, mirroring `recipeList`'s shape. */
+export async function storeList(env: Env): Promise<{ stores: StoreListEntry[] }> {
+  const [stores, notes, skus] = await Promise.all([
+    db(env).all<{ slug: string; name: string; domain: string | null; extra: string | null }>(
+      "SELECT slug, name, domain, extra FROM stores ORDER BY slug",
+    ),
+    db(env).all<{ store: string }>("SELECT store FROM store_notes"),
+    db(env).all<{ location_id: string | null }>("SELECT location_id FROM sku_cache"),
+  ]);
+  const notesCount = new Map<string, number>();
+  for (const n of notes) notesCount.set(n.store, (notesCount.get(n.store) ?? 0) + 1);
+  const skusByLocation = new Map<string, number>();
+  for (const s of skus) {
+    if (!s.location_id) continue;
+    skusByLocation.set(s.location_id, (skusByLocation.get(s.location_id) ?? 0) + 1);
+  }
+  return {
+    stores: stores.map((s) => {
+      const extra = parseJsonObject(s.extra);
+      const locationId = typeof extra.location_id === "string" ? extra.location_id : null;
+      return {
+        slug: s.slug,
+        name: s.name,
+        domain: s.domain,
+        chain: typeof extra.chain === "string" ? extra.chain : null,
+        notes_count: notesCount.get(s.slug) ?? 0,
+        skus_count: locationId ? (skusByLocation.get(locationId) ?? 0) : 0,
+      };
+    }),
+  };
+}
+
+/**
+ * The cross-tier record for one store slug: identity (chain/label/address/`location_id`
+ * unpacked from `stores.extra`), its cached Kroger SKUs scoped to that `location_id`
+ * (empty — not an error — when `location_id` is null, a non-Kroger location), and its
+ * `store_notes` grouped by the first-tag convention (default `general`). One assembled
+ * read next to the query, mirroring `recipeDetail` (design.md Decision 2).
+ */
+export async function storeDetail(env: Env, slug: string): Promise<StoreDetail> {
+  const store = await db(env).first<{ slug: string; name: string; domain: string | null; extra: string | null }>(
+    "SELECT slug, name, domain, extra FROM stores WHERE slug = ?1 LIMIT 1",
+    slug,
+  );
+  if (!store) throw new ToolError("not_found", `No store ${slug} in the registry`, { slug });
+
+  const extra = parseJsonObject(store.extra);
+  const locationId = typeof extra.location_id === "string" ? extra.location_id : null;
+
+  const [skuRows, noteRows] = await Promise.all([
+    locationId
+      ? db(env).all<{ ingredient: string; sku: string; brand: string | null; size: string | null; last_used: string | null }>(
+          "SELECT ingredient, sku, brand, size, last_used FROM sku_cache WHERE location_id = ?1 ORDER BY last_used DESC",
+          locationId,
+        )
+      : Promise.resolve([]),
+    db(env).all<{ id: string; author: string; body: string; tags: string | null; private: number | null; created_at: string | null }>(
+      "SELECT id, author, body, tags, private, created_at FROM store_notes WHERE store = ?1 ORDER BY created_at DESC",
+      slug,
+    ),
+  ]);
+
+  const notes: Record<StoreNoteGroup, StoreNoteRow[]> = { layout: [], location: [], stock: [], general: [] };
+  for (const n of noteRows) {
+    const tags = parseJsonArray(n.tags);
+    const group = (STORE_NOTE_GROUPS as string[]).includes(tags[0] ?? "") ? (tags[0] as StoreNoteGroup) : "general";
+    notes[group].push({
+      id: n.id,
+      author: n.author,
+      body: n.body,
+      tags,
+      private: Boolean(n.private),
+      created_at: n.created_at,
+    });
+  }
+
+  return {
+    slug: store.slug,
+    name: store.name,
+    domain: store.domain,
+    chain: typeof extra.chain === "string" ? extra.chain : null,
+    label: typeof extra.label === "string" ? extra.label : null,
+    address: typeof extra.address === "string" ? extra.address : null,
+    location_id: locationId,
+    skus: skuRows,
+    notes,
   };
 }
 

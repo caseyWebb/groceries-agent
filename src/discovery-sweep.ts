@@ -43,7 +43,7 @@ import {
   pruneDiscoveryLog,
   countDiscoveryFailures,
 } from "./discovery-db.js";
-import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth, writeJobRun } from "./health.js";
 
 /** A new discovery candidate to evaluate (already deduped vs corpus/rejections/log by the deps). */
 export interface SweepCandidate {
@@ -967,22 +967,25 @@ export async function runDiscoverySweepJob(
     // (the tick completed) — only a thrown tick rethrows below.
     const failedOutstanding = await countDiscoveryFailures(env);
     const ok = failedOutstanding === 0;
-    await writeJobHealth(env, "discovery-sweep", {
+    const summary = {
+      processed: r.processed,
+      imported: r.imported,
+      duplicate: r.duplicate,
+      no_match: r.noMatch,
+      dietary_gated: r.dietaryGated,
+      parked: r.parked,
+      failed: r.failed,
+      failed_outstanding: failedOutstanding,
+      deferred: r.deferred,
+      taste_updated: taste.updated,
+      log_pruned: pruned,
+    };
+    await writeJobHealth(env, "discovery-sweep", { ok, last_run_at: startedAt, summary });
+    await writeJobRun(env, "discovery-sweep", {
       ok,
-      last_run_at: startedAt,
-      summary: {
-        processed: r.processed,
-        imported: r.imported,
-        duplicate: r.duplicate,
-        no_match: r.noMatch,
-        dietary_gated: r.dietaryGated,
-        parked: r.parked,
-        failed: r.failed,
-        failed_outstanding: failedOutstanding,
-        deferred: r.deferred,
-        taste_updated: taste.updated,
-        log_pruned: pruned,
-      },
+      ran_at: startedAt,
+      duration_ms: now() - startedAt,
+      summary,
     });
     // History point (usage-trends): doubles = [duration_ms, processed, imported, duplicate, no_match,
     // dietary_gated, parked, failed, failed_outstanding, deferred, taste_updated, log_pruned].
@@ -1027,6 +1030,12 @@ export async function runDiscoverySweepJob(
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    await writeJobRun(env, "discovery-sweep", {
+      ok: false,
+      ran_at: startedAt,
+      duration_ms: now() - startedAt,
+      summary: { error: msg },
+    });
     recordUsagePoint(env, "discovery-sweep", { ok: false, durationMs: now() - startedAt });
     await notifyFailure(env, "discovery-sweep", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing

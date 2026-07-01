@@ -21,6 +21,7 @@ const PK: Record<string, string[]> = {
   pantry: ["tenant", "normalized_name"],
   meal_plan: ["tenant", "recipe"],
   grocery_list: ["tenant", "normalized_name"],
+  tenant_activity: ["tenant"],
   // shared-corpus (d1-shared-corpus)
   aliases: ["variant"],
   feeds: ["url"],
@@ -88,6 +89,7 @@ export function fakeD1(
     if (/\brecipe = \?2/i.test(sql)) eq("recipe", 2);
     if (/\bstore = \?1/i.test(sql)) eq("store", 1);
     if (/\bslug = \?1/i.test(sql)) eq("slug", 1);
+    if (/\blocation_id = \?1/i.test(sql)) eq("location_id", 1);
     if (/\bname = \?1/i.test(sql)) eq("name", 1);
     if (/normalized_name = \?2/i.test(sql)) eq("normalized_name", 2);
     // Attributed notes: privacy rule (private=0 OR author=?2), and self-scoped

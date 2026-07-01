@@ -1,16 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
   buildHealthPayload,
+  currentStreakStart,
   handleHealthRequest,
   handleHealthSvgRequest,
   isAiQuotaError,
   notifyFailure,
   probeD1,
+  readAllJobRuns,
   readJobHealth,
+  readJobRunById,
+  readJobRuns,
   recordUsagePoint,
   renderHealthSvg,
   writeJobHealth,
+  writeJobRun,
+  JOB_RUNS_PER_JOB_CAP,
   type JobHealth,
+  type JobRun,
 } from "../src/health.js";
 import type { Env } from "../src/env.js";
 
@@ -433,5 +440,225 @@ describe("notifyFailure", () => {
     await expect(
       notifyFailure(env({ NTFY_URL: "https://ntfy.sh/topic" }), "flyer-warm", "x", fakeFetch),
     ).resolves.toBeUndefined();
+  });
+});
+
+// ── job_runs (per-run history) ───────────────────────────────────────────────────────────────
+
+/** A fake D1 backing `job_runs`: INSERT, SELECT (filtered by job, ORDER BY ran_at DESC, LIMIT),
+ *  and DELETE-by-id (the writer's prune), plus `batch` for the prune's bulk delete. `reachable:
+ *  false` throws on every statement, modeling D1 down (the writer must no-op, the reader must
+ *  degrade to []). Enough fidelity to exercise writeJobRun/readJobRuns without a live binding. */
+function fakeJobRunsD1(opts: { reachable?: boolean } = {}): D1Database {
+  const reachable = opts.reachable ?? true;
+  let rows: { id: string; job: string; ok: number; ran_at: number; duration_ms: number; summary: string }[] = [];
+  const fail = () => {
+    throw new Error("D1_ERROR: no such database");
+  };
+  const run = (sql: string, binds: unknown[]) => {
+    if (!reachable) fail();
+    if (/INSERT INTO job_runs/i.test(sql)) {
+      const [id, job, ok, ran_at, duration_ms, summary] = binds as [string, string, number, number, number, string];
+      rows.push({ id, job, ok, ran_at, duration_ms, summary });
+      return { meta: { changes: 1 } };
+    }
+    if (/DELETE FROM job_runs WHERE id = \?1/i.test(sql)) {
+      const before = rows.length;
+      rows = rows.filter((r) => r.id !== binds[0]);
+      return { meta: { changes: before - rows.length } };
+    }
+    return { meta: { changes: 0 } };
+  };
+  const all = (sql: string, binds: unknown[]) => {
+    if (!reachable) fail();
+    if (/SELECT id FROM job_runs WHERE job = \?1 ORDER BY ran_at DESC LIMIT \?2/i.test(sql)) {
+      const job = binds[0] as string;
+      const limit = binds[1] as number;
+      const matched = rows.filter((r) => r.job === job).sort((a, b) => b.ran_at - a.ran_at);
+      return { results: matched.slice(0, limit).map((r) => ({ id: r.id })) };
+    }
+    if (/SELECT id FROM job_runs WHERE job = \?1$/i.test(sql)) {
+      const job = binds[0] as string;
+      return { results: rows.filter((r) => r.job === job).map((r) => ({ id: r.id })) };
+    }
+    if (/SELECT id, ok, ran_at, duration_ms, summary FROM job_runs WHERE job = \?1 ORDER BY ran_at DESC LIMIT \?2/i.test(sql)) {
+      const job = binds[0] as string;
+      const limit = binds[1] as number;
+      const matched = rows.filter((r) => r.job === job).sort((a, b) => b.ran_at - a.ran_at);
+      return { results: matched.slice(0, limit) };
+    }
+    if (/SELECT id, job, ok, ran_at, duration_ms, summary FROM job_runs ORDER BY ran_at DESC LIMIT \?1/i.test(sql)) {
+      const limit = binds[0] as number;
+      const ordered = [...rows].sort((a, b) => b.ran_at - a.ran_at);
+      return { results: ordered.slice(0, limit) };
+    }
+    if (/SELECT id, job, ok, ran_at, duration_ms, summary FROM job_runs WHERE id = \?1/i.test(sql)) {
+      const id = binds[0] as string;
+      const found = rows.filter((r) => r.id === id);
+      return { results: found };
+    }
+    return { results: [] };
+  };
+  return {
+    prepare(sql: string) {
+      let binds: unknown[] = [];
+      const stmt = {
+        bind(...v: unknown[]) {
+          binds = v;
+          return stmt;
+        },
+        async first() {
+          return all(sql, binds).results[0] ?? null;
+        },
+        async all() {
+          return all(sql, binds);
+        },
+        async run() {
+          return run(sql, binds);
+        },
+        __exec: () => run(sql, binds),
+      };
+      return stmt as unknown as D1PreparedStatement;
+    },
+    async batch(stmts: unknown[]) {
+      for (const s of stmts) (s as { __exec: () => void }).__exec();
+      return [];
+    },
+  } as unknown as D1Database;
+}
+
+function jobRunsEnv(over: Partial<Env> = {}): Env {
+  return { DB: fakeJobRunsD1(), ...over } as unknown as Env;
+}
+
+const runInput = (ok: boolean, ran_at: number, summary: Record<string, unknown> = {}) => ({
+  ok,
+  ran_at,
+  duration_ms: 42,
+  summary,
+});
+
+describe("writeJobRun / readJobRuns (per-run history)", () => {
+  it("appends a run and reads it back newest-first", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000, { errors: 0 }));
+    await writeJobRun(env, "flyer-warm", runInput(false, 2000, { error: "boom" }));
+    await writeJobRun(env, "flyer-warm", runInput(true, 3000));
+    const runs = await readJobRuns(env, "flyer-warm", 10);
+    expect(runs.map((r) => r.ran_at)).toEqual([3000, 2000, 1000]);
+    expect(runs[1]).toMatchObject({ ok: false, ran_at: 2000, duration_ms: 42, summary: { error: "boom" } });
+    expect(runs.every((r) => typeof r.id === "string" && r.id.length > 0)).toBe(true);
+  });
+
+  it("scopes reads to the named job (another job's runs don't leak in)", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000));
+    await writeJobRun(env, "email", runInput(true, 2000));
+    expect(await readJobRuns(env, "flyer-warm", 10)).toHaveLength(1);
+    expect(await readJobRuns(env, "email", 10)).toHaveLength(1);
+  });
+
+  it("respects the limit on read", async () => {
+    const env = jobRunsEnv();
+    for (let i = 0; i < 5; i++) await writeJobRun(env, "flyer-warm", runInput(true, i * 1000));
+    expect(await readJobRuns(env, "flyer-warm", 2)).toHaveLength(2);
+  });
+
+  it("prunes a job's rows beyond the per-job retention cap", async () => {
+    const env = jobRunsEnv();
+    const total = JOB_RUNS_PER_JOB_CAP + 10;
+    for (let i = 0; i < total; i++) await writeJobRun(env, "flyer-warm", runInput(true, i * 1000));
+    const all = await readJobRuns(env, "flyer-warm", total + 50);
+    expect(all.length).toBe(JOB_RUNS_PER_JOB_CAP);
+    // The retained rows are the most recent ones (highest ran_at survives the prune).
+    expect(all[0].ran_at).toBe((total - 1) * 1000);
+    expect(Math.min(...all.map((r) => r.ran_at))).toBe((total - JOB_RUNS_PER_JOB_CAP) * 1000);
+  });
+
+  it("a write failure degrades to a no-op (never throws)", async () => {
+    const env = { DB: fakeJobRunsD1({ reachable: false }) } as unknown as Env;
+    await expect(writeJobRun(env, "flyer-warm", runInput(true, 1000))).resolves.toBeUndefined();
+  });
+
+  it("a read failure degrades to an empty array (never throws)", async () => {
+    const env = { DB: fakeJobRunsD1({ reachable: false }) } as unknown as Env;
+    expect(await readJobRuns(env, "flyer-warm", 10)).toEqual([]);
+  });
+});
+
+describe("readAllJobRuns (the Logs area's cross-job reader)", () => {
+  it("merges runs across every job, newest-first, regardless of which job produced each one", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000));
+    await writeJobRun(env, "email", runInput(true, 3000));
+    await writeJobRun(env, "flyer-warm", runInput(false, 2000, { error: "boom" }));
+    const runs = await readAllJobRuns(env, 10);
+    expect(runs.map((r) => r.ran_at)).toEqual([3000, 2000, 1000]);
+    expect(runs.map((r) => r.job)).toEqual(["email", "flyer-warm", "flyer-warm"]);
+    expect(runs[1]).toMatchObject({ job: "flyer-warm", ok: false, summary: { error: "boom" } });
+  });
+
+  it("respects the limit bound across the merged set", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000));
+    await writeJobRun(env, "email", runInput(true, 2000));
+    await writeJobRun(env, "recipe-index", runInput(true, 3000));
+    const runs = await readAllJobRuns(env, 2);
+    expect(runs).toHaveLength(2);
+    expect(runs.map((r) => r.ran_at)).toEqual([3000, 2000]);
+  });
+
+  it("degrades to an empty array on a storage error (never throws)", async () => {
+    const env = { DB: fakeJobRunsD1({ reachable: false }) } as unknown as Env;
+    expect(await readAllJobRuns(env, 10)).toEqual([]);
+  });
+});
+
+describe("readJobRunById (the Status sparkline → Logs deep-link lookup)", () => {
+  it("finds a run by id, carrying its job", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000));
+    const [run] = await readJobRuns(env, "flyer-warm", 10);
+    const found = await readJobRunById(env, run.id);
+    expect(found).toMatchObject({ id: run.id, job: "flyer-warm", ok: true, ran_at: 1000 });
+  });
+
+  it("returns null for an unknown id", async () => {
+    const env = jobRunsEnv();
+    await writeJobRun(env, "flyer-warm", runInput(true, 1000));
+    expect(await readJobRunById(env, "nonexistent-id")).toBeNull();
+  });
+
+  it("degrades to null on a storage error (never throws)", async () => {
+    const env = { DB: fakeJobRunsD1({ reachable: false }) } as unknown as Env;
+    expect(await readJobRunById(env, "any-id")).toBeNull();
+  });
+});
+
+describe("currentStreakStart (healthy/unhealthy-since)", () => {
+  const r = (ok: boolean, ran_at: number): JobRun => ({ id: `r${ran_at}`, ok, ran_at, duration_ms: 1, summary: {} });
+
+  it("returns null for an empty history (no sparkline / since-label)", () => {
+    expect(currentStreakStart([])).toBeNull();
+  });
+
+  it("returns the single run's ran_at when there's only one run", () => {
+    expect(currentStreakStart([r(true, 5000)])).toBe(5000);
+  });
+
+  it("finds the earliest ran_at in the unbroken current-ok streak", () => {
+    // newest-first input: ok, ok, ok, fail, ok — the current streak is the first three ok runs.
+    const runs = [r(true, 4000), r(true, 3000), r(true, 2000), r(false, 1000), r(true, 0)];
+    expect(currentStreakStart(runs)).toBe(2000);
+  });
+
+  it("finds the earliest ran_at in the unbroken current-fail streak", () => {
+    const runs = [r(false, 4000), r(false, 3000), r(true, 2000)];
+    expect(currentStreakStart(runs)).toBe(3000);
+  });
+
+  it("returns the newest run's ran_at when the whole history shares its ok value", () => {
+    const runs = [r(true, 3000), r(true, 2000), r(true, 1000)];
+    expect(currentStreakStart(runs)).toBe(1000);
   });
 });

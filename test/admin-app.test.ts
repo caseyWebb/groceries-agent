@@ -4,6 +4,7 @@ import type { Env } from "../src/env.js";
 import type { KvStore } from "../src/kroger-user.js";
 import { redeemAuthNonce } from "../src/oauth.js";
 import { fakeD1 } from "./fake-d1.js";
+import { fakeR2 } from "./fake-r2.js";
 
 /** In-memory KV (single-page list) — satisfies the bindings the member ops touch. */
 function memKv(initial: Record<string, string> = {}): KVNamespace {
@@ -35,6 +36,7 @@ function makeEnv(over: Partial<Env> = {}, members: string[] = []): Env {
     TENANT_KV: memKv(kvInit),
     KROGER_KV: memKv(),
     DB: fakeD1().env.DB,
+    CORPUS: fakeR2().bucket,
     ASSETS: { fetch: async () => new Response("not found", { status: 404 }) },
     ...over,
   } as unknown as Env;
@@ -63,10 +65,12 @@ describe("admin Hono app", () => {
     expect(html).toContain("/admin/islands/members.js");
   });
 
-  it("lists tenants via the typed GET route", async () => {
+  it("lists tenants via the typed GET route, as structured roster rows", async () => {
     const res = await app.request("/admin/api/tenants", {}, makeEnv({}, ["casey"]));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tenants: ["casey"] });
+    const body = (await res.json()) as { tenants: { id: string }[] };
+    expect(body.tenants.map((t) => t.id)).toEqual(["casey"]);
+    expect(body.tenants[0]).toMatchObject({ owner: false, status: "pending", kroger: "unlinked", cooked: 0, favorites: 0 });
   });
 
   it("onboards a member, returning the once-shown invite + connector url", async () => {
@@ -123,5 +127,97 @@ describe("admin Hono app", () => {
     const res = await app.request("/admin/api/tenants/ghost/kroger-login", { method: "POST" }, makeEnv());
     expect(res.status).toBe(404);
     expect((await res.json()) as { error: string }).toMatchObject({ error: "not_found" });
+  });
+});
+
+describe("admin Hono app — Data area routing (narrowed to Recipes/Stores/Guidance)", () => {
+  it("/admin/data defaults to the Recipes explorer", async () => {
+    const res = await app.request("/admin/data", {}, makeEnv());
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Recipes");
+    expect(html).toContain("pill active");
+  });
+
+  it("serves the Recipes, Stores, and Guidance routes", async () => {
+    for (const path of ["/admin/data/recipes", "/admin/data/stores", "/admin/data/guidance"]) {
+      const res = await app.request(path, {}, makeEnv());
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+    }
+  });
+
+  it("the sub-nav offers exactly Recipes, Stores, Guidance — no Members/Corpus/Discovery/System", async () => {
+    const res = await app.request("/admin/data", {}, makeEnv());
+    const html = await res.text();
+    const subNav = /<div class="data-nav">.*?<\/div>/s.exec(html)?.[0] ?? "";
+    expect(subNav).toContain(">Recipes<");
+    expect(subNav).toContain(">Stores<");
+    expect(subNav).toContain(">Guidance<");
+    expect(subNav).not.toContain(">Members<");
+    expect(subNav).not.toContain(">Corpus<");
+    expect(subNav).not.toContain(">Discovery<");
+    expect(subNav).not.toContain(">System<");
+  });
+
+  it("the dropped /admin/data/{members,corpus,discovery,system} routes are gone, not 500ing", async () => {
+    for (const path of ["/admin/data/members", "/admin/data/members/casey", "/admin/data/corpus", "/admin/data/discovery", "/admin/data/system"]) {
+      const res = await app.request(path, {}, makeEnv({}, ["casey"]));
+      expect(res.status).toBe(404);
+    }
+  });
+});
+
+describe("admin Hono app — health-dock injection middleware", () => {
+  it("injects the health dock into an admin HTML page, before </body>", async () => {
+    const res = await app.request("/admin/members", {}, makeEnv({}, ["casey"]));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('id="health-dock"');
+    expect(html).toContain('id="health-props"');
+    const bodyIdx = html.indexOf("</body>");
+    const dockIdx = html.indexOf('id="health-dock"');
+    expect(dockIdx).toBeGreaterThan(-1);
+    expect(bodyIdx).toBeGreaterThan(-1);
+    expect(dockIdx).toBeLessThan(bodyIdx);
+  });
+
+  it("leaves a JSON response from /admin/api/* completely untouched", async () => {
+    const res = await app.request("/admin/api/tenants", {}, makeEnv({}, ["casey"]));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const text = await res.text();
+    expect(text).not.toContain("health-dock");
+    expect(text).not.toContain("health-props");
+    // Still valid, parseable JSON — untouched by the splice.
+    expect(() => JSON.parse(text)).not.toThrow();
+    const body = JSON.parse(text) as { tenants: { id: string }[] };
+    expect(body.tenants.map((t) => t.id)).toEqual(["casey"]);
+  });
+
+  it("after injection, content-length is absent or matches the new (spliced) body length", async () => {
+    const res = await app.request("/admin/members", {}, makeEnv({}, ["casey"]));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const contentLength = res.headers.get("content-length");
+    if (contentLength !== null) {
+      expect(Number(contentLength)).toBe(new TextEncoder().encode(html).length);
+    }
+  });
+
+  it("passes a text/html response with no </body> through unchanged (the real middleware, via a probe app)", async () => {
+    // No real admin page lacks a </body> (every page renders through `Layout`), so the
+    // passthrough branch can't be reached via `/admin/*`. Mount the SAME exported middleware
+    // (`injectHealthDock` — not a re-implementation) onto a throwaway Hono app to reach it.
+    const { Hono } = await import("hono");
+    const { injectHealthDock } = await import("../src/admin/app.js");
+    const probe = new Hono<{ Bindings: Env }>();
+    probe.use("*", injectHealthDock);
+    const fragment = "<!doctype html><html><body><p>no closing tag in this fixture</p>";
+    probe.get("/", (c) => c.html(fragment));
+    const res = await probe.request("/", {}, makeEnv({}, ["casey"]));
+    const html = await res.text();
+    expect(html).toBe(fragment);
+    expect(html).not.toContain("health-dock");
   });
 });

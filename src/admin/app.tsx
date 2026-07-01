@@ -21,19 +21,31 @@ import {
   randomInviteCode,
   type AdminDeps,
 } from "../admin.js";
-import { buildHealthPayload, HEALTH_JOBS } from "../health.js";
+import {
+  buildHealthPayload,
+  readJobRuns,
+  readAllJobRuns,
+  readJobRunById,
+  HEALTH_JOBS,
+  JOB_RUNS_PER_JOB_CAP,
+  type JobRun,
+} from "../health.js";
+import { corpusCounts, memberDetail, recipeTitles } from "../admin-data.js";
 import { MembersPage } from "./pages/members.js";
+import { MemberDetailPage, PendingMemberDetailPage, sectionOfSlug } from "./pages/member-detail.js";
 import { StatusPage } from "./pages/status.js";
 import { registerDataRoutes } from "./pages/data.js";
 import { fetchUsage, fetchUsageTrends, fetchToolUsage } from "../usage.js";
 import { UsagePage } from "./pages/usage.js";
-import { readDiscoveryLog, readDiscoveryRowById, deleteDiscoveryRow } from "../discovery-db.js";
+import { readDiscoveryLog, readDiscoveryCandidates, readDiscoveryRowById, deleteDiscoveryRow } from "../discovery-db.js";
 import { buildDiscoveryDeps, processCandidate, DEFAULT_CONFIG } from "../discovery-sweep.js";
 import { addDiscoveryRejection } from "../corpus-db.js";
 import { canonicalizeUrl } from "../url.js";
-import { LogsPage } from "./pages/logs.js";
+import { LogsPage, PAGE_SIZE as LOGS_PAGE_SIZE } from "./pages/logs.js";
+import { DiscoveryPage } from "./pages/discovery.js";
 import { getDiscoveryConfig, putDiscoveryConfig, analyzeDiscovery, dryRunDiscovery, testFeed, getOperatorConfig, putOperatorConfig, listCorpus, addCorpus, deleteCorpus } from "./config-api.js";
 import { registerConfigRoutes } from "./pages/config.js";
+import { buildHealthRollup, renderHealthDock } from "./ui/health-dock.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */
 function adminDeps(env: Env): AdminDeps {
@@ -75,6 +87,34 @@ const app = new Hono<{ Bindings: Env }>().basePath("/admin");
 
 app.use("*", accessGate);
 
+// The global service-health dock (operator-admin): injected into every admin HTML page so the
+// healthy/degraded rollup is present on every area, not only Status. One chokepoint after the
+// gate — it builds the same `buildHealthPayload` the Status home uses (no new Worker route) and
+// splices the dock (SSR pill + island props + island script) before `</body>`. Acts only on
+// `text/html` responses, so `/admin/api/*` JSON and static island/asset fetches pass through.
+// Exported (not just inlined into `app.use`) so a test can exercise the exact middleware through
+// a real Hono dispatch, rather than re-implementing its decision logic.
+export const injectHealthDock: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  await next();
+  const contentType = c.res.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/html")) return;
+  const html = await c.res.text();
+  if (!html.includes("</body>")) {
+    c.res = new Response(html, c.res);
+    return;
+  }
+  const rollup = buildHealthRollup(await buildHealthPayload(c.env, HEALTH_JOBS));
+  const headers = new Headers(c.res.headers);
+  headers.delete("content-length");
+  c.res = new Response(html.replace("</body>", renderHealthDock(rollup) + "</body>"), {
+    status: c.res.status,
+    statusText: c.res.statusText,
+    headers,
+  });
+};
+
+app.use("*", injectHealthDock);
+
 // Tools/operations throw structured `ToolError`s; surface them as their structured shape +
 // status (a structured error is data, never an unhandled 500).
 app.onError((err, c) => {
@@ -83,23 +123,55 @@ app.onError((err, c) => {
   return c.json({ error: "upstream_unavailable", message }, 500);
 });
 
+// The number of recent runs the Status uptime sparkline shows per job (the retention cap in
+// src/health.ts is larger — this is just the display window the mock's density calls for).
+const STATUS_SPARKLINE_WINDOW = 30;
+
 // Home (`/admin`) is the Status service-health view, SSR'd from the same `buildHealthPayload`
-// the public `/health` uses (no client fetch, no decoder).
+// the public `/health` uses (no client fetch, no decoder), plus the corpus stat-tile counts and
+// each job's recent run history (for the uptime sparkline + healthy/unhealthy-since label).
 app.get("/", async (c) => {
-  const payload = await buildHealthPayload(c.env, HEALTH_JOBS);
-  return c.html(page(<StatusPage payload={payload} />));
+  const [payload, counts] = await Promise.all([buildHealthPayload(c.env, HEALTH_JOBS), corpusCounts(c.env)]);
+  const runsByJob: Record<string, JobRun[]> = {};
+  await Promise.all(
+    HEALTH_JOBS.map(async (name) => {
+      runsByJob[name] = await readJobRuns(c.env, name, STATUS_SPARKLINE_WINDOW);
+    }),
+  );
+  return c.html(page(<StatusPage payload={payload} counts={counts} runsByJob={runsByJob} />));
 });
 
-// SSR: the Members list, read by calling `listTenants` directly (no client fetch).
+// SSR: the Members roster, read by calling `listTenants` directly (no client fetch).
 app.get("/members", async (c) => {
-  const { tenants } = await listTenants(adminDeps(c.env));
+  const { tenants } = await listTenants(c.env, adminDeps(c.env));
   return c.html(page(<MembersPage props={{ members: tenants }} />));
 });
+
+// SSR: member-detail, at its own deep-linkable URL per section (design.md decision 2). A
+// pending member (no tenant_activity row yet) renders the not-yet-connected empty state and
+// never attempts the `memberDetail` read (3.8) — there is nothing to read yet.
+async function renderMemberDetail(c: { env: Env; req: { param(name: string): string } }, section: string) {
+  const id = decodeURIComponent(c.req.param("id"));
+  const { tenants } = await listTenants(c.env, adminDeps(c.env));
+  const row = tenants.find((t) => t.id === id);
+  if (!row) throw new ToolError("not_found", `No member ${id} on the allowlist`);
+  if (row.status === "pending") return page(<PendingMemberDetailPage row={row} />);
+
+  const detail = await memberDetail(c.env, row.id);
+  const slugs = [
+    ...detail.meal_plan.map((p) => p.recipe),
+    ...detail.cooking_log.map((r) => (typeof r.recipe === "string" ? r.recipe : null)).filter((s): s is string => !!s),
+  ];
+  const titles = await recipeTitles(c.env, slugs);
+  return page(<MemberDetailPage row={row} detail={detail} section={sectionOfSlug(section)} titles={titles} />);
+}
+app.get("/members/:id", async (c) => c.html(await renderMemberDetail(c, "profile")));
+app.get("/members/:id/:section", async (c) => c.html(await renderMemberDetail(c, c.req.param("section"))));
 
 // The typed mutation routes the Members island calls via `hc`. Chained so their
 // request/response types accumulate into `AdminApp` for the client (zero codegen).
 const routes = app
-  .get("/api/tenants", async (c) => c.json(await listTenants(adminDeps(c.env))))
+  .get("/api/tenants", async (c) => c.json(await listTenants(c.env, adminDeps(c.env))))
   .post("/api/tenants", async (c) => {
     const body = await c.req.json<{ username?: string; invite_code?: string }>();
     const result = await onboard(
@@ -120,8 +192,9 @@ const routes = app
   .delete("/api/tenants/:id", async (c) => {
     return c.json(await revoke(adminDeps(c.env), decodeURIComponent(c.req.param("id"))));
   })
-  // Logs › Discovery: the row actions the Logs island calls. Retry/Delete reuse the sweep's
-  // own functions (shared logic, not a re-implementation) — same outcome as the autonomous sweep.
+  // Discovery: the raw log read (kept as a stable JSON surface at its existing path) and the
+  // per-candidate row actions the Discovery island calls. Retry/Delete reuse the sweep's own
+  // functions (shared logic, not a re-implementation) — same outcome as the autonomous sweep.
   .get("/api/logs/discovery", async (c) => c.json({ entries: await readDiscoveryLog(c.env, 200) }))
   .post("/api/discovery/:id/retry", async (c) => {
     const id = c.req.param("id");
@@ -182,16 +255,55 @@ registerDataRoutes(app);
 // Config area (operator-admin): the discovery calibration console (+ ranking/flyer + corpus editors).
 registerConfigRoutes(app);
 
+// Discovery area (operator-admin): the candidate-pipeline view — stat tiles, filter pills, and
+// the paginated per-candidate progression-track cards, SSR'd from readDiscoveryCandidates. The
+// area's SOLE content; it absorbed the candidate log formerly at /admin/logs/discovery (that
+// route now redirects here — see the Logs section below).
+app.get("/discovery", async (c) => {
+  const candidates = await readDiscoveryCandidates(c.env, 200);
+  const filter = c.req.query("filter") ?? "all";
+  const pageParam = Number(c.req.query("page") ?? "1");
+  const requestedPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam - 1 : 0;
+  return c.html(page(<DiscoveryPage candidates={candidates} filter={filter} page={requestedPage} now={Date.now()} />));
+});
+
 // Usage area (usage-observability / usage-trends / tool-usage-trends): three SSR dashboards.
 app.get("/usage", async (c) => {
   const [usage, trends, tools] = await Promise.all([fetchUsage(c.env), fetchUsageTrends(c.env), fetchToolUsage(c.env)]);
   return c.html(page(<UsagePage usage={usage} trends={trends} tools={tools} />));
 });
 
-// Logs area (operator-admin): the discovery sweep's outcome log (master/detail), SSR'd; the
-// entries hydrate as an island for per-row retry/delete + the detail dialog.
-app.get("/logs", async (c) => c.html(page(<LogsPage entries={await readDiscoveryLog(c.env, 200)} />)));
-app.get("/logs/discovery", async (c) => c.html(page(<LogsPage entries={await readDiscoveryLog(c.env, 200)} />)));
+// Logs area (operator-admin): the default content is the all-cron-jobs run log (job_runs,
+// merged newest-first, SSR — query-param filter + pagination, native-disclosure expand). The
+// `?run=<id>` param (the Status sparkline's deep-link) resolves server-side to the run's job
+// filter + page + a highlighted, pre-expanded entry, falling back to the default view when the
+// id is unresolvable (pruned past the retention cap). The Logs area does NOT host a
+// candidate-level Discovery destination — that lives at the top-level Discovery area
+// (/admin/discovery); the legacy /admin/logs/discovery route redirects there (below).
+app.get("/logs", async (c) => {
+  const runs = await readAllJobRuns(c.env, JOB_RUNS_PER_JOB_CAP * HEALTH_JOBS.length);
+  const now = Date.now();
+  const runId = c.req.query("run");
+  if (runId) {
+    const linked = await readJobRunById(c.env, runId);
+    if (linked) {
+      const filtered = runs.filter((r) => r.job === linked.job);
+      const idx = filtered.findIndex((r) => r.id === linked.id);
+      const resolvedPage = idx >= 0 ? Math.floor(idx / LOGS_PAGE_SIZE) : 0;
+      return c.html(
+        page(<LogsPage runs={runs} job={linked.job} page={resolvedPage} now={now} highlightId={linked.id} />),
+      );
+    }
+    // The linked run is gone (pruned past the retention cap since the link was rendered) —
+    // degrade to the default unfiltered, first-page view rather than an error.
+  }
+  const job = c.req.query("job") ?? "All";
+  const pageParam = Number(c.req.query("page") ?? "1");
+  const requestedPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam - 1 : 0;
+  return c.html(page(<LogsPage runs={runs} job={job} page={requestedPage} now={now} />));
+});
+// Legacy destination — preserves any bookmark rather than 404ing (admin-ui-redesign-discovery).
+app.get("/logs/discovery", (c) => c.redirect("/admin/discovery", 302));
 
 // Static islands + styles fall through to the ASSETS binding (already past the Access gate;
 // `ASSETS.fetch` bypasses run_worker_first, so this never re-enters and loops).

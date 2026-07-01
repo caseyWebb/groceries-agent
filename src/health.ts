@@ -135,6 +135,179 @@ export async function writeJobHealth(env: Env, name: string, health: JobHealth):
   await db(env).run(UPSERT_JOB_HEALTH, name, health.ok ? 1 : 0, health.last_run_at, JSON.stringify(health.summary));
 }
 
+// ── Per-run history (job_runs) ───────────────────────────────────────────────────────────────
+// `job_health` keeps one last-state row per job; `job_runs` is the per-run series behind it —
+// the redesigned Status area's uptime sparkline (ok/fail bars over the recent runs) and its
+// "healthy/unhealthy since" label (the start of the current unbroken ok-streak). Appended beside
+// every `writeJobHealth` call, sharing the SAME `ok`/`summary` a job already reports. Bounded per
+// job (the writer prunes beyond `JOB_RUNS_PER_JOB_CAP`), and degrades to a no-op / empty read on
+// a storage error — exactly like `writeJobHealth`/`readAllJobHealth` — so a history write or read
+// never affects the job it instruments.
+
+/** One appended `job_runs` record (the writer's input — `id` excluded; stamped by the writer). */
+export interface JobRunInput {
+  ok: boolean;
+  /** Epoch ms of this run. */
+  ran_at: number;
+  duration_ms: number;
+  summary: Record<string, unknown>;
+}
+
+/** One stored `job_runs` record, as the reader returns it. */
+export interface JobRun {
+  id: string;
+  ok: boolean;
+  ran_at: number;
+  duration_ms: number;
+  summary: Record<string, unknown>;
+}
+
+/** A `JobRun` carrying which job it belongs to — what the cross-job readers (`readAllJobRuns`,
+ *  `readJobRunById`) return; the per-job `readJobRuns` omits `job` because its caller already
+ *  knows it (the query is scoped to one job). */
+export interface JobRunWithJob extends JobRun {
+  job: string;
+}
+
+/** Retention cap: the most recent N runs kept per job (older rows pruned on every append). */
+export const JOB_RUNS_PER_JOB_CAP = 100;
+
+const INSERT_JOB_RUN =
+  "INSERT INTO job_runs (id, job, ok, ran_at, duration_ms, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+
+/** The D1 `job_runs` row shape (0/1 `ok`, JSON-encoded `summary`). */
+interface JobRunRow {
+  id: string;
+  ok: number;
+  ran_at: number;
+  duration_ms: number;
+  summary: string;
+}
+
+/** A `JobRunRow` plus the `job` column — what the cross-job queries select. */
+interface JobRunRowWithJob extends JobRunRow {
+  job: string;
+}
+
+/** Decode a `job_runs` row into a `JobRun`. A malformed `summary` degrades to `{}` rather than
+ *  throwing — a corrupt row must not break the whole history read (mirrors `rowToHealth`). */
+function rowToRun(row: JobRunRow): JobRun {
+  let summary: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(row.summary);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) summary = parsed as Record<string, unknown>;
+  } catch {
+    // leave summary as {}
+  }
+  return { id: row.id, ok: row.ok === 1, ran_at: row.ran_at, duration_ms: row.duration_ms, summary };
+}
+
+/** Decode a `job_runs` row (with `job`) into a `JobRunWithJob` (mirrors `rowToRun`). */
+function rowToRunWithJob(row: JobRunRowWithJob): JobRunWithJob {
+  return { ...rowToRun(row), job: row.job };
+}
+
+/**
+ * Append one run record to `job_runs`, then prune that job's rows beyond the retention cap.
+ * Degrades to a no-op on a storage error — appending history must never block or fail the job
+ * that's reporting it (mirrors `writeJobHealth`'s `.catch(() => {})` at every call site).
+ */
+export async function writeJobRun(env: Env, name: string, run: JobRunInput): Promise<void> {
+  try {
+    const id = `${name}-${run.ran_at}-${Math.random().toString(36).slice(2, 8)}`;
+    const d = db(env);
+    await d.run(INSERT_JOB_RUN, id, name, run.ok ? 1 : 0, run.ran_at, run.duration_ms, JSON.stringify(run.summary));
+    const keep = await d.all<{ id: string }>(
+      "SELECT id FROM job_runs WHERE job = ?1 ORDER BY ran_at DESC LIMIT ?2",
+      name,
+      JOB_RUNS_PER_JOB_CAP,
+    );
+    if (keep.length >= JOB_RUNS_PER_JOB_CAP) {
+      const keepIds = new Set(keep.map((r) => r.id));
+      const all = await d.all<{ id: string }>("SELECT id FROM job_runs WHERE job = ?1", name);
+      const stale = all.filter((r) => !keepIds.has(r.id));
+      if (stale.length > 0) {
+        await d.batch(stale.map((r) => d.prepare("DELETE FROM job_runs WHERE id = ?1", r.id)));
+      }
+    }
+  } catch {
+    // History write must never affect the job — swallow (mirrors writeJobHealth's call-site catch).
+  }
+}
+
+/**
+ * Read a job's most recent runs, newest-first. Degrades to an EMPTY array when D1 is
+ * unreachable rather than throwing — the Status page must stay renderable even when D1 is
+ * flaky (the D1 probe row already carries that signal).
+ */
+export async function readJobRuns(env: Env, name: string, limit: number): Promise<JobRun[]> {
+  try {
+    const rows = await db(env).all<JobRunRow>(
+      "SELECT id, ok, ran_at, duration_ms, summary FROM job_runs WHERE job = ?1 ORDER BY ran_at DESC LIMIT ?2",
+      name,
+      limit,
+    );
+    return rows.map(rowToRun);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read the most recent runs across EVERY job, newest-first, bounded by `limit` — the Logs area's
+ * all-jobs run log (operator-admin). Unlike `readJobRuns`, the `job` column rides along on each
+ * row (the caller doesn't already know it, since runs from many jobs are merged into one list).
+ * Degrades to an EMPTY array on a storage error, mirroring `readJobRuns` — the Logs page must
+ * stay renderable even when D1 is flaky.
+ */
+export async function readAllJobRuns(env: Env, limit: number): Promise<JobRunWithJob[]> {
+  try {
+    const rows = await db(env).all<JobRunRowWithJob>(
+      "SELECT id, job, ok, ran_at, duration_ms, summary FROM job_runs ORDER BY ran_at DESC LIMIT ?1",
+      limit,
+    );
+    return rows.map(rowToRunWithJob);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read one `job_runs` record by id — the Status sparkline's "tick → Logs entry" deep-link lookup
+ * (operator-admin). Returns `null` both when the id was never written and when it has since been
+ * pruned past the retention cap (the two are indistinguishable, and the caller's fallback for
+ * both is the same: render the default unfiltered view, not an error). Degrades to `null` on a
+ * storage error, mirroring `readJobRuns`'s degrade-to-empty.
+ */
+export async function readJobRunById(env: Env, id: string): Promise<JobRunWithJob | null> {
+  try {
+    const row = await db(env).first<JobRunRowWithJob>(
+      "SELECT id, job, ok, ran_at, duration_ms, summary FROM job_runs WHERE id = ?1",
+      id,
+    );
+    return row ? rowToRunWithJob(row) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The earliest `ran_at` in the current unbroken `ok`-streak — the "healthy since" / "unhealthy
+ * since" instant. `runs` MUST be newest-first (as `readJobRuns` returns). Scans from the newest
+ * run while `ok` matches the newest run's `ok`; returns null when `runs` is empty (no history
+ * yet — the caller omits the since-label in that case, same as it omits the sparkline).
+ */
+export function currentStreakStart(runs: readonly JobRun[]): number | null {
+  if (runs.length === 0) return null;
+  const currentOk = runs[0].ok;
+  let start = runs[0].ran_at;
+  for (const run of runs) {
+    if (run.ok !== currentOk) break;
+    start = run.ran_at;
+  }
+  return start;
+}
+
 /**
  * Emit ONE tenant-clean usage data point for a job run to the `grocery_usage` Analytics Engine
  * dataset (usage-trends) — the **history** tier that complements this job's `job_health` D1

@@ -22,7 +22,7 @@ import { parseMarkdown } from "./parse.js";
 import { validateRecipeContract } from "./recipe-contract.js";
 import { mergeEffectiveFacets, parseFacetRow, type ClassifiedFacets, type RawFacetRow } from "./recipe-facets.js";
 import type { CorpusStore } from "./corpus-store.js";
-import { notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
+import { notifyFailure, recordUsagePoint, writeJobHealth, writeJobRun } from "./health.js";
 
 // --- pure projection helpers ---
 
@@ -304,10 +304,13 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () =
   try {
     const priorSlugs = new Set(await deps.loadErrorSlugs());
     const r = await reconcileRecipeIndex(deps);
-    await writeJobHealth(env, "recipe-index", {
+    const summary = { projected: r.projected, skipped: r.skipped };
+    await writeJobHealth(env, "recipe-index", { ok: true, last_run_at: startedAt, summary });
+    await writeJobRun(env, "recipe-index", {
       ok: true,
-      last_run_at: startedAt,
-      summary: { projected: r.projected, skipped: r.skipped },
+      ran_at: startedAt,
+      duration_ms: now() - startedAt,
+      summary,
     });
     // History point (usage-trends): doubles = [duration_ms, projected, skipped].
     recordUsagePoint(env, "recipe-index", {
@@ -333,6 +336,12 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () =
       last_run_at: startedAt,
       summary: { error: m },
     }).catch(() => {});
+    await writeJobRun(env, "recipe-index", {
+      ok: false,
+      ran_at: startedAt,
+      duration_ms: now() - startedAt,
+      summary: { error: m },
+    });
     recordUsagePoint(env, "recipe-index", { ok: false, durationMs: now() - startedAt });
     await notifyFailure(env, "recipe-index", m);
     throw e; // cron is not retried; surfacing the failure loses nothing

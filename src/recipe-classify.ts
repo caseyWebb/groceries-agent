@@ -29,7 +29,7 @@ import { normalizeIngredientList } from "./matching.js";
 import { readAliases } from "./corpus-db.js";
 import { hashText } from "./hash.js";
 import { normalizeFacetCourse, EMPTY_FACETS, type ClassifiedFacets } from "./recipe-facets.js";
-import { isAiQuotaError, notifyFailure, recordUsagePoint, writeJobHealth } from "./health.js";
+import { isAiQuotaError, notifyFailure, recordUsagePoint, writeJobHealth, writeJobRun } from "./health.js";
 
 /** Max recipes CLASSIFIED per tick (one env.AI call each — not batchable, like describe). A SMALL cap:
  *  classify is the first phase of the scheduled tick and blocks the projection/embed/discovery jobs after
@@ -372,20 +372,27 @@ export async function runFacetJob(env: Env, deps: DerivedFacetDeps): Promise<voi
   const startedAt = deps.now();
   try {
     const r = await reconcileRecipeFacets(deps);
+    const summary = {
+      classified: r.classified,
+      pending: r.pending,
+      parked: r.parked,
+      errored: r.errored,
+      pruned: r.pruned,
+      quota_exhausted: r.quotaExhausted,
+      timed_out: r.timedOut,
+    };
     await writeJobHealth(env, "recipe-classify", {
       // Quota exhaustion is a soft degradation (not a crash) — report it as not-ok so the job row
       // reflects it, and the summary flag drives the explicit `/health` "ai quota exhausted" signal.
       ok: !r.quotaExhausted,
       last_run_at: startedAt,
-      summary: {
-        classified: r.classified,
-        pending: r.pending,
-        parked: r.parked,
-        errored: r.errored,
-        pruned: r.pruned,
-        quota_exhausted: r.quotaExhausted,
-        timed_out: r.timedOut,
-      },
+      summary,
+    });
+    await writeJobRun(env, "recipe-classify", {
+      ok: !r.quotaExhausted,
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary,
     });
     // History point (usage-trends): doubles = [duration_ms, classified, pending, parked, errored, pruned].
     recordUsagePoint(env, "recipe-classify", {
@@ -401,6 +408,12 @@ export async function runFacetJob(env: Env, deps: DerivedFacetDeps): Promise<voi
       last_run_at: startedAt,
       summary: { error: msg },
     }).catch(() => {});
+    await writeJobRun(env, "recipe-classify", {
+      ok: false,
+      ran_at: startedAt,
+      duration_ms: deps.now() - startedAt,
+      summary: { error: msg },
+    });
     recordUsagePoint(env, "recipe-classify", { ok: false, durationMs: deps.now() - startedAt });
     await notifyFailure(env, "recipe-classify", msg);
     throw e; // cron is not retried; surfacing the failure loses nothing
