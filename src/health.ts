@@ -23,6 +23,7 @@ export const HEALTH_JOBS = [
   "night-vibe-embed",
   "email",
   "discovery-sweep",
+  "reconcile-signals",
 ] as const;
 
 /** One job's stored health record. `summary` MUST stay tenant-data-free. */

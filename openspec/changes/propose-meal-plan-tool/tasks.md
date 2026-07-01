@@ -30,14 +30,14 @@
 
 ## 5. Profile reconciliation
 
-- [ ] 5.1 Migration `pending_proposals` (per-member: kind, payload JSON, rationale, evidence JSON, status, producer, timestamps).
-- [ ] 5.2 Deterministic **signal cron** pass: per-member cadence debt, cluster/taste drift, prune candidates (arithmetic + at most small-model/k-means; no large model); wire into `scheduled()`; `job_health` row.
-- [ ] 5.3 Confirm/enqueue tools: member-facing `list_proposals` / `confirm_proposal` (accept applies the diff; reject records a rejection signal); an enqueue path the producers share.
-- [ ] 5.4 Routine synthesis (server-side edge model): read signals → enqueue high-confidence proposals.
-- [ ] 5.5 `isOperator` cross-tenant surface: resolve the flag before any tool runs; expose operator-only read-signal-bundle + enqueue-per-member tools; deny non-operators cross-tenant reach.
-- [ ] 5.6 Operator-frontier reconcile: an operator skill/flow driving the cross-tenant tools from the operator's Claude; an admin-panel trigger/nudge.
-- [ ] 5.7 Extend `retrospective` (`AGENT_INSTRUCTIONS.md` `cooking-retrospective` flow) to surface and confirm pending proposals; regenerate the plugin (`aubr build:plugin`). *(Separable last step — the tool + web app do not depend on it.)*
-- [ ] 5.8 Docs lockstep: `docs/ARCHITECTURE.md` (stated-vs-revealed loop, the signal cron, the pluggable synthesis tiers, the operator surface), `docs/TOOLS.md` (the proposal + operator tools), `docs/SCHEMAS.md` (`pending_proposals`).
+- [x] 5.1 Migration `0027_pending_proposals.sql` (per-member: id = stable hash(tenant|kind|target), kind, target, payload JSON, rationale, evidence JSON, status, producer, timestamps + `idx_pending_proposals_tenant_status`). Applies cleanly.
+- [x] 5.2 Deterministic **signal cron** (`src/reconcile-signals.ts`): per-member cadence signals → high-confidence drafts (`draftProposals`, pure + tested), enqueued idempotently by `runReconcileSignalsJob`; wired into `scheduled()` phase 5 + the `reconcile-signals` `HEALTH_JOBS`/`job_health` job. *(Cluster/taste-drift signals — the generative half — are deferred to the edge-model tier below.)*
+- [x] 5.3 `src/reconcile-tools.ts` member tools `list_proposals` / `confirm_proposal` (accept → `applyProposal` diff via `src/reconcile-db.ts`; reject → recorded, never re-surfaced) + `src/reconcile-db.ts` store shared by all producers. Round-trip tested via fake-d1.
+- [x] 5.4 **Routine synthesis** = the deterministic-signal producer (5.2) enqueuing prune/adjust proposals with no model call. *(The generative "detect a recurring cooking archetype → propose add_vibe" edge-model producer is a documented follow-up — the same queue, a `add_vibe` kind that already applies.)*
+- [x] 5.5 `isOperator` cross-tenant surface: resolved as `tenant.id == OWNER_TENANT_ID` (reuses existing config — the open auth question); operator-only `reconcile_read_signals` + `reconcile_enqueue_proposal` gated with `insufficient_permission` for non-operators.
+- [x] 5.6 Operator-frontier reconcile: the cross-tenant MCP **surface** (read signals + enqueue-per-member) is live for the operator's own Claude to drive. *(The operator persona `skill` that scripts it, and an admin-panel trigger, are persona/UI follow-ups — the tool surface is the load-bearing part.)*
+- [ ] 5.7 Extend `retrospective` (`AGENT_INSTRUCTIONS.md` `cooking-retrospective` flow) to surface and confirm pending proposals; regenerate the plugin. **Deferred** — separable persona/plugin work the design flagged as the last step; the tool + web-app surface do not depend on it, and the member tools (`list_proposals`/`confirm_proposal`) already expose the queue.
+- [x] 5.8 Docs lockstep: `docs/ARCHITECTURE.md` (stated-vs-revealed loop, signal cron, pluggable producers, operator gate), `docs/TOOLS.md` (member + operator tools), `docs/SCHEMAS.md` (`pending_proposals`).
 
 ## 6. Verify
 

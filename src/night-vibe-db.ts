@@ -24,6 +24,8 @@ export interface NightVibe {
   weather_antipathy?: string[];
   /** Seasonal lean (spring|summer|fall|winter). */
   season?: string[];
+  /** ISO timestamp the vibe was created (read-only; drives the reconcile's "stale, ignored" signal). */
+  created_at?: string | null;
 }
 
 interface NightVibeRow {
@@ -36,6 +38,7 @@ interface NightVibeRow {
   weather_affinity: string | null;
   weather_antipathy: string | null;
   season: string | null;
+  created_at: string | null;
 }
 
 function parseJsonArray(raw: string | null): string[] | undefined {
@@ -68,13 +71,14 @@ function decodeVibe(row: NightVibeRow): NightVibe {
   if (wan) out.weather_antipathy = wan;
   const se = parseJsonArray(row.season);
   if (se) out.season = se;
+  if (row.created_at) out.created_at = row.created_at;
   return out;
 }
 
 /** Every night vibe in the caller's palette, id-ordered. */
 export async function readNightVibes(env: Env, tenant: string): Promise<NightVibe[]> {
   const rows = await db(env).all<NightVibeRow>(
-    "SELECT id, vibe, facets, cadence_days, pinned, base_weight, weather_affinity, weather_antipathy, season " +
+    "SELECT id, vibe, facets, cadence_days, pinned, base_weight, weather_affinity, weather_antipathy, season, created_at " +
       "FROM night_vibes WHERE tenant = ?1 ORDER BY id",
     tenant,
   );

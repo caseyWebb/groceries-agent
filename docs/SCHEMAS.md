@@ -181,6 +181,25 @@ embedding  TEXT  -- JSON array of EMBED_DIM floats; NULL until first derived (�
 updated_at TEXT
 ```
 
+## pending_proposals (per-tenant, D1 `pending_proposals` table)
+
+The **profile-reconciliation** queue (migration 0027, `profile-reconciliation` capability): proposed profile edits that reconcile a member's **stated** palette against their **revealed** cooking behavior. Written by the deterministic `reconcile-signals` cron (`src/reconcile-signals.ts`, producer `signal-cron`) and, optionally, by the operator via `reconcile_enqueue_proposal` (producer `operator`); read/resolved by the member via `list_proposals`/`confirm_proposal` (`src/reconcile-db.ts`). `id` is a **stable hash of `(tenant, kind, target)`** so re-drafting is an idempotent `INSERT OR IGNORE` and a rejected proposal is never re-surfaced.
+
+```sql
+-- D1 pending_proposals table. PRIMARY KEY (id). idx_pending_proposals_tenant_status on (tenant, status).
+id          TEXT  -- stable hash(tenant|kind|target) — dedup + no-re-propose
+tenant      TEXT  -- the member the proposal is for
+kind        TEXT  -- add_vibe | adjust_cadence | prune_vibe
+target      TEXT  -- the vibe id the proposal acts on
+payload     TEXT  -- JSON: the proposed profile diff (applied verbatim on accept)
+rationale   TEXT  -- human-readable "why"
+evidence    TEXT  -- JSON: the signals that triggered it
+status      TEXT  -- pending | accepted | rejected
+producer    TEXT  -- signal-cron | edge | operator
+created_at  TEXT
+resolved_at TEXT  -- when accepted/rejected
+```
+
 ## overlay (per-tenant, D1 `overlay` table)
 
 Each member's **subjective view** of shared recipes — the overlay merged onto shared content at read time. Keyed by recipe slug. Holds **only** the two mutually-exclusive disposition marks `favorite` (loved) and `reject` (hidden-from-me). Visibility is **opt-out**: an absent row means **neutral (available)** — `favorite: false`, `reject: false`. `last_cooked` is **not** here — it's derived from this member's D1 `cooking_log` table. Stored as rows in the D1 `overlay(tenant, recipe, favorite, reject)` table. There is no `status` lifecycle and no `rating` column. Agent-writable via `toggle_favorite` (favorite) and `toggle_reject` (reject).

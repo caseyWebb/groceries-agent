@@ -17,6 +17,7 @@ import { handleInboundEmail, rejectReasonFor, type InboundMessage } from "./emai
 import { buildWarmDeps, runWarmJob } from "./flyer-warm.js";
 import { buildEmbedDeps, runEmbedJob } from "./recipe-embeddings.js";
 import { runNightVibeVectorJob } from "./night-vibe-vector.js";
+import { runReconcileSignalsJob } from "./reconcile-signals.js";
 import { buildFacetDeps, runFacetJob } from "./recipe-classify.js";
 import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
 import { buildDiscoveryDeps, runDiscoverySweepJob } from "./discovery-sweep.js";
@@ -193,7 +194,10 @@ export default {
     // them). Load the operator's stored config (sparse override merged over DEFAULT_CONFIG).
     const sweepConfig = await loadDiscoveryConfig(env);
     const phase4 = await Promise.allSettled([runDiscoverySweepJob(env, buildDiscoveryDeps(env), sweepConfig)]);
-    const failed = [...phase1, ...phase2, ...phase3, ...phase4].find((r) => r.status === "rejected");
+    // Phase 5: the deterministic profile-reconciliation signal pass — reads each member's
+    // cadence state (no large model), enqueues high-confidence proposals into pending_proposals.
+    const phase5 = await Promise.allSettled([runReconcileSignalsJob(env)]);
+    const failed = [...phase1, ...phase2, ...phase3, ...phase4, ...phase5].find((r) => r.status === "rejected");
     if (failed && failed.status === "rejected") throw failed.reason;
   },
 };

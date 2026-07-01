@@ -335,6 +335,28 @@ Propose a week of dinners from the caller's night-vibe palette — **stateless, 
 
 ---
 
+## Profile-reconciliation tools
+
+The reconcile reconciles a member's **stated** preference (their night-vibe palette + cadences) against **revealed** behavior (their cooking log). A background signal cron (and, optionally, the operator's frontier Claude) enqueues proposed profile edits into a per-member queue; the member confirms them from either surface.
+
+### `list_proposals()`
+
+List the caller's **pending** reconcile proposals — suggested palette edits (prune a vibe you never cook, stretch a cadence you keep deferring). Read-only. `{ proposals: [{ id, kind, target, rationale, payload, evidence, producer }] }`.
+
+### `confirm_proposal(id, accept)`
+
+Accept (`accept: true` → applies the diff: prune/adjust/add a night vibe, marks accepted) or reject (`false` → recorded; the stable id means the same proposal is never re-surfaced) a proposal. Unknown/already-resolved id → `not_found`. Returns `{ id, status, applied? }`.
+
+### `reconcile_read_signals()` — operator-only
+
+Read the deterministic reconcile signals across **all** members (each member's palette size + drafted cadence signals) so the operator's own Claude can reason over the group and enqueue richer proposals. Gated on `isOperator` (caller's tenant == `OWNER_TENANT_ID`); non-operators get `insufficient_permission`. `{ members: [{ tenant, palette_size, signals }] }`.
+
+### `reconcile_enqueue_proposal(tenant, kind, target, payload, rationale, evidence?)` — operator-only
+
+Enqueue a proposal for a member (the operator-frontier producer). The member still confirms it before anything changes. Idempotent by `(tenant, kind, target)`. `insufficient_permission` for non-operators. Returns `{ id, enqueued }`.
+
+---
+
 ## Grocery list tools
 
 The grocery list is the SKU-free buy list for the next order (D1-backed, `grocery_list` table). It accumulates intent across the week; resolution to a Kroger SKU and the cart write are deferred to order placement (`place_order`). Writes are D1-backed — no `commit_sha`. See `docs/SCHEMAS.md` for the item schema.
