@@ -293,6 +293,28 @@ Add items to the caller's bulk-buy watchlist. Writes the caller's D1 `stockup` r
 
 ---
 
+## Night-vibe palette tools
+
+The **night-vibe palette** is each member's durable, editable "shape of a week" — a set of saved `search_recipes` specs (a `vibe` phrase + optional `facets`) plus lifecycle metadata (a `cadence_days` period, `weather_affinity`/`weather_antipathy` tags, an optional `season`, `pinned`, `base_weight`). `propose_meal_plan` samples this palette at Level 1 to shape the week, then fills each slot at Level 2. Per-tenant private profile data (D1 `night_vibes`, siblings of `staples`/`stockup`); the vibe text's embedding is reconciled on the cron (hash-gated) like `taste_derived`, so a fresh vibe is retrievable a tick later.
+
+### `list_night_vibes()`
+
+Return the caller's palette. `{ vibes: [{ id, vibe, facets?, cadence_days?, pinned?, base_weight?, weather_affinity?, weather_antipathy?, season? }] }` — empty when unset. Per-tenant; never writes.
+
+### `add_night_vibe(vibe, id?, …meta)`
+
+Add a night vibe. `vibe` (required) is the craving/query phrase; `id` defaults to a slug of the vibe. Meta: `facets` (hard-gate search facets), `cadence_days` (target period — 7 ≈ weekly, 30 ≈ monthly, drives the debt scheduler), `pinned` (sticky weekly intent), `base_weight`, `weather_affinity`/`weather_antipathy` (`soup | comfort | grill-friendly | light | no-grill`), `season` (`spring | summer | fall | winter`). A duplicate id returns `conflict` (use `update_night_vibe`). Returns `{ id }`.
+
+### `update_night_vibe(id, …patch)`
+
+Patch an existing vibe — pass only the fields to change. Editing `vibe` re-embeds it on the next cron tick. Unknown id → `not_found`. Returns `{ id, updated_fields }`.
+
+### `remove_night_vibe(id)`
+
+Remove a vibe by `id` (its derived embedding is pruned on the next tick). Unknown id → `not_found`. Returns `{ id, removed: true }`.
+
+---
+
 ## Grocery list tools
 
 The grocery list is the SKU-free buy list for the next order (D1-backed, `grocery_list` table). It accumulates intent across the week; resolution to a Kroger SKU and the cart write are deferred to order placement (`place_order`). Writes are D1-backed — no `commit_sha`. See `docs/SCHEMAS.md` for the item schema.

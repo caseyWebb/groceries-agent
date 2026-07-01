@@ -16,6 +16,7 @@ import { ToolError, runTool } from "./errors.js";
 import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
+import { registerNightVibeTools } from "./night-vibe-tools.js";
 import { registerOrderTools } from "./order-tools.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
 import { registerNoteTools, registerStoreNoteTools } from "./notes-tools.js";
@@ -756,6 +757,10 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
   // pantry → D1 pantry table), so they take the corpus store + D1 (env) + tenant id.
   registerWriteTools(server, corpus, env, tenant.id);
   registerGroceryListTools(server, env, tenant.id);
+
+  // Night-vibe palette CRUD (per-tenant): the durable "shape of a week" propose_meal_plan
+  // samples. Private profile data, siblings of staples/stockup.
+  registerNightVibeTools(server, env, tenant.id);
 
   // Cooking history + meal plan: read_meal_plan (resume), update_meal_plan, and
   // retrospective. Meal plan reads/writes go through the D1 `meal_plan` table; the

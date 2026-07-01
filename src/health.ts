@@ -20,6 +20,7 @@ export const HEALTH_JOBS = [
   "recipe-classify",
   "recipe-index",
   "recipe-embed",
+  "night-vibe-embed",
   "email",
   "discovery-sweep",
 ] as const;

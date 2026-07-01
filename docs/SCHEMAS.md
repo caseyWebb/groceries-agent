@@ -154,6 +154,33 @@ embedding  TEXT  -- JSON array of EMBED_DIM floats as TEXT; NULL until first der
 updated_at TEXT  -- ISO timestamp of the last (re)embed
 ```
 
+## night_vibes (per-tenant, D1 `night_vibes` + `night_vibe_derived` tables)
+
+Each member's **night-vibe palette** — the durable, editable "shape of a week" `propose_meal_plan` samples (night-vibe-palette capability, migration 0025). A night vibe is a saved `search_recipes` spec (a `vibe` phrase + optional `facets`) plus lifecycle metadata. Per-tenant PRIVATE profile data (siblings of `staples`/`stockup`), never shared; written by the `add_/update_/remove_night_vibe` tools (`src/night-vibe-db.ts`). The per-vibe embedding lives in the sibling `night_vibe_derived`, hash-gated on the vibe text and reconciled Worker-side (`src/night-vibe-vector.ts`, the `night-vibe-embed` job) exactly like `taste_derived`.
+
+```sql
+-- D1 night_vibes table — PRIMARY KEY (tenant, id).
+tenant            TEXT     -- owning member
+id                TEXT     -- stable per-tenant vibe id (slug)
+vibe              TEXT     -- the craving/query phrase (the slot's retrieval query)
+facets            TEXT     -- JSON object: optional hard-gate search facets (NULL = none)
+cadence_days      INTEGER  -- target period; NULL = no cadence pressure (occasional/weighted)
+pinned            INTEGER  -- 1 = sticky weekly intent (placed when due, exempt from the weather reserve)
+base_weight       REAL     -- base sampling weight before debt/weather (NULL → 1)
+weather_affinity  TEXT     -- JSON string[]: weather meal_vibes favoring this vibe (NULL = [])
+weather_antipathy TEXT     -- JSON string[]: weather meal_vibes suppressing it (NULL = [])
+season            TEXT     -- JSON string[]: seasonal lean (NULL = [])
+created_at        TEXT
+updated_at        TEXT
+
+-- D1 night_vibe_derived table — PRIMARY KEY (tenant, id). Worker-derived (hash-gated).
+tenant     TEXT
+id         TEXT
+vibe_hash  TEXT  -- hash of the vibe text the vector was built from (the regeneration gate)
+embedding  TEXT  -- JSON array of EMBED_DIM floats; NULL until first derived (→ "not yet indexed")
+updated_at TEXT
+```
+
 ## overlay (per-tenant, D1 `overlay` table)
 
 Each member's **subjective view** of shared recipes — the overlay merged onto shared content at read time. Keyed by recipe slug. Holds **only** the two mutually-exclusive disposition marks `favorite` (loved) and `reject` (hidden-from-me). Visibility is **opt-out**: an absent row means **neutral (available)** — `favorite: false`, `reject: false`. `last_cooked` is **not** here — it's derived from this member's D1 `cooking_log` table. Stored as rows in the D1 `overlay(tenant, recipe, favorite, reject)` table. There is no `status` lifecycle and no `rating` column. Agent-writable via `toggle_favorite` (favorite) and `toggle_reject` (reject).

@@ -7,10 +7,10 @@
 
 ## 2. Night-vibe palette store + embedding reconcile
 
-- [ ] 2.1 Migration `migrations/d1/NNNN_night_vibes.sql`: per-tenant `night_vibes` (id, tenant, vibe, facets JSON, cadence_days, weather_affinity JSON, season JSON, timestamps) + a derived-embedding store (sibling table or column, `vibe_hash`-gated), mirroring `taste_derived`.
-- [ ] 2.2 `src/night-vibe-db.ts` (through `src/db.ts`) + CRUD tools (`list_night_vibes`, `add_night_vibe`, `update_night_vibe`, `remove_night_vibe`) — per-tenant, structured errors, throw-free.
-- [ ] 2.3 A cron reconcile pass (mirror `src/taste-vector.ts` / `recipe-embeddings.ts`): hash-gated embed on text change, prune on delete; wire into `scheduled()` in `src/index.ts` and register a `job_health` row.
-- [ ] 2.4 Tests for the reconcile (hash gate ⇒ steady-state no-op; prune on delete; unembedded vibe treated as not-yet-indexed).
+- [x] 2.1 Migration `migrations/d1/0025_night_vibes.sql`: per-tenant `night_vibes` (tenant, id, vibe, facets JSON, cadence_days, pinned, base_weight, weather_affinity/antipathy JSON, season JSON, timestamps) + sibling `night_vibe_derived` (`vibe_hash`-gated embedding), mirroring `taste_derived`. Applies cleanly (`wrangler d1 migrations apply DB --local`).
+- [x] 2.2 `src/night-vibe-db.ts` (through `src/db.ts`) + `src/night-vibe-tools.ts` CRUD tools (`list_/add_/update_/remove_night_vibe`) — per-tenant, structured errors, throw-free; registered in `buildServer`.
+- [x] 2.3 `src/night-vibe-vector.ts`: `reconcileNightVibeVectors` (hash-gated embed on text change, prune on delete) + `runNightVibeVectorJob` wired into `scheduled()` phase 3; registered as the `night-vibe-embed` `job_health`/`HEALTH_JOBS` job.
+- [x] 2.4 `test/night-vibe-vector.test.ts` (5 passing): hash-gate no-op; re-embed on change; new vibe; prune-on-delete; mixed pass.
 
 ## 3. `propose_meal_plan` tool
 
