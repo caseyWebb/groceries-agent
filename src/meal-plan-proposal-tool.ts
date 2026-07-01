@@ -22,6 +22,8 @@ import { readNightVibes, readNightVibeVectors, readVibeLastSatisfied, type Night
 import { debt, sampleWeek, DEFAULT_CADENCE_PARAMS, type NightVibeSpec } from "./night-vibe-schedule.js";
 import { assembleProposal, type ProposalCtx } from "./meal-plan-proposal.js";
 import type { DiversifyCandidate, DiversifyParams } from "./diversify.js";
+import { readPantry } from "./session-db.js";
+import { deriveAtRiskDemand } from "./use-it-up.js";
 
 /** The buildServer closures this tool reuses (memoized per-request reads). */
 export interface ProposeDeps {
@@ -48,7 +50,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
     "propose_meal_plan",
     {
       description:
-        "Propose a week of dinners from the caller's NIGHT-VIBE PALETTE, deterministically and statelessly. Two levels: (1) SHAPE — sample `nights` night-vibe slots weighted by cadence-debt (overdue vibes surface) and weather; (2) FILL — retrieve each slot's vibe by meaning and select a VARIED main (MMR + protein/cuisine caps across the week, not the top-3 lookalikes). Composes rung-1 `pairs_with` corpus sides, flags single-use perishable waste + meal-prep + novelty, and returns per-main `why`. Iterate by re-calling with `lock` (keep these recipes — resolved case-insensitively, respecting your rejects; a lock that's unknown, not-yet-embedded, or rejected comes back as an explicit empty locked slot), `exclude` (swap these out), `nudges` (max_time_total, variety strength — clamped so it can't collapse relevance), and a `seed` (change it for 'give me another week'). Reads cron-captured vectors only — no Workers AI call, no writes (persist a chosen plan with update_meal_plan, threading each main's vibe id as `from_vibe`). Returns { plan, variety, diagnostics }; an unfillable slot is returned as an explicit empty slot, never dropped.",
+        "Propose a week of dinners from the caller's NIGHT-VIBE PALETTE, deterministically and statelessly. Two levels: (1) SHAPE — sample `nights` night-vibe slots weighted by cadence-debt (overdue vibes surface) and weather; (2) FILL — retrieve each slot's vibe by meaning and select a VARIED main (MMR + protein/cuisine caps across the week, not the top-3 lookalikes). Does HOLISTIC use-it-up automatically: derives the caller's at-risk perishables from their PANTRY and spreads them across the week's mains (a multi-serving item can be used across two recipes), subordinate to vibe relevance and the hard gate — no param needed. Composes rung-1 `pairs_with` corpus sides, flags single-use perishable waste + meal-prep + novelty, and returns per-main `why` + `uses_perishables` (what each main actually uses up). Iterate by re-calling with `lock` (keep these recipes — resolved case-insensitively, respecting your rejects; a lock that's unknown, not-yet-embedded, or rejected comes back as an explicit empty locked slot), `exclude` (swap these out), `boost_ingredients` (OVERRIDE — extra items to definitely use up, unioned with the pantry-derived set), `nudges` (max_time_total, variety strength — clamped so it can't collapse relevance), and a `seed` (change it for 'give me another week'). Reads cron-captured vectors only — no Workers AI call, no writes (persist a chosen plan with update_meal_plan, threading each main's vibe id as `from_vibe`). Returns { plan, variety, uncovered_at_risk, diagnostics }; `uncovered_at_risk` names at-risk items the plan couldn't use, and an unfillable slot is returned as an explicit empty slot, never dropped.",
       inputSchema: {
         nights: z.number().int().positive().max(14).optional(),
         seed: z.number().int().optional(),
@@ -69,7 +71,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
         const resolvedSeed = seed ?? Number(now.toISOString().slice(0, 10).replace(/-/g, ""));
         const excludeSet = new Set((exclude ?? []).map((s) => s.toLowerCase()));
 
-        const [index, overlay, lastCooked, owned, embeddings, prefs, operatorConfig, aliases, palette, vibeVectors, lastSatisfied] =
+        const [index, overlay, lastCooked, owned, embeddings, prefs, operatorConfig, aliases, palette, vibeVectors, lastSatisfied, pantry] =
           await Promise.all([
             loadRecipeIndex(env).catch((e) => {
               throw new ToolError("index_unavailable", `the recipe index is unavailable: ${e instanceof Error ? e.message : String(e)}`);
@@ -84,12 +86,13 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
             readNightVibes(env, tenant.id),
             readNightVibeVectors(env, tenant.id),
             readVibeLastSatisfied(env, tenant.id),
+            readPantry(env, tenant.id).catch(() => []),
           ]);
 
         const nightCount = nights ?? num((prefs as Record<string, unknown> | null)?.default_cooking_nights) ?? DEFAULT_NIGHTS;
 
         if (palette.length === 0) {
-          return { plan: [], variety: { distinct_proteins: 0, distinct_cuisines: 0, mean_pairwise_sim: 0, max_pairwise_sim: 0 }, diagnostics: { seed: resolvedSeed, lambda: 0, nights: nightCount, filled: 0, empty: 0 }, note: "no night vibes in the palette — add some with add_night_vibe, then propose again" };
+          return { plan: [], variety: { distinct_proteins: 0, distinct_cuisines: 0, mean_pairwise_sim: 0, max_pairwise_sim: 0 }, uncovered_at_risk: [], diagnostics: { seed: resolvedSeed, lambda: 0, nights: nightCount, filled: 0, empty: 0 }, note: "no night vibes in the palette — add some with add_night_vibe, then propose again" };
         }
 
         // Effective per-tenant index: merge overlay (favorite/reject) + cooking-log last_cooked
@@ -112,6 +115,28 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
         // More variety → lower λ, but clamp to the 0.4 floor below which relevance collapses.
         if (typeof nudges?.variety === "number") diversifyParams.lambda = Math.max(0.4, 1 - nudges.variety);
 
+        // Holistic use-it-up: derive the at-risk DEMAND multiset from the pantry (always-on — no
+        // param needed), then union the explicit `boost_ingredients` override. The corpus
+        // perishable VOCABULARY (alias-normalized union of every recipe's perishable_ingredients)
+        // is the "is this a perishable a recipe can use" test; both it and the pantry names are
+        // normalized through the SAME alias table as the candidate ingredients, so they line up.
+        const perishableVocab = new Set<string>();
+        for (const entry of Object.values(effective)) {
+          for (const item of deps.normalizeItems((entry as Record<string, unknown>).perishable_ingredients, aliases)) perishableVocab.add(item);
+        }
+        const atRiskDemand = deriveAtRiskDemand(
+          pantry.map((row) => ({
+            normalizedName: deps.normalizeItems([(row as Record<string, unknown>).name], aliases)[0] ?? "",
+            quantity: typeof (row as Record<string, unknown>).quantity === "string" ? ((row as Record<string, unknown>).quantity as string) : null,
+            addedAt: typeof (row as Record<string, unknown>).added_at === "string" ? ((row as Record<string, unknown>).added_at as string) : null,
+          })),
+          perishableVocab,
+          now,
+        );
+        // Explicit override: "definitely use these" — honored regardless of pantry/vocab, but never
+        // lowering a larger pantry-derived count for the same item.
+        for (const item of boostItems) atRiskDemand.set(item, Math.max(atRiskDemand.get(item) ?? 0, 1));
+
         // Resolve locks case-insensitively against the index (corpus slugs are NOT lowercased),
         // dropping any also in `exclude`. A lock that resolves to a real, embedded, NON-rejected
         // recipe becomes a locked main; anything else (unknown / unembedded / rejected) becomes an
@@ -128,7 +153,8 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
           if (realSlug && entry && vec && !(entry as { reject?: unknown }).reject) {
             // `effective[slug]` is a FLAT index entry (frontmatter fields directly on it) — NOT
             // a `{ frontmatter }` wrapper (that shape only comes from filterRecipes). Pass it as-is.
-            locked.push(toDiversify(realSlug, entry as Record<string, unknown>, vec, 1));
+            const e = entry as Record<string, unknown>;
+            locked.push(toDiversify(realSlug, e, vec, 1, deps.normalizeItems(e.perishable_ingredients, aliases), deps.normalizeItems(e.ingredients_key, aliases)));
           } else {
             lockedUnresolved.push(raw);
           }
@@ -162,7 +188,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
             poolByVibe.set(slot.id, []); // unembedded / missing → explicit empty slot
             continue;
           }
-          poolByVibe.set(slot.id, buildPool(effective, vibe, vibeVec, embeddings, lastCooked, favoriteVecs, boostItems, rankParams, now, owned, aliases, deps, excludeSet, nudges?.max_time_total));
+          poolByVibe.set(slot.id, buildPool(effective, vibe, vibeVec, embeddings, lastCooked, favoriteVecs, rankParams, now, owned, aliases, deps, excludeSet, nudges?.max_time_total));
           if (slot.reason === "pinned") whyByVibe.set(slot.id, [`your regular “${vibe.vibe}”`]);
           else if (slot.reason === "overdue") whyByVibe.set(slot.id, [`“${vibe.vibe}” is due to come back around`]);
         }
@@ -178,7 +204,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
           requestedNights: nightCount,
           frontmatterBySlug,
           embeddingBySlug: embeddings,
-          boostItems,
+          atRiskDemand,
           lastCooked,
           seed: resolvedSeed,
           params: diversifyParams,
@@ -198,7 +224,6 @@ function buildPool(
   embeddings: Map<string, number[]>,
   lastCooked: Map<string, string>,
   favoriteVecs: number[][],
-  boostItems: string[],
   rankParams: ReturnType<typeof resolveRankParams>,
   now: Date,
   owned: string[],
@@ -228,12 +253,17 @@ function buildPool(
       perishable_ingredients: deps.normalizeItems(fm.perishable_ingredients, aliases),
     });
   }
-  const ranked = rankCandidates(cands, vibeVec, favoriteVecs, boostItems, now, rankParams, POOL_K);
+  // Pool score is PURE vibe relevance (cosine + favorite + freshness) — NO use-it-up boost here.
+  // Holistic use-it-up is owned by the planner's stateful, decrementing coverage term (which sees
+  // the whole week), so applying the uniform per-slot boost too would double-count it.
+  const ranked = rankCandidates(cands, vibeVec, favoriteVecs, [], now, rankParams, POOL_K);
+  const ingredientsBySlug = new Map(cands.map((c) => [c.slug, { perishable: c.perishable_ingredients, key: c.ingredients_key }]));
   const pool: DiversifyCandidate[] = [];
   for (const r of ranked) {
     const vec = embeddings.get(r.slug);
     if (!vec) continue;
-    pool.push(toDiversify(r.slug, (effective[r.slug] as Record<string, unknown>) ?? {}, vec, r.score, r.title, r.protein, r.cuisine, r.time_total));
+    const ing = ingredientsBySlug.get(r.slug);
+    pool.push(toDiversify(r.slug, (effective[r.slug] as Record<string, unknown>) ?? {}, vec, r.score, ing?.perishable ?? [], ing?.key ?? [], r.title, r.protein, r.cuisine, r.time_total));
   }
   return pool;
 }
@@ -243,6 +273,8 @@ function toDiversify(
   fm: Record<string, unknown>,
   embedding: number[],
   score: number,
+  perishable: string[],
+  ingredientsKey: string[],
   title?: string,
   protein?: string | null,
   cuisine?: string | null,
@@ -258,6 +290,9 @@ function toDiversify(
     time_total: timeTotal ?? num(fm.time_total),
     score,
     embedding,
+    // Alias-normalized ingredient sets — the coverage term's matching inputs.
+    perishable_ingredients: perishable,
+    ingredients_key: ingredientsKey,
   };
 }
 

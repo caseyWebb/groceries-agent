@@ -33,6 +33,13 @@ export interface DiversifyCandidate {
   score: number;
   /** The recipe's embedding (EMBED_DIM floats) — drives the redundancy penalty. */
   embedding: number[];
+  /** Alias-normalized waste-prone ingredients (`perishable_ingredients`) — the PERISHABLE tier
+   *  of the holistic at-risk coverage term. Absent/empty → the recipe covers nothing at that
+   *  tier (the term is a no-op for it). */
+  perishable_ingredients?: string[];
+  /** Alias-normalized defining ingredients (`ingredients_key`) — the KEY tier of coverage
+   *  (weighs less than perishable). Absent/empty → no key-tier coverage. */
+  ingredients_key?: string[];
 }
 
 /** One selected pick, annotated with the MMR objective + redundancy at selection time. */
@@ -48,6 +55,9 @@ export interface DiversifiedPick {
   mmr: number;
   /** Max cosine to any already-picked recipe at selection time (0 for the first pick). */
   redundancy: number;
+  /** The at-risk items this pick CLAIMED (decremented from the demand multiset) — what it
+   *  actually uses up, for the caller's `uses_perishables` / `why`. Empty when no demand. */
+  claimed: string[];
 }
 
 /** Tunable knobs for the MMR + facet-spread selection. */
@@ -66,6 +76,19 @@ export interface DiversifyParams {
   /** Small seeded tie-break noise on the MMR objective so a different seed yields a different
    *  (still valid, still near-optimal) week. Kept small relative to the normalized score. */
   jitter: number;
+  /** Weight on the holistic at-risk COVERAGE term (`coverageWeight · cover(c)`, cover ∈ [0,1]).
+   *  Big enough that a saturated cover overcomes a MODERATE relevance gap (the spike's passive
+   *  +0.12 lost to a ~0.22 gap), small enough that a decisively off-vibe cover still loses. The
+   *  primary use-it-up tuning knob. `0` disables coverage (reduces to plain MMR + caps). */
+  coverageWeight: number;
+  /** Per-item coverage weight when an at-risk item is in the candidate's `perishable_ingredients`
+   *  (using an at-risk perishable is the waste-prevention win). Mirrors `RankParams.perishWeight`. */
+  perishWeight: number;
+  /** Per-item coverage weight when an at-risk item is only in `ingredients_key`. < perishWeight. */
+  keyWeight: number;
+  /** Saturation ceiling for the summed per-candidate coverage, in perishable-equivalents — so one
+   *  item-rich recipe can't run away with every slot. Mirrors `RankParams.overlapCap`. */
+  overlapCap: number;
 }
 
 export const DEFAULT_DIVERSIFY_PARAMS: DiversifyParams = {
@@ -74,6 +97,12 @@ export const DEFAULT_DIVERSIFY_PARAMS: DiversifyParams = {
   cuisineCap: 3,
   courseCap: null,
   jitter: 0.02,
+  // Tuning knob (Open Question — task 5.2): with λ=0.65 a saturated 2-item cover contributes
+  // ~0.35 to the objective (overcomes a ~0.5 normalized-relevance gap), a 1-item cover ~0.17.
+  coverageWeight: 0.35,
+  perishWeight: 1.0,
+  keyWeight: 0.4,
+  overlapCap: 2,
 };
 
 /**
@@ -143,6 +172,11 @@ export interface DiversifyState {
   proteinCounts: Map<string, number>;
   cuisineCounts: Map<string, number>;
   courseCounts: Map<string, number>;
+  /** The holistic at-risk DEMAND multiset: alias-normalized item → still-uncovered count. Seeded
+   *  from the caller's pantry (perishables, age-weighted, quantity→count) and DECREMENTED as picks
+   *  claim items — so a multi-serving item (count > 1) can be claimed by several mains across the
+   *  week and a single-count item is credited once. Empty → coverage is a no-op (plain MMR). */
+  remainingAtRisk: Map<string, number>;
 }
 
 export function newDiversifyState(): DiversifyState {
@@ -152,7 +186,53 @@ export function newDiversifyState(): DiversifyState {
     proteinCounts: new Map(),
     cuisineCounts: new Map(),
     courseCounts: new Map(),
+    remainingAtRisk: new Map(),
   };
+}
+
+/**
+ * The holistic coverage gain for one candidate against the STILL-uncovered demand: sum the tiered
+ * weight of each demand item (count > 0) the candidate uses — perishable tier when it's in the
+ * recipe's `perishable_ingredients`, else the lower key tier when only in `ingredients_key` —
+ * saturate at `overlapCap`, and normalize to [0,1] so `coverageWeight · gain` mixes with the other
+ * [0,1] objective terms. Also returns the items CLAIMED (all matched, regardless of saturation —
+ * the recipe genuinely consumes them), which the caller decrements + reports. Alias-normalized set
+ * membership only — NO vectors. A no-op (0, []) when there's no demand or nothing overlaps.
+ */
+export function coverageGain(
+  cand: DiversifyCandidate,
+  remaining: Map<string, number>,
+  params: DiversifyParams,
+): { gain: number; claimed: string[] } {
+  if (remaining.size === 0) return { gain: 0, claimed: [] };
+  const perish = new Set(cand.perishable_ingredients ?? []);
+  const key = new Set(cand.ingredients_key ?? []);
+  let weighted = 0;
+  const claimed: string[] = [];
+  for (const [item, count] of remaining) {
+    if (count <= 0) continue;
+    if (perish.has(item)) {
+      weighted += params.perishWeight;
+      claimed.push(item);
+    } else if (key.has(item)) {
+      weighted += params.keyWeight;
+      claimed.push(item);
+    }
+  }
+  if (claimed.length === 0) return { gain: 0, claimed: [] };
+  const cap = params.overlapCap > 0 ? params.overlapCap : 1;
+  // Sort so the claimed order (→ uses_perishables / why order) is stable regardless of the demand
+  // Map's insertion order (pantry reads have no ORDER BY). The gain is order-independent already.
+  claimed.sort();
+  return { gain: Math.min(weighted, cap) / cap, claimed };
+}
+
+/** Decrement each claimed item's demand by one (floor 0) — the set-cover consumption step. */
+function decrementDemand(remaining: Map<string, number>, claimed: string[]): void {
+  for (const item of claimed) {
+    const cur = remaining.get(item) ?? 0;
+    if (cur > 0) remaining.set(item, cur - 1);
+  }
 }
 
 /**
@@ -174,6 +254,7 @@ export function selectOne(
   let best: DiversifyCandidate | null = null;
   let bestVal = -Infinity;
   let bestRedundancy = 0;
+  let bestClaimed: string[] = [];
   for (const c of pool) {
     if (state.usedSlugs.has(c.slug)) continue;
     if (violatesCap(c, params, state.proteinCounts, state.cuisineCounts, state.courseCounts)) continue;
@@ -183,17 +264,23 @@ export function selectOne(
       if (s > redundancy) redundancy = s;
     }
     const rel = norm.get(c.slug) ?? 0;
-    const val = params.lambda * rel - (1 - params.lambda) * redundancy + jitter(c.slug);
+    // Holistic at-risk coverage: an ADDITIVE, bounded term over the still-uncovered demand — it
+    // only reorders gate survivors (never admits a gated-out recipe) and stays subordinate to
+    // relevance via `coverageWeight` + saturation.
+    const { gain, claimed } = coverageGain(c, state.remainingAtRisk, params);
+    const val = params.lambda * rel - (1 - params.lambda) * redundancy + params.coverageWeight * gain + jitter(c.slug);
     if (val > bestVal || (val === bestVal && best && c.slug.localeCompare(best.slug) < 0)) {
       bestVal = val;
       best = c;
       bestRedundancy = redundancy;
+      bestClaimed = claimed;
     }
   }
   if (!best) return null;
   state.usedSlugs.add(best.slug);
   state.pickedVecs.push(best.embedding);
   tally(best, state.proteinCounts, state.cuisineCounts, state.courseCounts);
+  decrementDemand(state.remainingAtRisk, bestClaimed); // consume what this pick claimed
   return {
     slug: best.slug,
     title: best.title,
@@ -204,6 +291,7 @@ export function selectOne(
     score: best.score,
     mmr: round4(bestVal),
     redundancy: round4(bestRedundancy),
+    claimed: bestClaimed,
   };
 }
 
@@ -211,11 +299,16 @@ export function selectOne(
  *  already chosen. Marks it used, adds its vector (so later picks diversify away from it), and
  *  folds it into the facet caps. Idempotent-ish: re-admitting a used slug double-counts, so
  *  the caller admits each locked recipe once. */
-export function admit(state: DiversifyState, c: DiversifyCandidate): void {
-  if (state.usedSlugs.has(c.slug)) return;
+export function admit(state: DiversifyState, c: DiversifyCandidate, params: DiversifyParams = DEFAULT_DIVERSIFY_PARAMS): DiversifiedPick["claimed"] {
+  if (state.usedSlugs.has(c.slug)) return [];
   state.usedSlugs.add(c.slug);
   state.pickedVecs.push(c.embedding);
   tally(c, state.proteinCounts, state.cuisineCounts, state.courseCounts);
+  // A locked pick consumes its at-risk items too, so the rest of the week doesn't re-cover them
+  // and they aren't falsely reported as still going bad.
+  const { claimed } = coverageGain(c, state.remainingAtRisk, params);
+  decrementDemand(state.remainingAtRisk, claimed);
+  return claimed;
 }
 
 /** Build the seeded per-candidate jitter function (stable per slug, seed-determined) over a

@@ -1,23 +1,28 @@
-// Follow-up validation: a CONTROLLED "use-it-up" scenario that measures how the CURRENT
-// propose_meal_plan composition handles at-risk perishables HOLISTICALLY across a week — not via
-// one explicit use-it-up query, but as the emergent behavior of the uniform per-slot pantry boost.
+// Validation harness for HOLISTIC use-it-up (holistic-use-it-up). A CONTROLLED scenario measuring
+// how propose_meal_plan spreads at-risk perishables across a week — emergently, not via one explicit
+// query — under three mechanisms, as a before/after:
+//   RUN 1 baseline           — no use-it-up at all.
+//   RUN 2 legacy uniform boost — the OLD per-slot pantry-overlap nudge (rankCandidates boost).
+//   RUN 3 holistic coverage    — the NEW stateful, decrementing set-cover term (ctx.atRiskDemand).
 //
 // Everything is SYNTHETIC and controlled so we know exactly which recipe uses which perishable and
 // exactly how vibe-attractive each recipe is. We do NOT use the real corpus here — its perishables
 // are uncontrolled. The embeddings are hand-built 2-D unit vectors placed at chosen ANGLES around
-// each vibe anchor, so every query↔recipe cosine is exactly `cos(Δangle)` and we can size the
-// vibe gap against the known pantry boost.
+// each vibe anchor, so every query↔recipe cosine is exactly `cos(Δangle)` and we can size the vibe
+// gap against each mechanism's lever.
 //
-// Boost budget (src/semantic-search.ts DEFAULT_RANK_PARAMS): the pantry-overlap term is
+// Legacy boost budget (src/semantic-search.ts DEFAULT_RANK_PARAMS): the pantry-overlap term is
 //   pantryWeight · min(Σ, overlapCap)/overlapCap  = 0.12 · min(Σ,2)/2
-// where a perishable at-risk hit contributes perishWeight=1.0. So a recipe with ONE at-risk
-// perishable gets +0.06; with TWO OR MORE it saturates at +0.12. That is the entire lever the
-// tool has to pull an at-risk recipe up over a more vibe-relevant distractor.
+// (a perishable hit = perishWeight 1.0), so ONE at-risk item = +0.06, TWO+ saturate at +0.12 — a
+// uniform per-slot nudge with NO cross-slot coordination and NO quantity awareness. The FAR covers
+// (vibe gap ≈ 0.219 ≫ 0.12) are unwinnable and ground beef never splits → it tops out at 2/4, split 1.
 //
-// Hypothesis under test: the mechanism is a uniform per-slot relevance nudge with NO cross-slot
-// coverage coordination and NO quantity awareness — so when distractors are more vibe-attractive
-// than the cover recipe by more than the boost, at-risk items are MISSED, and a multi-serving item
-// (ground beef) is never deliberately split across two mains.
+// The NEW coverage term (src/diversify.ts selectOne + ctx.atRiskDemand) competes against NORMALIZED
+// pool scores with a saturating, decrementing set-cover credit (coverageWeight 0.35), so it overcomes
+// those gaps AND splits the multi-serving item — reaching the IDEAL 4/4, D-split 2 here. This harness
+// is the §5.2 tuning surface: adjust coverageWeight / quantity→count and re-run against the real corpus.
+//
+// NOTE: uses production DEFAULT params — a regression that weakens coverage will fail the final assert.
 
 import { describe, it } from "vitest";
 
@@ -170,9 +175,9 @@ function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-function toDiversify(slug: string, fm: Record<string, unknown>, embedding: number[], score: number, title?: string, protein?: string | null, cuisine?: string | null, timeTotal?: number | null): DiversifyCandidate {
+function toDiversify(slug: string, fm: Record<string, unknown>, embedding: number[], score: number, perishable: string[], ingredientsKey: string[], title?: string, protein?: string | null, cuisine?: string | null, timeTotal?: number | null): DiversifyCandidate {
   const course = Array.isArray(fm.course) ? fm.course.filter((x): x is string => typeof x === "string") : [];
-  return { slug, title: title ?? str(fm.title) ?? slug, protein: protein ?? str(fm.protein), cuisine: cuisine ?? str(fm.cuisine), course, time_total: timeTotal ?? num(fm.time_total), score, embedding };
+  return { slug, title: title ?? str(fm.title) ?? slug, protein: protein ?? str(fm.protein), cuisine: cuisine ?? str(fm.cuisine), course, time_total: timeTotal ?? num(fm.time_total), score, embedding, perishable_ingredients: perishable, ingredients_key: ingredientsKey };
 }
 
 /** Rank one vibe's facet-gated survivors into a pool, threading boostItems into rankCandidates
@@ -198,17 +203,21 @@ function buildPool(vibe: PVibe, vibeVec: number[], boostItems: string[]): Divers
     });
   }
   const ranked = rankCandidates(cands, vibeVec, favoriteVecs, boostItems, NOW, rankParams, POOL_K);
+  const ingredientsBySlug = new Map(cands.map((cnd) => [cnd.slug, { perishable: cnd.perishable_ingredients, key: cnd.ingredients_key }]));
   const pool: DiversifyCandidate[] = [];
   for (const r of ranked) {
     const vec = embeddings.get(r.slug);
     if (!vec) continue;
-    pool.push(toDiversify(r.slug, (rawIndex[r.slug] as Record<string, unknown>) ?? {}, vec, r.score, r.title, r.protein, r.cuisine, r.time_total));
+    const ing = ingredientsBySlug.get(r.slug);
+    pool.push(toDiversify(r.slug, (rawIndex[r.slug] as Record<string, unknown>) ?? {}, vec, r.score, ing?.perishable ?? [], ing?.key ?? [], r.title, r.protein, r.cuisine, r.time_total));
   }
   return pool;
 }
 
-/** Run the whole 5-night pipeline with a given boost list. No cadence/weather → all 5 vibes land. */
-function runPlan(boostItems: string[]) {
+/** Run the whole 5-night pipeline. `boostItems` feeds the LEGACY uniform pool boost (rankCandidates);
+ *  `demand` feeds the NEW stateful coverage term (ctx.atRiskDemand). No cadence/weather → all 5 vibes
+ *  land, so run-to-run differences are only the use-it-up mechanism under test. */
+function runPlan(boostItems: string[], demand: Record<string, number>) {
   const debtByVibe = new Map<string, number>();
   const specs: NightVibeSpec[] = PALETTE.map((v) => ({ id: v.id }));
   const shape = sampleWeek(specs, [], debtByVibe, PALETTE.length, 1, undefined);
@@ -228,7 +237,7 @@ function runPlan(boostItems: string[]) {
     poolByVibe,
     frontmatterBySlug,
     embeddingBySlug: embeddings,
-    boostItems,
+    atRiskDemand: new Map(Object.entries(demand)),
     lastCooked,
     seed: 1,
     whyByVibe: new Map(),
@@ -236,8 +245,8 @@ function runPlan(boostItems: string[]) {
   return assembleProposal(ctx);
 }
 
-function report(label: string, boostItems: string[]) {
-  const result = runPlan(boostItems);
+function report(label: string, boostItems: string[], demand: Record<string, number>) {
+  const result = runPlan(boostItems, demand);
   const lines: string[] = [];
   lines.push("");
   lines.push("═".repeat(92));
@@ -286,28 +295,35 @@ describe("controlled use-it-up scenario — holistic perishable coverage across 
     console.log("   taco → R3 (beef+cilantro)              fresh → R5 (cilantro)   hearty → any distractor");
     console.log("   ⇒ covers {cilantro, bok choy, salmon, ground beef} = 4/4, and ground beef used by 2 mains (R2 & R3)");
 
-    const base = report("RUN 1 — BASELINE (no use-it-up signal)", []);
-    const useup = report("RUN 2 — USE-IT-UP", [A, B, C, D]);
+    // Quantity-aware demand for the NEW coverage term: A/B/C once, D twice (multi-serving).
+    const DEMAND = { [A]: 1, [B]: 1, [C]: 1, [D]: 2 };
+
+    const base = report("RUN 1 — BASELINE (no use-it-up signal at all)", [], {});
+    const legacy = report("RUN 2 — LEGACY uniform pool boost (the OLD mechanism)", [A, B, C, D], {});
+    const holistic = report("RUN 3 — HOLISTIC coverage (the NEW stateful set-cover term)", [], DEMAND);
 
     console.log("");
     console.log("═".repeat(92));
     console.log("SUMMARY");
     console.log("─".repeat(92));
-    console.log(`  IDEAL          : coverage 4/4, D-split 2`);
-    console.log(`  RUN 1 baseline : coverage ${base.coverage.size}/4 (missed {${base.missing.join(", ") || "—"}}), D-split ${base.dCount}`);
-    console.log(`  RUN 2 use-it-up: coverage ${useup.coverage.size}/4 (missed {${useup.missing.join(", ") || "—"}}), D-split ${useup.dCount}`);
-    const holisticWorks = useup.coverage.size === 4 && useup.dCount >= 2;
+    console.log(`  IDEAL              : coverage 4/4, D-split 2`);
+    console.log(`  RUN 1 baseline     : coverage ${base.coverage.size}/4 (missed {${base.missing.join(", ") || "—"}}), D-split ${base.dCount}`);
+    console.log(`  RUN 2 legacy boost : coverage ${legacy.coverage.size}/4 (missed {${legacy.missing.join(", ") || "—"}}), D-split ${legacy.dCount}`);
+    console.log(`  RUN 3 holistic     : coverage ${holistic.coverage.size}/4 (missed {${holistic.missing.join(", ") || "—"}}), D-split ${holistic.dCount}`);
     console.log("─".repeat(92));
+    const holisticWorks = holistic.coverage.size === 4 && holistic.dCount >= 2;
     if (holisticWorks) {
-      console.log(`  VERDICT: holistic use-it-up WORKS here (coverage 4/4, D split). (Unexpected — inspect the geometry.)`);
+      console.log(`  VERDICT: the NEW holistic coverage term reaches the IDEAL — 4/4 coverage and ground beef`);
+      console.log(`  SPLIT across two mains — where the legacy uniform boost got only ${legacy.coverage.size}/4 with D-split ${legacy.dCount}.`);
+      console.log(`  The stateful, decrementing set-cover coordinates across slots and is quantity-aware.`);
     } else {
-      console.log(`  VERDICT: holistic use-it-up does NOT work today. The boost is a uniform per-slot relevance`);
-      console.log(`  nudge with no cross-slot coverage coordination and no quantity awareness: use-it-up lifted`);
-      console.log(`  the at-risk recipes it COULD win per-slot (${useup.coverage.size}/4 vs baseline ${base.coverage.size}/4), but it still`);
-      console.log(`  misses {${useup.missing.join(", ") || "—"}} (their only cover loses its slot to a more vibe-relevant`);
-      console.log(`  distractor by more than the 0.12 boost) and uses "${D}" in only ${useup.dCount} main (never the 2nd serving).`);
+      console.log(`  VERDICT: holistic coverage did NOT reach IDEAL (coverage ${holistic.coverage.size}/4, D-split ${holistic.dCount}) —`);
+      console.log(`  inspect coverageWeight vs the synthetic vibe gaps (this scenario expects 4/4 + split 2).`);
     }
     console.log("═".repeat(92));
     console.log("");
+
+    // Assert the NEW mechanism achieves what the legacy one could not.
+    if (!holisticWorks) throw new Error(`expected holistic coverage 4/4 + D-split ≥2, got ${holistic.coverage.size}/4 split ${holistic.dCount}`);
   });
 });

@@ -42,7 +42,8 @@ export interface ProposedSlot {
   main: ProposedMain | null;
   empty_reason?: string;
   sides: ProposedSide[];
-  /** The main's perishables that overlap the caller's at-risk `boostItems` (use-it-up). */
+  /** The at-risk items this main actually CLAIMED (decremented from the demand) — what it uses up,
+   *  not merely any perishable it lists (holistic use-it-up). */
   uses_perishables: string[];
   flags: {
     /** Perishables this main uses that no other proposed main shares (single-use waste risk). */
@@ -66,6 +67,10 @@ export interface ProposalResult {
     mean_pairwise_sim: number;
     max_pairwise_sim: number;
   };
+  /** At-risk items the assembled plan did NOT cover (residual demand > 0) — the honest "still
+   *  going bad" signal, so the caller can re-roll, lock, or shop around them. Empty when the plan
+   *  covers everything (or there was no at-risk demand). */
+  uncovered_at_risk: string[];
   diagnostics: { seed: number; lambda: number; nights: number; filled: number; empty: number };
 }
 
@@ -86,8 +91,10 @@ export interface ProposalCtx {
   frontmatterBySlug: Map<string, Record<string, unknown>>;
   /** slug → embedding (for the variety diagnostics). */
   embeddingBySlug: Map<string, number[]>;
-  /** Normalized at-risk boost items (for the "uses your X" why + waste). */
-  boostItems: string[];
+  /** The holistic at-risk DEMAND multiset (alias-normalized item → count), derived from the
+   *  pantry (+ the `boost_ingredients` override). Seeds the diversify state's `remainingAtRisk`;
+   *  each pick's coverage claims decrement it, and the residual is `uncovered_at_risk`. */
+  atRiskDemand: Map<string, number>;
   /** slug → last_cooked (YYYY-MM-DD); absent = never cooked (novel). */
   lastCooked: Map<string, string>;
   seed: number;
@@ -130,13 +137,16 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
   for (const pool of ctx.poolByVibe.values()) union.push(...pool);
   const jitter = seededJitter(union, ctx.seed, p.jitter);
   const state = newDiversifyState();
+  // Seed the holistic at-risk demand so the cross-slot coverage term can spread it over the week.
+  for (const [item, count] of ctx.atRiskDemand) state.remainingAtRisk.set(item, count);
 
   const chosen: ProposedSlot[] = [];
 
-  // Locked picks first — seed the state so the rest diversify away from them.
+  // Locked picks first — seed the state so the rest diversify away from them (and consume any
+  // at-risk items the locked recipe uses, so they aren't re-covered or reported as still at risk).
   for (const lc of locked) {
-    admit(state, lc);
-    chosen.push({ vibe_id: null, reason: "locked", main: mainOf(lc, ctx.frontmatterBySlug.get(lc.slug)), sides: [], uses_perishables: [], flags: {}, why: ["locked"] });
+    const claimed = admit(state, lc, p);
+    chosen.push({ vibe_id: null, reason: "locked", main: mainOf(lc, ctx.frontmatterBySlug.get(lc.slug)), sides: [], uses_perishables: claimed, flags: {}, why: ["locked"] });
   }
   // Unresolved locks become explicit empty locked slots (never silently dropped).
   for (const raw of ctx.lockedUnresolved ?? []) {
@@ -157,11 +167,10 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
       chosen.push({ vibe_id: slot.id, reason: slot.reason, main: null, empty_reason: "no candidate cleared the variety caps", sides: [], uses_perishables: [], flags: {}, why });
       continue;
     }
-    chosen.push({ vibe_id: slot.id, reason: slot.reason, main: mainOf(pick, ctx.frontmatterBySlug.get(pick.slug)), sides: [], uses_perishables: [], flags: {}, why });
+    chosen.push({ vibe_id: slot.id, reason: slot.reason, main: mainOf(pick, ctx.frontmatterBySlug.get(pick.slug)), sides: [], uses_perishables: pick.claimed, flags: {}, why });
   }
 
   // Compose each plate now that all mains are chosen (waste needs the full set).
-  const boost = new Set(ctx.boostItems);
   // Which perishables does each chosen main use (for the "single-use" cross-main check)?
   const perishByMain = new Map<string, string[]>();
   for (const slot of chosen) {
@@ -194,10 +203,9 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
       slot.why.push("never cooked before");
     }
 
-    // Use-it-up: perishables the main uses that are on the caller's at-risk list.
-    const uses = [...new Set(perish)].filter((item) => boost.has(item));
-    slot.uses_perishables = uses;
-    for (const item of uses) slot.why.push(`uses your ${item}`);
+    // Use-it-up: `uses_perishables` was set at fill time to the at-risk items this main actually
+    // CLAIMED (decremented from the demand) — not merely any perishable it lists. Explain each.
+    for (const item of slot.uses_perishables) slot.why.push(`uses your ${item} (going bad)`);
   }
 
   const mains = chosen.map((s) => s.main).filter((m): m is ProposedMain => m != null);
@@ -205,6 +213,9 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
     mains.map((m) => ({ slug: m.slug, protein: m.protein, cuisine: m.cuisine })),
     ctx.embeddingBySlug,
   );
+
+  // Residual: at-risk demand the whole plan couldn't cover (count still > 0) — the honest waste view.
+  const uncoveredAtRisk = [...state.remainingAtRisk.entries()].filter(([, n]) => n > 0).map(([item]) => item).sort();
 
   const plan = chosen;
   const filled = mains.length;
@@ -216,6 +227,7 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
       mean_pairwise_sim: wd.meanPairwiseSim,
       max_pairwise_sim: wd.maxPairwiseSim,
     },
+    uncovered_at_risk: uncoveredAtRisk,
     diagnostics: {
       seed: ctx.seed,
       lambda: p.lambda,
