@@ -43,7 +43,15 @@ import {
   type Resolution,
 } from "./corpus-db.js";
 import { confirmIdentity, NORMALIZE_MODEL, type IdentityConfirm, type ScoredCandidate } from "./ingredient-classify.js";
-import { buildResolution, novelResolution, NORMALIZE_CONFIRM_MIN, NORMALIZE_TOP_K } from "./ingredient-normalize.js";
+import {
+  buildResolution,
+  novelResolution,
+  validateCanonicalId,
+  lexicalKey,
+  buildLexicalMap,
+  NORMALIZE_CONFIRM_MIN,
+  NORMALIZE_TOP_K,
+} from "./ingredient-normalize.js";
 import { writeJobHealth, writeJobRun } from "./health.js";
 
 /** The background-job name the pass records its health + per-run history under. */
@@ -109,6 +117,9 @@ interface AuditContext {
   aliasTarget: Map<string, string>;
   identityVecs: { id: string; embedding: number[] }[];
   knownIds: Set<string>;
+  /** lexical form → survivor over surviving NODE IDS only (a variant's own alias row must not
+   *  self-satisfy it — node ids are the mechanical-identity reference set here). */
+  lexical: Map<string, string>;
 }
 
 /** Follow the representative chain to the surviving id (cycle-safe; mirrors readResolver). */
@@ -146,6 +157,44 @@ async function auditOne(
 ): Promise<{ kind: "kept" | "repointed" | "minted"; mergedOrphan: boolean }> {
   const previous = resolveVia(ctx.rep, row.id);
 
+  // Lexical fast path: a variant whose punctuation-insensitive form uniquely equals a surviving
+  // node id is mechanically that product — keep (hit = the standing survivor) or re-point,
+  // deterministically, with no confirm call.
+  const lexicalHit = ctx.lexical.get(lexicalKey(row.variant));
+  if (lexicalHit !== undefined) {
+    const resolution: Resolution = {
+      term: row.variant,
+      id: lexicalHit,
+      edges: [],
+      log: {
+        term: row.variant,
+        outcome: "same",
+        resolved_id: lexicalHit,
+        candidates: [],
+        model: null,
+        detail: { audit: "alias", previous_id: previous, note: "lexical_match" },
+      },
+    };
+    await deps.commit(resolution);
+    ctx.aliasTarget.set(row.variant, lexicalHit);
+    const lexTarget = resolveVia(ctx.rep, lexicalHit);
+    if (lexTarget === previous) return { kind: "kept", mergedOrphan: false };
+    let stillThere = false;
+    for (const id of ctx.aliasTarget.values()) {
+      if (resolveVia(ctx.rep, id) === previous) {
+        stillThere = true;
+        break;
+      }
+    }
+    let merged = false;
+    if (!stillThere && ctx.sourceOf.get(previous) !== "human") {
+      await deps.merge(previous, lexTarget);
+      ctx.rep.set(previous, lexTarget);
+      merged = true;
+    }
+    return { kind: "repointed", mergedOrphan: merged };
+  }
+
   // Candidates: cosine top-K over the registry, plus the currently-mapped survivor when
   // retrieval misses it — scored from its registry vector when it has one, unscored otherwise
   // (ScoredCandidate models the absent score; the confirm sees it without a similarity).
@@ -162,7 +211,9 @@ async function auditOne(
   let resolution: Resolution;
   try {
     const confirm = await deps.confirm(row.variant, candidates);
-    resolution = decide(deps, row, vec, ranked, candidates, confirm, previous, ctx.knownIds);
+    resolution = decide(deps, row, vec, ranked, candidates, confirm, previous, ctx.knownIds, (id) =>
+      resolveVia(ctx.rep, id),
+    );
   } catch (e) {
     // Contract-invalid confirm → KEEP the standing mapping and stamp it (a re-audit never
     // destroys on an undecidable — committing the same mapping is the keep, born-stamped).
@@ -227,7 +278,34 @@ function decide(
   confirm: IdentityConfirm,
   previous: string,
   knownIds: Set<string>,
+  resolve: (id: string) => string,
 ): Resolution {
+  // No-op keep guard: a NOVEL whose proposed canonical resolves to the STANDING survivor only
+  // re-derives the standing mapping — without this, buildResolution would mint the VARIANT
+  // verbatim (via the collision fallback, or via the invalid-canonical fallback when the
+  // standing id itself fails mint validation, e.g. it contains a comma — the production
+  // sockeye id). The RAW trimmed canonical is compared, not just the validated one: mint
+  // validation gates what a NEW id may look like, not whether an EXISTING id was re-derived.
+  if (confirm.outcome === "novel") {
+    const canonical =
+      validateCanonicalId(confirm.canonical) ??
+      (typeof confirm.canonical === "string" && confirm.canonical.trim() ? confirm.canonical.trim() : null);
+    if (canonical && resolve(canonical) === previous) {
+      return {
+        term: row.variant,
+        id: previous,
+        edges: [],
+        log: {
+          term: row.variant,
+          outcome: "novel",
+          resolved_id: previous,
+          candidates: ranked,
+          model: NORMALIZE_MODEL,
+          detail: { audit: "alias", previous_id: previous, note: "canonical_is_standing", reason: confirm.reason },
+        },
+      };
+    }
+  }
   // The pick guard, capture parity: a same/specialization pick whose chosen candidate is
   // distant rejects to a verbatim NOVEL mint — this corrects the below-guard class (flaky sea
   // salt) even when the classifier repeats its old pick. An UNSCORED chosen candidate (only
@@ -286,6 +364,7 @@ export async function auditAliases(deps: AliasAuditDeps): Promise<AliasAuditSumm
     aliasTarget: new Map(aliasRows.map((a) => [a.variant, a.id])),
     identityVecs,
     knownIds,
+    lexical: buildLexicalMap(identities),
   };
 
   // One batched embed of the tick's variants; a chunk failure throws → the whole tick fails

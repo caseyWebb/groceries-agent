@@ -28,9 +28,18 @@ import {
   deferNovelTerm,
   readSkuCoResolutionPairs,
   mergeIdentities,
+  readIdentitySources,
+  readAliasTargets,
+  repairSegmentOverflow,
+  readCoResolutionRejections,
+  upsertCoResolutionRejection,
+  representativeResolver,
   type Resolution,
   type NormalizationLog,
   type CoResolutionPair,
+  type CoResolutionRejection,
+  type IdentitySourceRow,
+  type AliasAuditRow,
 } from "./corpus-db.js";
 import { confirmIdentity, NORMALIZE_MODEL, type IdentityConfirm, type ScoredCandidate } from "./ingredient-classify.js";
 import { writeJobHealth, writeJobRun } from "./health.js";
@@ -54,6 +63,12 @@ export const NORMALIZE_RETRY_BACKOFF_MS = 30 * 60 * 1000;
 export const NORMALIZE_CORESOLVE_MAX_PER_TICK = 10;
 /** Embedding-less survivor nodes (human mints) backfilled per tick, ahead of the drain. */
 export const NORMALIZE_EMBED_BACKFILL_MAX_PER_TICK = 25;
+/** Backoff before a REJECTED co-resolution pair is re-proposed to the confirm. Long: the pairing
+ *  signal (a shared SKU) barely changes tick to tick, and a survivor-changing merge re-opens the
+ *  pair immediately anyway (the rejection keys on surviving ids). */
+export const NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS = 30 * 24 * 60 * 60 * 1000;
+/** Segment-overflow nodes (ids deeper than base::detail) repaired per tick (deterministic, no LLM). */
+export const SEGMENT_REPAIR_MAX_PER_TICK = 5;
 
 export interface NormalizeDeps {
   loadBatch(limit: number, now: number): Promise<string[]>;
@@ -72,6 +87,21 @@ export interface NormalizeDeps {
   coResolutionPairs(limit: number): Promise<CoResolutionPair[]>;
   /** Set `loser`'s representative pointer to `survivor` (the union-find merge primitive). */
   merge(loser: string, survivor: string): Promise<void>;
+  /** Every identity row's id/representative/source/concrete — the lexical fast path + segment repair. */
+  identitySources(): Promise<IdentitySourceRow[]>;
+  /** Every alias mapping (variant → pre-representative id) — the lexical fast path's variant forms. */
+  aliasTargets(): Promise<AliasAuditRow[]>;
+  /** Repair a segment-overflow node onto its 2-segment prefix (the reroot / mint shapes). */
+  repairOverflow(plan: {
+    overflow: string;
+    prefix: string;
+    shape: "reroot" | "mint";
+    prefixNode?: { base: string; detail: string; search_term: string; concrete: boolean };
+  }): Promise<void>;
+  /** Remembered co-resolution rejections (pairs the confirm kept distinct). */
+  mergeRejections(): Promise<CoResolutionRejection[]>;
+  /** Remember (or refresh) a rejected co-resolution pair — `(a, b)` ordered a < b. */
+  rememberRejection(a: string, b: string, now: number): Promise<void>;
   now(): number;
   maxPerTick: number;
   floor: number;
@@ -79,6 +109,8 @@ export interface NormalizeDeps {
   topK: number;
   coResolveMaxPerTick: number;
   embedBackfillMaxPerTick: number;
+  segmentRepairMaxPerTick: number;
+  rejectBackoffMs: number;
 }
 
 export interface NormalizeSummary {
@@ -95,6 +127,14 @@ export interface NormalizeSummary {
   mergeSkipped: number;
   /** Embedding-less nodes (human mints) backfilled into the retrieval set this tick. */
   embedded: number;
+  /** Terms resolved by the deterministic punctuation-equality fast path (no model call). */
+  lexical: number;
+  /** Segment-overflow nodes repaired onto their 2-segment prefix this tick. */
+  segmentRepaired: number;
+  /** Segment-overflow nodes skipped because they are human-sourced (never auto-repaired). */
+  segmentSkipped: number;
+  /** Co-resolution pairs suppressed by a remembered rejection (no confirm call spent). */
+  mergeSuppressed: number;
 }
 
 /** Top-K nearest identity ids to a vector, by cosine, descending. */
@@ -107,6 +147,46 @@ function nearest(
     .map((c) => ({ id: c.id, score: cosineSimilarity(vec, c.embedding) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
+}
+
+/** The punctuation-insensitive lexical form of a term or id: lowercased, every run of
+ *  characters outside [a-z0-9:] collapsed to one space, trimmed. `:` survives so a
+ *  `base::detail` id keeps its shape. Pluralization/word-order folding is deliberately NOT
+ *  attempted here (false-positive risk) — the confirm prompt covers those. */
+export function lexicalKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Build the lexical-identity map: lexical form → representative-resolved survivor, over the
+ * surviving node ids plus (optionally) the alias variants. A term whose lexical form has a
+ * UNIQUE survivor is mechanically that product — SAME with no model call. An ambiguous form
+ * (two distinct survivors) is dropped so the fast path never guesses. Shared with the alias
+ * re-audit (which passes node ids only — a variant's own alias row must not self-satisfy it).
+ */
+export function buildLexicalMap(
+  identities: { id: string; representative: string | null }[],
+  aliases: { variant: string; id: string }[] = [],
+): Map<string, string> {
+  const resolve = representativeResolver(identities);
+  const map = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  const add = (form: string, target: string): void => {
+    const key = lexicalKey(form);
+    if (!key) return;
+    const survivor = resolve(target);
+    const existing = map.get(key);
+    if (existing !== undefined && existing !== survivor) ambiguous.add(key);
+    else map.set(key, survivor);
+  };
+  for (const r of identities) if (!r.representative) add(r.id, r.id);
+  for (const a of aliases) add(a.variant, a.id);
+  for (const k of ambiguous) map.delete(k);
+  return map;
 }
 
 /** A NOVEL resolution (below-floor no-LLM mint, the fail-safe on a bad confirm, or the
@@ -179,6 +259,24 @@ export function buildResolution(
       log: { ...logBase, outcome: "same", resolved_id: id, detail: { reason: confirm.reason } },
     };
   }
+  if (confirm.outcome === "specialization" && confirm.match && confirm.match.includes("::")) {
+    // Segment guard: ids are capped at base::detail, so a specialization of an ALREADY-DETAILED
+    // match cannot mint a deeper id — and the match already carries the distinguishing detail
+    // (the production sockeye class re-derived its own parent's detail). The conservative
+    // resolution is SAME with the match, the demotion logged.
+    const id = confirm.match;
+    return {
+      term,
+      id,
+      edges: mapEdges(confirm.edges, id),
+      log: {
+        ...logBase,
+        outcome: "same",
+        resolved_id: id,
+        detail: { reason: confirm.reason, note: "specialization_demoted", proposed_detail: confirm.detail },
+      },
+    };
+  }
   if (confirm.outcome === "specialization" && confirm.match && confirm.detail) {
     const id = `${confirm.match}::${confirm.detail}`;
     const base = baseOf(id);
@@ -231,7 +329,19 @@ async function resolveOne(
   vec: number[],
   identityVecs: { id: string; embedding: number[] }[],
   knownIds: Set<string>,
+  lexical: Map<string, string>,
 ): Promise<Resolution> {
+  // Lexical fast path: a term whose punctuation-insensitive form uniquely equals a known node
+  // id or alias variant is mechanically the SAME product — resolve with no model call.
+  const hit = lexical.get(lexicalKey(term));
+  if (hit !== undefined && hit !== term) {
+    return {
+      term,
+      id: hit,
+      edges: [],
+      log: { term, outcome: "same", resolved_id: hit, candidates: [], model: null, detail: { note: "lexical_match" } },
+    };
+  }
   const ranked = nearest(vec, identityVecs, deps.topK);
   // Below the floor (or nothing to compare) → NOVEL, no confirm call spent.
   if (ranked.length === 0 || ranked[0].score < deps.floor) {
@@ -273,6 +383,10 @@ function emptySummary(): NormalizeSummary {
     mergeRejected: 0,
     mergeSkipped: 0,
     embedded: 0,
+    lexical: 0,
+    segmentRepaired: 0,
+    segmentSkipped: 0,
+    mergeSuppressed: 0,
   };
 }
 
@@ -300,6 +414,68 @@ async function backfillEmbeddings(deps: NormalizeDeps, summary: NormalizeSummary
 }
 
 /**
+ * The segment-overflow repair: a deterministic per-tick sub-pass (no model calls) that converges
+ * any surviving AUTO node whose id is deeper than `base::detail` onto its 2-segment prefix. The
+ * guard in `buildResolution` stops new overflows; this heals the live backlog (production: the
+ * sockeye node, whose 2-segment prefix was orphan-merged INTO it — the reroot shape). Three
+ * shapes: prefix resolves elsewhere → plain merge; prefix resolves TO the overflow → reroot;
+ * prefix missing → mint-and-point. Human overflow nodes are never touched. Idempotent: a
+ * converged registry plans nothing.
+ */
+async function reconcileSegmentOverflow(deps: NormalizeDeps, summary: NormalizeSummary): Promise<void> {
+  let identities: IdentitySourceRow[];
+  try {
+    identities = await deps.identitySources();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[ingredient-normalize] segment-overflow read failed:", msg);
+    return;
+  }
+  const overflows = identities.filter((r) => !r.representative && r.id.split("::").length > 2);
+  if (overflows.length === 0) return;
+  const resolve = representativeResolver(identities);
+  const byId = new Set(identities.map((r) => r.id));
+  let repaired = 0;
+  for (const node of overflows) {
+    if (repaired >= deps.segmentRepairMaxPerTick) break;
+    if (node.source === "human") {
+      summary.segmentSkipped++; // operator intent is never auto-repaired
+      continue;
+    }
+    const segments = node.id.split("::");
+    const prefix = segments.slice(0, 2).join("::");
+    try {
+      if (!byId.has(prefix)) {
+        await deps.repairOverflow({
+          overflow: node.id,
+          prefix,
+          shape: "mint",
+          prefixNode: {
+            base: segments[0],
+            detail: segments[1],
+            search_term: `${segments[0]} ${segments[1]}`,
+            concrete: node.concrete !== 0,
+          },
+        });
+      } else if (resolve(prefix) === node.id) {
+        // The prefix was orphan-merged INTO the overflow (a child-ward chain): a plain merge
+        // would close a representative cycle, so the family is re-rooted at the prefix.
+        await deps.repairOverflow({ overflow: node.id, prefix, shape: "reroot" });
+      } else {
+        await deps.merge(node.id, prefix); // normal union-find merge (cycle-guarded, logged)
+      }
+      summary.segmentRepaired++;
+      repaired++;
+    } catch (e) {
+      // Transient (D1) → the node stays overflowed and is retried next tick (unrepaired IS the
+      // retry state); never fail the tick over the repair.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[ingredient-normalize] segment repair failed for "${node.id}":`, msg);
+    }
+  }
+}
+
+/**
  * The SKU-cache co-resolution pass: two distinct surviving ids that repeatedly resolve to the same
  * Kroger SKU are candidate cross-lexical synonyms (the signal embeddings can't retrieve — zucchini
  * ranks far from courgette). Each candidate goes through the SAME conservative classifier confirm
@@ -309,7 +485,7 @@ async function backfillEmbeddings(deps: NormalizeDeps, summary: NormalizeSummary
  * (the lexicographically smaller id) so a rerun is stable. Bounded per tick; a transient confirm
  * error skips just that pair. Folds its counts into `summary`.
  */
-async function reconcileCoResolution(deps: NormalizeDeps, summary: NormalizeSummary): Promise<void> {
+async function reconcileCoResolution(deps: NormalizeDeps, summary: NormalizeSummary, now: number): Promise<void> {
   let pairs: CoResolutionPair[];
   try {
     pairs = await deps.coResolutionPairs(deps.coResolveMaxPerTick);
@@ -319,7 +495,25 @@ async function reconcileCoResolution(deps: NormalizeDeps, summary: NormalizeSumm
     console.error("[ingredient-normalize] co-resolution read failed:", msg);
     return;
   }
+  if (pairs.length === 0) return;
+  // Rejection memory: a pair the confirm already kept distinct is suppressed for a long backoff
+  // (one classifier call per tick, forever, otherwise — the pecorino/parmesan class). Keys are
+  // the pair's SURVIVING ids, so a survivor-changing merge re-opens the pair immediately. A
+  // reader failure degrades to an un-suppressed tick (one extra confirm), never a failed tick.
+  const pairKey = (a: string, b: string): string => (a < b ? `${a} ${b}` : `${b} ${a}`);
+  let rejections = new Map<string, number>();
+  try {
+    rejections = new Map((await deps.mergeRejections()).map((r) => [pairKey(r.a, r.b), r.decided_at]));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[ingredient-normalize] rejection-memory read failed:", msg);
+  }
   for (const pair of pairs) {
+    const rejectedAt = rejections.get(pairKey(pair.a, pair.b));
+    if (rejectedAt !== undefined && now - rejectedAt < deps.rejectBackoffMs) {
+      summary.mergeSuppressed++;
+      continue;
+    }
     // Never auto-collapse two operator-pinned nodes — respect the human intent on both sides.
     if (pair.aSource === "human" && pair.bSource === "human") {
       summary.mergeSkipped++;
@@ -339,8 +533,11 @@ async function reconcileCoResolution(deps: NormalizeDeps, summary: NormalizeSumm
       continue;
     }
     if (confirm.outcome !== "same" || confirm.match !== pair.b) {
-      // A specialization/novel result means they are distinct products — keep them apart.
+      // A specialization/novel result means they are distinct products — keep them apart, and
+      // REMEMBER it (best-effort: a write failure only re-asks next tick).
       summary.mergeRejected++;
+      const [a, b] = pair.a < pair.b ? [pair.a, pair.b] : [pair.b, pair.a];
+      await deps.rememberRejection(a, b, now).catch(() => {});
       continue;
     }
     // Survivor selection: a human node wins; else the lexicographically smaller id (deterministic).
@@ -378,16 +575,20 @@ export async function reconcileNormalization(deps: NormalizeDeps): Promise<Norma
 
   const identityVecs = terms.length ? await deps.identityEmbeddings() : [];
   const knownIds = terms.length ? await deps.knownIds() : new Set<string>();
+  // The lexical-identity map (punctuation-equality fast path) — surviving ids + alias variants.
+  const lexical = terms.length ? buildLexicalMap(await deps.identitySources(), await deps.aliasTargets()) : new Map<string, string>();
   const vecs = terms.length ? await deps.embed(terms) : []; // a chunk failure throws → the whole tick fails (terms stay queued)
 
   for (let i = 0; i < terms.length; i++) {
     const term = terms[i];
     const vec = vecs[i];
     try {
-      const r = await resolveOne(deps, term, vec, identityVecs, knownIds);
+      const r = await resolveOne(deps, term, vec, identityVecs, knownIds, lexical);
       await deps.commit(r);
       summary.processed++;
       summary[r.log.outcome as "same" | "specialization" | "novel"]++;
+      const note = r.log.detail && typeof r.log.detail === "object" ? (r.log.detail as { note?: unknown }).note : undefined;
+      if (note === "lexical_match") summary.lexical++;
       // Let later terms this tick match a node just minted (append to the retrieval +
       // canonical-collision sets).
       if (r.node) {
@@ -403,10 +604,15 @@ export async function reconcileNormalization(deps: NormalizeDeps): Promise<Norma
     }
   }
 
+  // Repair any segment-overflow nodes (deterministic; runs even on an empty queue so the live
+  // backlog converges without traffic). Runs BEFORE the co-resolution pass so a repaired chain
+  // is what the pairing reads.
+  await reconcileSegmentOverflow(deps, summary);
+
   // After the queue drain, propose cross-lexical merges from the shared SKU cache (a signal the
   // embedding retrieval can't produce). Runs even on an empty queue — a merge candidate can arise
   // purely from new SKU-cache activity between ticks.
-  await reconcileCoResolution(deps, summary);
+  await reconcileCoResolution(deps, summary, now);
   return summary;
 }
 
@@ -424,6 +630,11 @@ export function buildNormalizeDeps(env: Env): NormalizeDeps {
     defer: (term, nextRetryAt) => deferNovelTerm(env, term, nextRetryAt),
     coResolutionPairs: (limit) => readSkuCoResolutionPairs(env, limit),
     merge: (loser, survivor) => mergeIdentities(env, loser, survivor),
+    identitySources: () => readIdentitySources(env),
+    aliasTargets: () => readAliasTargets(env),
+    repairOverflow: (plan) => repairSegmentOverflow(env, plan),
+    mergeRejections: () => readCoResolutionRejections(env),
+    rememberRejection: (a, b, now) => upsertCoResolutionRejection(env, a, b, now),
     now: () => Date.now(),
     maxPerTick: NORMALIZE_MAX_PER_TICK,
     floor: NORMALIZE_FLOOR,
@@ -431,6 +642,8 @@ export function buildNormalizeDeps(env: Env): NormalizeDeps {
     topK: NORMALIZE_TOP_K,
     coResolveMaxPerTick: NORMALIZE_CORESOLVE_MAX_PER_TICK,
     embedBackfillMaxPerTick: NORMALIZE_EMBED_BACKFILL_MAX_PER_TICK,
+    segmentRepairMaxPerTick: SEGMENT_REPAIR_MAX_PER_TICK,
+    rejectBackoffMs: NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS,
   };
 }
 

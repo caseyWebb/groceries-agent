@@ -586,7 +586,12 @@ Example rows (`brand_prefs`):
 ## ingredient identity (shared corpus, D1)
 
 The ingredient normalization layer — a directed identity graph the cron grows itself
-(organic-ingredient-normalization). A canonical **id** is `base` or `base::detail[::detail]`;
+(organic-ingredient-normalization). A canonical **id** is `base` or `base::detail` — at most one
+detail segment: no deterministic path constructs a deeper id (a specialization pick whose match
+already carries a detail is demoted to SAME with the match, logged `specialization_demoted`), and
+a deeper id observed in the registry is repaired onto its 2-segment prefix by a deterministic
+per-tick sub-pass of the capture job (merge / re-root / mint-missing-prefix; logged `merge` with
+`note: "segment_overflow"`);
 the **base** (the id up to the first `::`) keeps the existing lowercase/space form (`ground beef`,
 `olive oil`) so pre-change `sku_cache`/`brand_prefs` keys resolve unchanged, and details are
 opaque discriminators to deterministic code (which compares only full-id or base equality). The
@@ -602,10 +607,26 @@ re-audit passes converge `source='auto'` rows to the hardened classifier rules, 
 the one-shot `audited_at` stamps (NULL = the un-audited backlog): the **alias audit** stamps
 self-aliases (variant = node id) deterministically and re-decides every other auto mapping via
 the classifier (re-point / mint / merge — a stranded alias-less auto node merges into the
-re-decision's node), and the **edge audit** deletes representative-resolved self-loops, resolves
-reverse-pair 2-cycles with one satisfies-direction check, and drops standing auto edges whose
-FROM→TO direction does not hold. Alias + edge rows written by capture/re-confirm are born-stamped
-(`audited_at` set at write time); human rows are never selected by either audit.
+re-decision's node; a re-decision that only re-derives the standing survivor is a keep, logged
+`specialization_demoted` or `canonical_is_standing`), and the **edge audit** deletes
+representative-resolved self-loops, resolves reverse-pair 2-cycles with one satisfies-direction
+check, and drops standing auto edges whose FROM→TO direction ("having FROM acceptably fulfills a
+request for TO") does not hold. A **structural** edge — `X::detail → X` with a surviving
+from-node — is definitionally valid: kept + stamped deterministically, never deleted, no model
+call; a deterministic per-tick pre-pass of the edge audit guarantees every surviving
+`base::detail` node such an edge (born-stamped inserts, missing base minted with a NULL embedding
+for the backfill; logged `edge_restore` with `note: "structural_guarantee"`) and sweeps STAMPED
+rep-resolved self-loop auto edges. A one-shot **replay** re-evaluates every pre-calibration
+`edge_drop` log row once under the current direction check, marking each row's detail
+(`replayed_at` + `replay`) and re-inserting edges whose verdict holds (logged `edge_restore` with
+`replay_of`); a drop whose resolved reverse edge still stands is re-decided as a pair by that one
+check — the true direction restored and a wrongly-kept reverse deleted (logged `edge_drop` with
+`note: "replay_cycle"`), with human and structural reverses immune. A term (or re-audited
+variant) whose punctuation-insensitive lexical form uniquely equals a surviving node id or known
+alias variant resolves SAME deterministically (`note: "lexical_match"`, no model call). Alias +
+edge rows written by capture/re-confirm/the guarantee/the replay are born-stamped (`audited_at`
+set at write time), and the edge audit's drop rows are born-marked `replayed_at`; human rows are
+never selected by any audit.
 
 ```sql
 -- ingredient_identity — canonical nodes. PRIMARY KEY (id).
@@ -637,7 +658,7 @@ audited_at INTEGER  -- one-shot edge-audit stamp; NULL = un-audited backlog; bor
 
 -- novel_ingredient_terms — the capture queue (surface forms not yet placed). PK (term).
 -- ingredient_normalization_log — the decision audit log + evaluated-set (mirrors discovery_log).
--- outcome: same | specialization | novel | merge | error | failed | edge_drop | edge_keep
+-- outcome: same | specialization | novel | merge | error | failed | edge_drop | edge_keep | edge_restore
 --   (edge_* rows are the edge audit's decisions — edge-shaped, filtered out of the admin
 --    Decisions stream, queryable here)
 -- is_reconfirm INTEGER NOT NULL DEFAULT 0  -- 1 = decision from the re-confirm pass, not initial capture
@@ -653,7 +674,18 @@ the commit-time contradiction gate. Re-audit decisions carry an `audit` marker: 
 `audit: "alias"` + `previous_id` (the mapping the re-decision replaced); edge-audit rows
 `audit: "edge"` + the `direction` verdict (`forward | reverse | both | neither`) or a `note`
 (`self_loop` — a deterministic delete; `human_reverse` — the auto side of a 2-cycle lost to a
-human edge). A `merge` row with `note: "merge_cycle_skip"` records a refused merge: the survivor
+human edge; `structural` — a deterministic keep of an `X::detail → X` edge; `structural_guarantee`
+— a pre-pass restore; `replay_cycle` — the losing reverse of a replay pair re-decision, with
+`replay_of` = the replayed log row's id). Edge rows also carry structured `from`/`to`/`kind`
+fields, and `edge_drop` rows a `replayed_at` mark (born-set on new drops; the one-shot replay sets
+it on the pre-calibration backlog together with `replay`: `restored | stands | structural |
+self_loop | human_reverse | endpoint_merged | structural_reverse | human_reverse_standing |
+confirm_failed_safe | unparseable`, plus the verdict `direction` where one was spent). Alias-audit
+keeps that only re-derive the standing mapping log `note: "specialization_demoted"` (with
+`proposed_detail`) or `note: "canonical_is_standing"`; deterministic lexical resolutions log
+`note: "lexical_match"`. A `merge` row with `note: "segment_overflow"` records the overflow
+repair (`reroot: true` for the re-root shape, `minted_prefix: true` when the prefix was minted).
+A `merge` row with `note: "merge_cycle_skip"` records a refused merge: the survivor
 already resolved into the loser's tree, so writing the representative would have closed a cycle
 and the merge no-opped instead.
 
@@ -665,6 +697,23 @@ Example identity rows (id / base / detail):
 | ground beef::fat-80-20 | ground beef | fat-80-20 |
 | green onion | green onion | *(null)* — with alias `scallions → green onion` |
 | chicken::thighs | chicken | thighs — edge `chicken::whole → chicken::thighs` (containment) |
+
+## ingredient_coresolution_rejection (shared corpus, D1)
+
+Co-resolution rejection memory (normalization-audit-calibration): a SKU co-resolution pair the
+classifier confirm rejects (distinct products sharing a Kroger SKU) is remembered here so it is
+not re-proposed — one wasted classifier call per tick otherwise. `(a, b)` are the pair's
+**surviving** ids at decision time, lexicographically ordered; the capture job suppresses a
+remembered pair for `NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS` (30 days), re-confirms once after it
+(a re-rejection refreshes `decided_at`), and a later merge that changes either survivor changes
+the key — so a materially-changed graph re-opens the question immediately.
+
+```sql
+a          TEXT NOT NULL  -- smaller surviving id of the rejected pair
+b          TEXT NOT NULL  -- larger surviving id of the rejected pair
+decided_at INTEGER NOT NULL  -- epoch ms of the (latest) rejection
+-- PRIMARY KEY (a, b)
+```
 
 ## flyer_terms (shared corpus, D1 `flyer_terms` table)
 

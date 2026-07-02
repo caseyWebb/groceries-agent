@@ -72,6 +72,7 @@ const SYSTEM_PROMPT = [
   "- Be CONSERVATIVE. Only pick same when truly interchangeable at the store. When in doubt prefer specialization or novel. Never collapse two distinct products.",
   "- GENERALITY DIRECTION: never pick same when the new term is MORE GENERAL than a candidate. A general product (mozzarella cheese) is NOT a synonym of one of its specific varieties (fresh mozzarella) — choose novel and mint the general base instead. When you mint a general base over candidates that are its specific varieties, ALSO add a general edge FROM each such variety TO the new base: {\"from\":\"<variety>\",\"to\":\"NEW\",\"kind\":\"general\"}. A general edge is DIRECTIONAL like containment — a specific variety satisfies a request for the general product (kielbasa satisfies sausage), but the general product does NOT satisfy a request for the variety.",
   "- PREPARATION words that do not change the product (diced, minced, shredded, softened, chopped) are NOT details: pick same on the base product (diced yellow onion = yellow onion).",
+  "- A term that differs from a candidate id only by punctuation, pluralization, or word order is the SAME product — pick same (salmon fillets skin-on = salmon fillets, skin-on).",
   "- CONTAINMENT edges are DIRECTIONAL: a more complete form satisfies a request for a sub-part. A whole chicken satisfies chicken thighs, but a thigh does NOT satisfy a whole chicken — emit {\"from\":\"<whole>\",\"to\":\"NEW\",\"kind\":\"containment\"}, never the reverse.",
   "- concrete=false only for a generic CLASS (a fresh soft cheese); then add membership edges FROM fitting candidate members TO the new concept: {\"from\":\"<member>\",\"to\":\"NEW\",\"kind\":\"membership\"}.",
   "- Ignore irrelevant noise candidates.",
@@ -97,6 +98,20 @@ const FEW_SHOT: { user: string; out: IdentityConfirm }[] = [
     // specialization of the lookalike), with the noise stripped into the canonical.
     user: 'NEW term: "dried medjool dates (pitted)"\nCANDIDATES: [{"id":"dried fruit blend","similarity":0.74},{"id":"raisins","similarity":0.66}]',
     out: { outcome: "novel", match: null, detail: null, canonical: "medjool dates", concrete: true, edges: [], reason: "dates are a distinct product, not a dried fruit blend variety" },
+  },
+  {
+    // A punctuation-only variant of an existing node: SAME, never a duplicate mint (the live
+    // defect: 'salmon fillets skin-on' minted beside 'salmon fillets, skin-on' at cosine 0.98).
+    user: 'NEW term: "salmon fillets skin-on"\nCANDIDATES: [{"id":"salmon fillets, skin-on","similarity":0.98},{"id":"canned salmon","similarity":0.71}]',
+    out: {
+      outcome: "same",
+      match: "salmon fillets, skin-on",
+      detail: null,
+      canonical: null,
+      concrete: true,
+      edges: [],
+      reason: "punctuation-only variant of the same product",
+    },
   },
   {
     // A GENERAL base arriving over specific varieties: mint the base novel AND back-link each
@@ -265,7 +280,7 @@ export interface DirectionCheck {
 const DIRECTION_VALUES = new Set<SatisfiesDirection>(["forward", "reverse", "both", "neither"]);
 
 const DIRECTION_SYSTEM_PROMPT = [
-  "You audit directed substitution edges in a grocery ingredient identity graph. An edge FROM → TO means: having FROM on hand satisfies a recipe or shopping request for TO. Given ingredients FROM and TO, decide in which direction satisfaction truly holds.",
+  "You audit directed substitution edges in a grocery ingredient identity graph. An edge FROM → TO means: a shopper who has FROM on hand can ACCEPTABLY FULFILL a recipe or shopping request for TO. Satisfaction means 'acceptably fulfills a request for' — NOT 'is the identical product'. Given ingredients FROM and TO, decide in which direction satisfaction truly holds.",
   "",
   'Return STRICT JSON only, no prose: {"direction":"forward"|"reverse"|"both"|"neither","reason":"<short>"}',
   "",
@@ -275,8 +290,9 @@ const DIRECTION_SYSTEM_PROMPT = [
   "- both: truly interchangeable at the store — either satisfies the other.",
   "- neither: neither satisfies the other.",
   "- A more complete form satisfies its derived form, never the reverse: whole spices satisfy a ground-spice request (they can be ground), a whole chicken satisfies chicken thighs; ground cannot become whole, a thigh is not a whole bird.",
-  "- A specific variety satisfies its general product (kielbasa satisfies sausage), but the general product does NOT satisfy a request for the specific variety.",
-  "- DISTINCT PRODUCTS never satisfy each other, however similar they look: different flours (semolina is not all-purpose), a different packing medium (tuna in oil is not tuna in water), a raw ingredient vs a prepared product (a hot pepper is not a hot sauce; garlic powder is not italian seasoning), a different preservation state (frozen fruit is not dried fruit), a different shape a shopper would not accept (spaghetti is not rigatoni). When substituting would change which product the shopper buys, answer neither.",
+  "- A specific variety or member satisfies its general product or category (kielbasa satisfies sausage; a habanero sauce satisfies a request for hot sauces), but the general product or category does NOT satisfy a request for the specific variety.",
+  "- MEMBERSHIP: when TO names a category or concept, ask whether FROM is a member that would acceptably fill a request for that category — the member does not have to EQUAL the category, it has to belong to it.",
+  "- DISTINCT SPECIFIC PRODUCTS at the same level of generality do not satisfy each other, however similar they look: different flours (semolina is not all-purpose), a different packing medium (tuna in oil is not tuna in water), an ingredient FOR MAKING a product is not the product (fruit pectin is not jam; a raw hot pepper is not a hot sauce; garlic powder is not italian seasoning), a different preservation state (frozen fruit is not dried fruit), a different shape a shopper would not accept (spaghetti is not rigatoni). Do NOT use this rule to deny a specific→general/category direction or a whole→derived direction.",
   "- Be CONSERVATIVE: when satisfaction is not clearly true in a direction, do not claim it.",
 ].join("\n");
 
@@ -296,6 +312,26 @@ const DIRECTION_FEW_SHOT: { user: string; out: DirectionCheck }[] = [
   {
     user: 'FROM: "kielbasa"\nTO: "sausage"',
     out: { direction: "forward", reason: "a specific variety satisfies the general product, not the reverse" },
+  },
+  {
+    // Production mistake class: a coated/flavored form of the SAME product still fulfills it.
+    user: 'FROM: "honey raisins"\nTO: "raisins"',
+    out: { direction: "forward", reason: "honey raisins are still raisins; they fulfill a raisin request" },
+  },
+  {
+    // Production mistake class: a member fulfills a request for its category concept.
+    user: 'FROM: "sweet maui mango habanero sauce"\nTO: "hot sauces (various)"',
+    out: { direction: "forward", reason: "a habanero sauce is a hot sauce; a member fulfills the category" },
+  },
+  {
+    // True drop: an ingredient FOR MAKING the category is not a member of it.
+    user: 'FROM: "fruit pectin"\nTO: "jellies and jams (various)"',
+    out: { direction: "neither", reason: "an ingredient for making jam is not jam" },
+  },
+  {
+    // True drop: a different preservation state changes the product.
+    user: 'FROM: "frozen fruit mix"\nTO: "dried fruit blend"',
+    out: { direction: "neither", reason: "frozen fruit is not dried fruit; substituting changes the product" },
   },
 ];
 

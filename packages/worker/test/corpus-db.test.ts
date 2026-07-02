@@ -23,6 +23,12 @@ import {
   deleteIngredientEdge,
   stampEdgeAudited,
   appendNormalizationLog,
+  readCoResolutionRejections,
+  upsertCoResolutionRejection,
+  repairSegmentOverflow,
+  insertAuditedEdge,
+  readUnreplayedEdgeDrops,
+  markEdgeDropReplayed,
   readSkuCache,
   upsertSkuMappings,
   readFlyerTerms,
@@ -524,6 +530,122 @@ describe("ingredient identity / normalization (D1)", () => {
     });
     const pairs = await readSkuCoResolutionPairs(env, 2);
     expect(pairs).toHaveLength(2);
+  });
+});
+
+describe("normalization audit calibration (D1)", () => {
+  it("upsertCoResolutionRejection inserts, refreshes on conflict, and reads back", async () => {
+    const { env, tables } = fakeD1({ tables: { ingredient_coresolution_rejection: [] } });
+    await upsertCoResolutionRejection(env, "parmesan", "pecorino romano", 1000);
+    expect(await readCoResolutionRejections(env)).toEqual([
+      { a: "parmesan", b: "pecorino romano", decided_at: 1000 },
+    ]);
+    await upsertCoResolutionRejection(env, "parmesan", "pecorino romano", 2000); // refresh
+    expect(tables.ingredient_coresolution_rejection).toHaveLength(1);
+    expect(tables.ingredient_coresolution_rejection[0].decided_at).toBe(2000);
+  });
+
+  it("repairSegmentOverflow REROOT clears the prefix's representative and points the overflow, logged", async () => {
+    const OV = "salmon fillets, skin-on::species-atlantic-sockeye::species-atlantic-sockeye";
+    const PREFIX = "salmon fillets, skin-on::species-atlantic-sockeye";
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: OV, base: "salmon fillets, skin-on", representative: null, source: "auto" },
+          { id: PREFIX, base: "salmon fillets, skin-on", representative: OV, source: "auto" },
+        ],
+        ingredient_normalization_log: [],
+      },
+    });
+    await repairSegmentOverflow(env, { overflow: OV, prefix: PREFIX, shape: "reroot" });
+    const byId = new Map(tables.ingredient_identity.map((r) => [r.id, r]));
+    expect(byId.get(PREFIX)?.representative).toBeNull();
+    expect(byId.get(OV)?.representative).toBe(PREFIX);
+    const log = tables.ingredient_normalization_log[0];
+    expect(log).toMatchObject({ term: OV, outcome: "merge", resolved_id: PREFIX });
+    expect(JSON.parse(String(log.detail))).toMatchObject({ note: "segment_overflow", reroot: true });
+  });
+
+  it("repairSegmentOverflow MINT inserts the missing prefix (embedding NULL) and points the overflow", async () => {
+    const OV = "a::b::c";
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [{ id: OV, base: "a", representative: null, source: "auto" }],
+        ingredient_normalization_log: [],
+      },
+    });
+    await repairSegmentOverflow(env, {
+      overflow: OV,
+      prefix: "a::b",
+      shape: "mint",
+      prefixNode: { base: "a", detail: "b", search_term: "a b", concrete: true },
+    });
+    const prefix = tables.ingredient_identity.find((r) => r.id === "a::b");
+    expect(prefix).toMatchObject({ base: "a", detail: "b", search_term: "a b", concrete: 1, source: "auto" });
+    expect(prefix?.embedding ?? null).toBeNull(); // the capture backfill embeds it
+    expect(tables.ingredient_identity.find((r) => r.id === OV)?.representative).toBe("a::b");
+    expect(JSON.parse(String(tables.ingredient_normalization_log[0].detail))).toMatchObject({
+      note: "segment_overflow",
+      minted_prefix: true,
+    });
+  });
+
+  it("insertAuditedEdge born-stamps, is insert-or-ignore, and can mint a missing base", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_edge: [], ingredient_identity: [] },
+    });
+    await insertAuditedEdge(env, "rotel (original)::heat-mild", "rotel (original)", "general", {
+      mintBase: { id: "rotel (original)" },
+    });
+    expect(tables.ingredient_edge).toHaveLength(1);
+    expect(tables.ingredient_edge[0]).toMatchObject({
+      from_id: "rotel (original)::heat-mild",
+      to_id: "rotel (original)",
+      kind: "general",
+      source: "auto",
+    });
+    expect(tables.ingredient_edge[0].audited_at).not.toBeNull(); // born-stamped
+    expect(tables.ingredient_identity[0]).toMatchObject({ id: "rotel (original)", base: "rotel (original)", concrete: 1 });
+    // Idempotent: a re-insert (and a re-mint) is ignored.
+    await insertAuditedEdge(env, "rotel (original)::heat-mild", "rotel (original)", "general");
+    expect(tables.ingredient_edge).toHaveLength(1);
+  });
+
+  it("readUnreplayedEdgeDrops selects only un-marked edge_drop rows, oldest first, bounded", async () => {
+    const { env } = fakeD1({
+      tables: {
+        ingredient_normalization_log: [
+          { id: 3, term: "c -[general]-> d", outcome: "edge_drop", detail: JSON.stringify({ direction: "neither" }) },
+          { id: 1, term: "a -[general]-> b", outcome: "edge_drop", detail: JSON.stringify({ note: "self_loop" }) },
+          { id: 2, term: "x -[general]-> y", outcome: "edge_drop", detail: JSON.stringify({ replayed_at: 500 }) }, // marked
+          { id: 4, term: "kept", outcome: "edge_keep", detail: null }, // wrong outcome
+          { id: 5, term: "e -[membership]-> f", outcome: "edge_drop", detail: null }, // no detail = un-marked
+        ],
+      },
+    });
+    const rows = await readUnreplayedEdgeDrops(env, 10);
+    expect(rows.map((r) => r.id)).toEqual([1, 3, 5]);
+    expect(rows[0].detail).toEqual({ note: "self_loop" });
+    expect(rows[2].detail).toBeNull();
+    expect((await readUnreplayedEdgeDrops(env, 2)).map((r) => r.id)).toEqual([1, 3]); // bounded
+  });
+
+  it("markEdgeDropReplayed rewrites exactly the addressed row's detail", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_normalization_log: [
+          { id: 1, term: "a -[general]-> b", outcome: "edge_drop", detail: JSON.stringify({ direction: "neither" }) },
+          { id: 2, term: "c -[general]-> d", outcome: "edge_drop", detail: null },
+        ],
+      },
+    });
+    await markEdgeDropReplayed(env, 1, { direction: "neither", replayed_at: 1000, replay: "stands" });
+    expect(JSON.parse(String(tables.ingredient_normalization_log[0].detail))).toEqual({
+      direction: "neither",
+      replayed_at: 1000,
+      replay: "stands",
+    });
+    expect(tables.ingredient_normalization_log[1].detail).toBeNull(); // untouched
   });
 });
 

@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { reconcileNormalization, validateCanonicalId, type NormalizeDeps } from "../src/ingredient-normalize.js";
 import { validateConfirm, type IdentityConfirm, type ScoredCandidate } from "../src/ingredient-classify.js";
-import type { Resolution, CoResolutionPair } from "../src/corpus-db.js";
+import type { Resolution, CoResolutionPair, CoResolutionRejection, IdentitySourceRow, AliasAuditRow } from "../src/corpus-db.js";
 import { ToolError } from "../src/errors.js";
+
+type RepairPlan = {
+  overflow: string;
+  prefix: string;
+  shape: "reroot" | "mint";
+  prefixNode?: { base: string; detail: string; search_term: string; concrete: boolean };
+};
 
 type Harness = {
   deps: NormalizeDeps;
@@ -14,6 +21,10 @@ type Harness = {
   /** Every text batch handed to `embed` (backfill readable forms + drained terms). */
   embedCalls: string[][];
   confirmCalls: number;
+  /** Segment-overflow repair plans (the reroot / mint shapes). */
+  repairs: RepairPlan[];
+  /** Co-resolution rejections remembered this run. */
+  remembered: { a: string; b: string; now: number }[];
 };
 
 function harness(opts: {
@@ -27,13 +38,22 @@ function harness(opts: {
   confirm?: (term: string, candidates: ScoredCandidate[]) => Promise<IdentityConfirm>;
   coPairs?: CoResolutionPair[];
   coConfirm?: (term: string, candidates: ScoredCandidate[]) => Promise<IdentityConfirm>;
+  /** Identity rows for the lexical map + segment repair (defaults to `identities` as surviving auto). */
+  identitySources?: IdentitySourceRow[];
+  /** Alias variants for the lexical map. */
+  aliasTargets?: AliasAuditRow[];
+  /** Remembered co-resolution rejections. */
+  rejections?: CoResolutionRejection[];
+  rejectBackoffMs?: number;
 }): Harness {
   const committed: Resolution[] = [];
   const deferred: string[] = [];
   const merges: { loser: string; survivor: string }[] = [];
   const stored: { id: string; embedding: number[] }[] = [];
   const embedCalls: string[][] = [];
-  const h = { committed, deferred, merges, stored, embedCalls, confirmCalls: 0 } as Harness;
+  const repairs: RepairPlan[] = [];
+  const remembered: { a: string; b: string; now: number }[] = [];
+  const h = { committed, deferred, merges, stored, embedCalls, confirmCalls: 0, repairs, remembered } as Harness;
   const embed = opts.embed ?? (async (texts: string[]) => texts.map(() => [1, 0, 0]));
   h.deps = {
     loadBatch: async () => opts.terms,
@@ -67,6 +87,19 @@ function harness(opts: {
     merge: async (loser, survivor) => {
       merges.push({ loser, survivor });
     },
+    identitySources: async () =>
+      (
+        opts.identitySources ??
+        (opts.identities ?? []).map((i) => ({ id: i.id, representative: null, source: "auto" as const }))
+      ).map((r) => ({ ...r })),
+    aliasTargets: async () => (opts.aliasTargets ?? []).map((a) => ({ ...a })),
+    repairOverflow: async (plan) => {
+      repairs.push(plan);
+    },
+    mergeRejections: async () => (opts.rejections ?? []).map((r) => ({ ...r })),
+    rememberRejection: async (a, b, now) => {
+      remembered.push({ a, b, now });
+    },
     now: () => 1000,
     maxPerTick: 25,
     floor: 0.5,
@@ -74,6 +107,8 @@ function harness(opts: {
     topK: 10,
     coResolveMaxPerTick: 10,
     embedBackfillMaxPerTick: 25,
+    segmentRepairMaxPerTick: 5,
+    rejectBackoffMs: opts.rejectBackoffMs ?? 30 * 24 * 60 * 60 * 1000,
   };
   return h;
 }
@@ -502,6 +537,206 @@ describe("reconcileNormalization — SKU co-resolution merge", () => {
     const s = await reconcileNormalization(h.deps);
     expect(h.merges).toHaveLength(0);
     expect(s.merged).toBe(0);
+  });
+});
+
+describe("reconcileNormalization — specialization segment guard", () => {
+  const PREFIX = "salmon fillets, skin-on::species-atlantic-sockeye";
+
+  it("demotes a specialization on an already-detailed match to SAME (the sockeye class)", async () => {
+    const h = harness({
+      terms: ["atlantic sockeye salmon fillets"],
+      identities: [{ id: PREFIX, embedding: [1, 0, 0] }],
+      confirm: async () => confirm({ outcome: "specialization", match: PREFIX, detail: "species-atlantic-sockeye" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    const r = h.committed[0];
+    expect(r.id).toBe(PREFIX); // never `${PREFIX}::species-atlantic-sockeye`
+    expect(r.node).toBeUndefined();
+    expect(r.log).toMatchObject({
+      outcome: "same",
+      resolved_id: PREFIX,
+      detail: { note: "specialization_demoted", proposed_detail: "species-atlantic-sockeye" },
+    });
+    expect(s).toMatchObject({ same: 1, specialization: 0 });
+  });
+
+  it("still specializes a detail-less match unchanged (regression)", async () => {
+    const h = harness({
+      terms: ["80/20 ground beef"],
+      identities: [{ id: "ground beef", embedding: [1, 0, 0] }],
+      confirm: async () => confirm({ outcome: "specialization", match: "ground beef", detail: "fat-80-20" }),
+    });
+    await reconcileNormalization(h.deps);
+    expect(h.committed[0].id).toBe("ground beef::fat-80-20");
+    expect(h.committed[0].node).toBeTruthy();
+  });
+});
+
+describe("reconcileNormalization — lexical-identity fast path", () => {
+  it("resolves a punctuation-only variant SAME with no confirm call", async () => {
+    const h = harness({
+      terms: ["salmon fillets skin-on"],
+      identities: [{ id: "salmon fillets, skin-on", embedding: [1, 0, 0] }],
+      // no confirm handler: a classifier call would throw "confirm not expected"
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(0);
+    expect(h.committed[0]).toMatchObject({ term: "salmon fillets skin-on", id: "salmon fillets, skin-on" });
+    expect(h.committed[0].node).toBeUndefined();
+    expect(h.committed[0].log).toMatchObject({ outcome: "same", model: null, detail: { note: "lexical_match" } });
+    expect(s).toMatchObject({ same: 1, lexical: 1 });
+  });
+
+  it("matches through an alias variant to its survivor", async () => {
+    const h = harness({
+      terms: ["green onions."],
+      identities: [{ id: "green onion", embedding: [1, 0, 0] }],
+      aliasTargets: [{ variant: "green onions.", id: "green onion" }],
+    });
+    await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(0);
+    expect(h.committed[0].id).toBe("green onion");
+  });
+
+  it("skips an ambiguous lexical form (two distinct survivors) — the classifier decides", async () => {
+    const h = harness({
+      terms: ["skin-on salmon"],
+      identities: [
+        { id: "skin on salmon", embedding: [1, 0, 0] },
+        { id: "skin-on, salmon", embedding: [1, 0, 0] },
+      ],
+      confirm: async () => confirm({ outcome: "novel" }),
+    });
+    await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(1); // ambiguity falls through to the normal confirm flow
+  });
+});
+
+describe("reconcileNormalization — segment-overflow repair", () => {
+  const OV = "salmon fillets, skin-on::species-atlantic-sockeye::species-atlantic-sockeye";
+  const PREFIX = "salmon fillets, skin-on::species-atlantic-sockeye";
+  const src = (id: string, representative: string | null = null, source: "auto" | "human" = "auto"): IdentitySourceRow => ({
+    id,
+    representative,
+    source,
+    concrete: 1,
+  });
+
+  it("REROOTS when the prefix resolves TO the overflow (the live production shape)", async () => {
+    const h = harness({
+      terms: [],
+      identitySources: [src(OV), src(PREFIX, OV), src("salmon fillets, skin-on")],
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.repairs).toEqual([{ overflow: OV, prefix: PREFIX, shape: "reroot" }]);
+    expect(h.merges).toHaveLength(0);
+    expect(s.segmentRepaired).toBe(1);
+  });
+
+  it("merges normally when the prefix survives elsewhere", async () => {
+    const h = harness({ terms: [], identitySources: [src(OV), src(PREFIX)] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.repairs).toHaveLength(0);
+    expect(h.merges).toEqual([{ loser: OV, survivor: PREFIX }]);
+    expect(s.segmentRepaired).toBe(1);
+  });
+
+  it("mints a missing prefix and points the overflow at it", async () => {
+    const h = harness({ terms: [], identitySources: [src(OV)] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.repairs).toEqual([
+      {
+        overflow: OV,
+        prefix: PREFIX,
+        shape: "mint",
+        prefixNode: {
+          base: "salmon fillets, skin-on",
+          detail: "species-atlantic-sockeye",
+          search_term: "salmon fillets, skin-on species-atlantic-sockeye",
+          concrete: true,
+        },
+      },
+    ]);
+    expect(s.segmentRepaired).toBe(1);
+  });
+
+  it("skips human overflow nodes and quiesces on a converged registry", async () => {
+    const human = harness({ terms: [], identitySources: [src(OV, null, "human"), src(PREFIX)] });
+    const sHuman = await reconcileNormalization(human.deps);
+    expect(human.repairs).toHaveLength(0);
+    expect(human.merges).toHaveLength(0);
+    expect(sHuman).toMatchObject({ segmentRepaired: 0, segmentSkipped: 1 });
+
+    const converged = harness({ terms: [], identitySources: [src(PREFIX), src("olive oil")] });
+    const sDone = await reconcileNormalization(converged.deps);
+    expect(converged.repairs).toHaveLength(0);
+    expect(sDone).toMatchObject({ segmentRepaired: 0, segmentSkipped: 0 });
+  });
+});
+
+describe("reconcileNormalization — co-resolution rejection memory", () => {
+  const pecorino = () => coPair({ a: "parmesan", b: "pecorino romano", aTerm: "parmesan" });
+
+  it("records a rejection once, then suppresses the pair with no confirm call", async () => {
+    const first = harness({
+      terms: [],
+      coPairs: [pecorino()],
+      coConfirm: async () => confirm({ outcome: "novel" }),
+    });
+    const s1 = await reconcileNormalization(first.deps);
+    expect(s1).toMatchObject({ mergeRejected: 1, mergeSuppressed: 0 });
+    expect(first.remembered).toEqual([{ a: "parmesan", b: "pecorino romano", now: 1000 }]);
+
+    const second = harness({
+      terms: [],
+      coPairs: [pecorino()],
+      rejections: [{ a: "parmesan", b: "pecorino romano", decided_at: 900 }],
+      coConfirm: async () => {
+        throw new Error("no confirm expected — the pair is suppressed");
+      },
+    });
+    const s2 = await reconcileNormalization(second.deps);
+    expect(second.confirmCalls).toBe(0);
+    expect(s2).toMatchObject({ mergeSuppressed: 1, mergeRejected: 0 });
+    expect(second.remembered).toHaveLength(0);
+  });
+
+  it("re-proposes once after the backoff elapses (a re-rejection refreshes the memory)", async () => {
+    const h = harness({
+      terms: [],
+      coPairs: [pecorino()],
+      rejections: [{ a: "parmesan", b: "pecorino romano", decided_at: 800 }],
+      rejectBackoffMs: 100, // now=1000 → 200 elapsed ≥ 100 → eligible again
+      coConfirm: async () => confirm({ outcome: "novel" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(s).toMatchObject({ mergeRejected: 1, mergeSuppressed: 0 });
+    expect(h.remembered).toEqual([{ a: "parmesan", b: "pecorino romano", now: 1000 }]);
+  });
+
+  it("a changed survivor re-opens the pair immediately (the memory keys on survivors)", async () => {
+    const h = harness({
+      terms: [],
+      coPairs: [pecorino()],
+      rejections: [{ a: "parmesan", b: "pecorino", decided_at: 999 }], // an OLD survivor id
+      coConfirm: async () => confirm({ outcome: "novel" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(s.mergeRejected).toBe(1); // key mismatch → not suppressed
+  });
+
+  it("a transient confirm failure records no rejection", async () => {
+    const h = harness({
+      terms: [],
+      coPairs: [pecorino()],
+      coConfirm: async () => {
+        throw new ToolError("storage_error", "AI down");
+      },
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(s.mergeSkipped).toBe(1);
+    expect(h.remembered).toHaveLength(0);
   });
 });
 
