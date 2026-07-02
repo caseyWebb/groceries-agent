@@ -131,6 +131,24 @@ export function fakeD1(
     if (/audited_at IS NULL/i.test(sql)) out = out.filter((r) => r.audited_at == null);
     // Edge-drop replay selection (normalization-audit-calibration).
     if (/\boutcome = \?1/i.test(sql)) eq("outcome", 1);
+    // The unreplayed-drop gauge probe (audit-admin): the SQL mirror of the replay mark —
+    // keep rows whose detail is NULL, un-parseable, non-object, or carries no non-null
+    // `replayed_at` (matches `detail IS NULL OR NOT json_valid(detail) OR
+    // json_extract(detail, '$.replayed_at') IS NULL`).
+    if (/json_extract\(detail, '\$\.replayed_at'\) IS NULL/i.test(sql)) {
+      out = out.filter((r) => {
+        const d = r.detail;
+        if (typeof d !== "string" || !d) return true;
+        try {
+          const v = JSON.parse(d) as unknown;
+          if (!v || typeof v !== "object" || Array.isArray(v)) return true;
+          const mark = (v as Record<string, unknown>).replayed_at;
+          return mark === undefined || mark === null;
+        } catch {
+          return true;
+        }
+      });
+    }
     // The admin edge-decision stream (audit-admin): literal outcome IN ('a', 'b', …).
     const outcomeIn = /\boutcome IN \(([^)]+)\)/i.exec(sql);
     if (outcomeIn) {

@@ -1060,7 +1060,7 @@ export const NormalizeView = ({
           <ReconcileCard s={reconcile} now={now} />
         </div>
       ) : query.tab === "audits" ? (
-        <AuditsTab s={audit.obs} restorations={audit.restorations} rejections={audit.rejections} backoffDays={audit.backoffDays} now={now} />
+        <AuditsTab s={audit.obs} gauges={audit.gauges} restorations={audit.restorations} rejections={audit.rejections} backoffDays={audit.backoffDays} now={now} />
       ) : (
         <>
           {/* The Terms / Edges stream segment — two decision shapes, one deep-linkable param.
