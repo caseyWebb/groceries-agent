@@ -291,7 +291,10 @@ jobs:
           fi
           echo "Satellite/contract files changed in this PR:"
           echo "$changed" | sed 's/^/  - /'
-          base_pkg="$(git show "origin/$BASE:packages/satellite/package.json")" || { echo "::error::packages/satellite/package.json not found on base $BASE — cannot compare the satellite version."; exit 1; }
+          if ! base_pkg="$(git show "origin/$BASE:packages/satellite/package.json" 2>/dev/null)"; then
+            echo "packages/satellite/package.json does not exist on base $BASE — the satellite package is new on this branch (e.g. the scraper→satellite rename), so there is no base version to compare and the bump gate does not apply. The push-side detect-satellite-version job publishes the first release on merge."
+            exit 0
+          fi
           head_pkg="$(cat packages/satellite/package.json)" || { echo "::error::packages/satellite/package.json missing in this PR — the satellite package must keep its version manifest."; exit 1; }
           # Dependency-free strictly-greater semver compare (plain MAJOR.MINOR.PATCH).
           BASE_PKG="$base_pkg" HEAD_PKG="$head_pkg" node -e '
