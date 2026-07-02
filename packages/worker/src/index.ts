@@ -35,6 +35,7 @@ import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, writeJobRu
 import { handleCookbook } from "./cookbook.js";
 import { handleSource } from "./source.js";
 import { handleIngest } from "./ingest.js";
+import { handleSatelliteClaim, handleSatelliteResults } from "./satellite.js";
 import adminApp from "./admin/app.js";
 
 /**
@@ -83,6 +84,12 @@ const defaultHandler = {
     // handled BEFORE the /admin dispatch so it never reaches the admin app's Access
     // middleware. Every other /admin* path stays Access-gated (adminApp below).
     if (url.pathname === "/admin/api/ingest") return handleIngest(request, env);
+    // The satellite PULL CHANNEL (satellite-pull-channel), sibling to the push above but on
+    // top-level `/satellite/*` paths — OUTSIDE `/admin*`, so the Access gate never applies;
+    // the SAME ingest-key bearer auth + rate limit is their sole gate. Outbound-only: the
+    // satellite initiates every call; the Worker opens nothing toward it.
+    if (url.pathname === "/satellite/tasks/claim") return handleSatelliteClaim(request, env);
+    if (url.pathname === "/satellite/results") return handleSatelliteResults(request, env);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
       // The operator admin panel (Hono SSR + islands), gated by Cloudflare Access in the app
       // middleware. `run_worker_first` routes /admin* here before any static asset is served.

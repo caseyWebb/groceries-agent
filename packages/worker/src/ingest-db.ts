@@ -41,25 +41,32 @@ export interface IngestKeyRow {
   status: string; // active | revoked
   last_scraper_version: string | null;
   last_contract_version: string | null;
+  /** The optional tenant BINDING (satellite-pull-channel): NULL = operator-global; else the bound tenant id.
+   *  Governs the pull channel's claim scope ONLY; the recipe-scrape push path stays operator-global. */
+  tenant: string | null;
 }
 
 /**
- * Mint a key for a satellite `label`. Returns the full `secret` ONCE (caller shows it once
- * and discards it); only its hash + prefix are stored. Secret format `ing_live_<hex>`,
- * prefix the first 13 chars (`ing_live_` + 4 hex).
+ * Mint a key for a satellite `label`, optionally BOUND to a tenant. Returns the full `secret`
+ * ONCE (caller shows it once and discards it); only its hash + prefix are stored. Secret format
+ * `ing_live_<hex>`, prefix the first 13 chars (`ing_live_` + 4 hex). A NULL `tenant` mints an
+ * operator-global key (the default; unchanged recipe-scrape behavior); a bound key additionally
+ * claims its own tenant's tenant-scope pull-channel work. The binding is IMMUTABLE (re-mint to
+ * change it); the caller resolves it against the allowlist before minting.
  */
 export async function mintIngestKey(
   env: Env,
   label: string,
   now: number = Date.now(),
-): Promise<{ id: string; secret: string; prefix: string }> {
+  tenant: string | null = null,
+): Promise<{ id: string; secret: string; prefix: string; tenant: string | null }> {
   const id = "ik_" + randomHex(4);
   const secret = "ing_live_" + randomHex(24);
   const prefix = secret.slice(0, 13);
   const keyHash = await sha256Hex(secret);
   await db(env).run(
-    "INSERT INTO ingest_keys (id, label, key_hash, key_prefix, created_at, last_used_at, status) " +
-      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    "INSERT INTO ingest_keys (id, label, key_hash, key_prefix, created_at, last_used_at, status, tenant) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     id,
     label,
     keyHash,
@@ -67,8 +74,9 @@ export async function mintIngestKey(
     now,
     null,
     "active",
+    tenant,
   );
-  return { id, secret, prefix };
+  return { id, secret, prefix, tenant };
 }
 
 /** Revoke a key by id (immediate — the next push with it is rejected). */
@@ -80,7 +88,7 @@ export async function revokeIngestKey(env: Env, id: string): Promise<boolean> {
 /** Roster of keys (most-recent-first) for the admin editor. Never returns a secret/hash. */
 export async function listIngestKeys(env: Env): Promise<IngestKeyRow[]> {
   return db(env).all<IngestKeyRow>(
-    "SELECT id, label, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version " +
+    "SELECT id, label, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version, tenant " +
       "FROM ingest_keys ORDER BY created_at DESC",
   );
 }
@@ -93,7 +101,7 @@ export async function listIngestKeys(env: Env): Promise<IngestKeyRow[]> {
 export async function lookupIngestKey(env: Env, secret: string): Promise<IngestKeyRow | null> {
   const keyHash = await sha256Hex(secret);
   const row = await db(env).first<IngestKeyRow>(
-    "SELECT id, label, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version " +
+    "SELECT id, label, key_prefix, created_at, last_used_at, status, last_scraper_version, last_contract_version, tenant " +
       "FROM ingest_keys WHERE key_hash = ?1 AND status = 'active'",
     keyHash,
   );
@@ -263,6 +271,8 @@ export interface SatelliteLiveness {
   prefix: string;
   created: number;
   status: string;
+  /** The key's tenant BINDING (satellite-pull-channel): NULL = operator-global; else the bound tenant id. */
+  tenant: string | null;
   /** The machine's last reported build (persisted in the retained `last_scraper_version` column). */
   satelliteVersion: string | null;
   contractVersion: string | null;
@@ -338,6 +348,7 @@ export async function readSatelliteLiveness(env: Env, now: number = Date.now()):
       prefix: k.key_prefix,
       created: k.created_at,
       status: k.status,
+      tenant: k.tenant,
       satelliteVersion: k.last_scraper_version,
       contractVersion: k.last_contract_version,
       skew: k.last_contract_version != null && k.last_contract_version !== CONTRACT_VERSION,

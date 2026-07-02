@@ -36,14 +36,16 @@ function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function bearer(request: Request): string | null {
+/** Extract the bearer ingest key from the Authorization header (shared by the push + pull surfaces). */
+export function bearer(request: Request): string | null {
   const h = request.headers.get("authorization") ?? "";
   const m = /^Bearer\s+(.+)$/i.exec(h.trim());
   return m ? m[1].trim() : null;
 }
 
-/** Best-effort per-key fixed-window limiter over KROGER_KV. Returns true when the request is allowed. */
-async function underRateLimit(env: Env, keyId: string, now: number): Promise<boolean> {
+/** Best-effort per-key fixed-window limiter over KROGER_KV. Returns true when the request is allowed.
+ *  Shared by `/admin/api/ingest` (push) and `/satellite/*` (pull) so one key shares one rate bucket. */
+export async function underRateLimit(env: Env, keyId: string, now: number): Promise<boolean> {
   try {
     const bucket = Math.floor(now / 1000 / RL_WINDOW_S);
     const k = `ingest:rl:${keyId}:${bucket}`;
@@ -54,6 +56,87 @@ async function underRateLimit(env: Env, keyId: string, now: number): Promise<boo
   } catch {
     return true; // never let the limiter's own failure reject a valid push
   }
+}
+
+/**
+ * The SHARED raw-observation intake: dedup reads (corpus / rejections / settled-log / in-flight
+ * inbox) + the per-item validate → canonicalize → dedup → persist loop, returning the batch
+ * summary. Both `POST /admin/api/ingest` (recipe-scrape push) and the pull channel's
+ * `POST /satellite/results` (satellite.ts) run their observations through THIS one function, so
+ * the persistence, per-item validation, plausibility bounds, and ARRIVAL DEDUP are identical —
+ * a re-push / late report / double-run dedups to the same landed rows. `origin` is the
+ * human-readable provenance stored on each candidate. May throw a `storage_error` ToolError on a
+ * D1 failure (the caller wraps it into a structured `503`).
+ */
+export async function intakeObservations(
+  env: Env,
+  observations: unknown[],
+  origin: string,
+  keyId: string,
+  now: number,
+): Promise<BatchResponse> {
+  const [sourceMap, rejections, settled, inflight] = await Promise.all([
+    recipeSourceMap(env),
+    readDiscoveryRejections(env),
+    loadSettledUrls(env),
+    ingestCandidateUrls(env),
+  ]);
+  const corpusUrls = extractRecipeSources(sourceMap);
+  const receivedAt = new Date(now).toISOString();
+
+  const results: ItemResult[] = [];
+  let accepted = 0;
+  let deduped = 0;
+  let rejected = 0;
+  const seenThisBatch = new Set<string>();
+
+  for (const raw of observations) {
+    const parsed = parseObservationItem(raw);
+    if (!parsed.ok) {
+      const src = typeof (raw as { source?: unknown })?.source === "string" ? (raw as { source: string }).source : "";
+      results.push({ disposition: "rejected", source: src, reason: parsed.error });
+      rejected++;
+      continue;
+    }
+    const item = parsed.value;
+    const url = canonicalizeUrl(item.source);
+    if (!url) {
+      results.push({ disposition: "rejected", source: item.source, reason: "unresolvable source url" });
+      rejected++;
+      continue;
+    }
+    if (corpusUrls.has(url) || rejections.has(url) || settled.has(url) || inflight.has(url) || seenThisBatch.has(url)) {
+      results.push({ disposition: "deduped", source: url });
+      deduped++;
+      continue;
+    }
+    const written = await insertIngestCandidate(env, {
+      url,
+      title: item.title,
+      content: {
+        ingredients: item.ingredients,
+        instructions: item.instructions,
+        summary: item.summary ?? null,
+        servings: item.servings ?? null,
+        time_total: item.time_total ?? null,
+        time_active: item.time_active ?? null,
+      },
+      origin,
+      keyId,
+      receivedAt,
+    });
+    seenThisBatch.add(url);
+    if (written) {
+      results.push({ disposition: "accepted", source: url });
+      accepted++;
+    } else {
+      // A concurrent insert won the UNIQUE(url) race — count as deduped, not accepted.
+      results.push({ disposition: "deduped", source: url });
+      deduped++;
+    }
+  }
+
+  return { received: observations.length, accepted, deduped, rejected, results };
 }
 
 /**
@@ -101,94 +184,24 @@ export async function handleIngest(request: Request, env: Env, now: number = Dat
   // retained `last_scraper_version` column; the reported contract version drives skew detection.
   await touchIngestKey(env, key.id, batch.satelliteVersion, batch.contractVersion, now).catch(() => {});
 
-  // [4] arrival dedup sets. Pushed candidates dedup against the SETTLED log only (not parks),
-  // so a push supersedes a prior walled `unreachable`/`no_jsonld` park for the same url.
-  // Every read/write below goes through `db()`, which THROWS on a D1 failure; wrap the whole
-  // storage section so a transient db blip returns a structured storage_error, not a bare 500
-  // (this endpoint is wired raw in index.ts with no surrounding try/catch).
+  // [4]+[5] arrival dedup + per-item persist via the SHARED intake (reused by the pull channel's
+  // /satellite/results). Pushed candidates dedup against the SETTLED log only (not parks), so a
+  // push supersedes a prior walled `unreachable`/`no_jsonld` park for the same url. The intake
+  // goes through `db()`, which THROWS on a D1 failure; wrap it so a transient db blip returns a
+  // structured storage_error, not a bare 500 (this endpoint is wired raw in index.ts).
   try {
-  const [sourceMap, rejections, settled, inflight] = await Promise.all([
-    recipeSourceMap(env),
-    readDiscoveryRejections(env),
-    loadSettledUrls(env),
-    ingestCandidateUrls(env),
-  ]);
-  const corpusUrls = extractRecipeSources(sourceMap);
-  const receivedAt = new Date(now).toISOString();
-
-  // [5] per-item: validate, canonicalize, dedup, persist. One bad item (incl. an unknown
-  // observation `kind`) never sinks the batch — it is rejected individually. Only `recipe`
-  // observations exist today; the discriminated-union parse guarantees the narrowed shape.
-  const results: ItemResult[] = [];
-  let accepted = 0;
-  let deduped = 0;
-  let rejected = 0;
-  const seenThisBatch = new Set<string>();
-
-  for (const raw of batch.observations) {
-    const parsed = parseObservationItem(raw);
-    if (!parsed.ok) {
-      const src = typeof (raw as { source?: unknown })?.source === "string" ? (raw as { source: string }).source : "";
-      results.push({ disposition: "rejected", source: src, reason: parsed.error });
-      rejected++;
-      continue;
-    }
-    const item = parsed.value;
-    const url = canonicalizeUrl(item.source);
-    if (!url) {
-      results.push({ disposition: "rejected", source: item.source, reason: "unresolvable source url" });
-      rejected++;
-      continue;
-    }
-    if (
-      corpusUrls.has(url) ||
-      rejections.has(url) ||
-      settled.has(url) ||
-      inflight.has(url) ||
-      seenThisBatch.has(url)
-    ) {
-      results.push({ disposition: "deduped", source: url });
-      deduped++;
-      continue;
-    }
-    const written = await insertIngestCandidate(env, {
-      url,
-      title: item.title,
-      content: {
-        ingredients: item.ingredients,
-        instructions: item.instructions,
-        summary: item.summary ?? null,
-        servings: item.servings ?? null,
-        time_total: item.time_total ?? null,
-        time_active: item.time_active ?? null,
-      },
-      origin: batch.source,
-      keyId: key.id,
-      receivedAt,
-    });
-    seenThisBatch.add(url);
-    if (written) {
-      results.push({ disposition: "accepted", source: url });
-      accepted++;
-    } else {
-      // A concurrent insert won the UNIQUE(url) race — count as deduped, not accepted.
-      results.push({ disposition: "deduped", source: url });
-      deduped++;
-    }
-  }
-
-  const response: BatchResponse = { received: batch.observations.length, accepted, deduped, rejected, results };
+  const response = await intakeObservations(env, batch.observations, batch.source, key.id, now);
   // Record the push for the admin liveness/recent-pushes view (best-effort).
   await recordIngestPush(
     env,
     {
       keyId: key.id,
       source: batch.source,
-      received: batch.observations.length,
-      accepted,
-      deduped,
-      rejected,
-      result: deduped > 0 || rejected > 0 ? "partial" : "accepted",
+      received: response.received,
+      accepted: response.accepted,
+      deduped: response.deduped,
+      rejected: response.rejected,
+      result: response.deduped > 0 || response.rejected > 0 ? "partial" : "accepted",
     },
     now,
   ).catch(() => {});

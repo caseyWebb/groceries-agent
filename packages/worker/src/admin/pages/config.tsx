@@ -12,6 +12,7 @@ import type { Env } from "../../env.js";
 import type { KnobSpec } from "../ui/kit.js";
 import { getDiscoveryConfig, getOperatorConfig, listCorpus } from "../config-api.js";
 import { readSatelliteLiveness, type SatelliteLiveness } from "../../ingest-db.js";
+import { directoryFromEnv } from "../../tenant.js";
 
 /** The Config groups (slug "" = the bare /admin/config Discovery default). */
 const GROUPS: { slug: string; label: string }[] = [
@@ -213,16 +214,16 @@ const RankingGroupPage = ({ config }: { config: import("../../operator-config.js
 );
 
 // ── Ingest Keys group: the satellite key roster (island) ──────────────────────────────────
-const IngestKeysGroupPage = ({ satellites }: { satellites: SatelliteLiveness[] }) => (
+const IngestKeysGroupPage = ({ satellites, members }: { satellites: SatelliteLiveness[]; members: string[] }) => (
   <ConfigShell active="ingest-keys">
     <Section
       title="Ingest keys"
-      blurb="One key per home-network satellite — a machine that logs in to paid recipe sites, extracts recipes, and POSTs them to the Worker, feeding the discovery sweep. Mint a key per satellite; the secret is shown once."
+      blurb="One key per home-network satellite — a machine that logs in to paid recipe sites, extracts recipes, and POSTs them to the Worker, feeding the discovery sweep. Mint a key per satellite; the secret is shown once. Bind a key to a member so its satellite may also claim that member's own pull-channel work."
     >
       <div id="ingest-keys-island">
         <p class="muted">Loading…</p>
       </div>
-      <script type="application/json" id="ingest-keys-props" dangerouslySetInnerHTML={{ __html: serialize({ satellites }) }} />
+      <script type="application/json" id="ingest-keys-props" dangerouslySetInnerHTML={{ __html: serialize({ satellites, members }) }} />
       <script type="module" src="/admin/islands/ingest-keys.js" />
     </Section>
   </ConfigShell>
@@ -230,8 +231,10 @@ const IngestKeysGroupPage = ({ satellites }: { satellites: SatelliteLiveness[] }
 
 export function registerConfigRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get("/config/ingest-keys", async (c) => {
-    const { satellites } = await readSatelliteLiveness(c.env);
-    return c.html(html(<IngestKeysGroupPage satellites={satellites} />));
+    // The allowlisted member ids are the mint dialog's bind-target options (a plain id list; the
+    // key's tenant binding is validated server-side against this same allowlist on mint).
+    const [{ satellites }, members] = await Promise.all([readSatelliteLiveness(c.env), directoryFromEnv(c.env).list()]);
+    return c.html(html(<IngestKeysGroupPage satellites={satellites} members={members} />));
   });
 
   app.get("/config", async (c) => {
