@@ -17,6 +17,7 @@
 // (same column ↔ frontmatter map).
 
 import { db } from "./db.js";
+import { emptyIngredientContext, enqueueNovelTerms, ingredientContext, type IngredientContext } from "./corpus-db.js";
 import type { Env } from "./env.js";
 import { parseMarkdown } from "./parse.js";
 import { validateRecipeContract } from "./recipe-contract.js";
@@ -114,6 +115,18 @@ export interface ProjectionResult {
   projected: number;
   /** Invalid recipes skipped (== errors.length). */
   skipped: number;
+  /**
+   * Distinct projected ingredient ids the current resolver has not placed — the
+   * convergence gauge (watch it fall as the capture job drains the queue). A degraded
+   * (empty-context) pass counts every term, so a resolver-read failure shows as a spike.
+   */
+  unresolved: number;
+  /**
+   * True when the resolver read failed and the pass ran on the empty context (cleaned
+   * passthrough, no capture). The alertable signal — the projection itself still
+   * succeeds, so this rides the summary rather than flipping the job to failed.
+   */
+  degraded: boolean;
   /** The skipped recipes' first error each (recorded to reconcile_errors). */
   errors: ReconcileError[];
 }
@@ -132,6 +145,19 @@ export interface ProjectionDeps {
   loadErrorSlugs(): Promise<string[]>;
   /** The classify pass's derived facets per slug (recipe-facet-derivation), merged into the index. */
   loadClassifiedFacets(): Promise<Map<string, ClassifiedFacets>>;
+  /**
+   * The pass's resolver state, loaded once per pass: a resolve-ONLY context (capture
+   * off — the projection batches its own enqueue via `enqueueNovelTerms` below) plus
+   * whether the read degraded. Must not reject: the real wiring degrades a
+   * resolver-read failure to the empty context (cleaned passthrough, `degraded: true`)
+   * so the projection always projects.
+   */
+  ingredientContext(): Promise<{ ctx: IngredientContext; degraded: boolean }>;
+  /**
+   * Batch-enqueue the pass's distinct unplaced ids to the novel-term queue
+   * (insert-or-ignore; the real wiring is best-effort and never throws).
+   */
+  enqueueNovelTerms(terms: string[]): Promise<void>;
 }
 
 function msg(e: unknown): string {
@@ -147,7 +173,10 @@ function msg(e: unknown): string {
  */
 export async function reconcileRecipeIndex(deps: ProjectionDeps): Promise<ProjectionResult> {
   const paths = (await deps.listRecipePaths()).filter((p) => p.endsWith(".md")).sort();
-  const classified = await deps.loadClassifiedFacets();
+  // One resolve-only IngredientContext per pass: the resolver is read once; capture is
+  // the projection's own single batched flush below, not per-term context enqueues.
+  const [classified, { ctx, degraded }] = await Promise.all([deps.loadClassifiedFacets(), deps.ingredientContext()]);
+  const unplaced = new Set<string>(); // distinct mapped ids the resolver has not placed (the capture set)
   const errors: ReconcileError[] = [];
   const valid: Record<string, Record<string, unknown>> = {}; // slug -> projected entry
   const seenSlugs = new Map<string, string>(); // slug -> first path (duplicate-slug guard)
@@ -195,6 +224,16 @@ export async function reconcileRecipeIndex(deps: ProjectionDeps): Promise<Projec
     for (const f of SUBJECTIVE_FIELDS) delete objective[f];
     delete objective.standalone;
     const effective = mergeEffectiveFacets(frontmatter, classified.get(slug) ?? null);
+    // Re-resolve the ingredient facets through the CURRENT shared resolver: the projected
+    // row carries surviving canonical ids (a new alias / synonym merge reaches the index
+    // next tick, no reclassification) while `recipe_facets` keeps its classify-time
+    // snapshot. Post-merge covers both the classified values and the pre-migration
+    // authored Tier-A fallbacks; unplaced ids are collected for the batched capture flush.
+    effective.ingredients_key = ctx.resolveNames(effective.ingredients_key);
+    effective.perishable_ingredients = ctx.resolveNames(effective.perishable_ingredients);
+    for (const id of [...effective.ingredients_key, ...effective.perishable_ingredients]) {
+      if (!ctx.resolver.ids.has(id)) unplaced.add(id);
+    }
     valid[slug] = normalizeValue({
       ...objective,
       slug,
@@ -223,13 +262,37 @@ export async function reconcileRecipeIndex(deps: ProjectionDeps): Promise<Projec
     }
   }
 
+  // Convergence gauge: distinct projected ids the resolver has not placed. Computed over
+  // the recipes that actually project (after the pairs_with pruning above). A degraded
+  // (empty-context) pass counts every term unresolved — the visible signal of a resolver
+  // read failure, since the projection itself deliberately still succeeds.
+  // NOTE the deliberate capture-vs-gauge divergence: the flush below enqueues the
+  // PRE-pruning `unplaced` set (a pairs_with-dropped recipe's terms still funnel), while
+  // this gauge counts projected rows only.
+  const unresolvedIds = new Set<string>();
+  for (const r of Object.values(valid)) {
+    for (const field of ["ingredients_key", "perishable_ingredients"] as const) {
+      const ids = Array.isArray(r[field]) ? (r[field] as unknown[]) : [];
+      for (const id of ids) if (typeof id === "string" && !ctx.resolver.ids.has(id)) unresolvedIds.add(id);
+    }
+  }
+
   const rows = Object.values(valid)
     .sort((a, b) => String(a.slug).localeCompare(String(b.slug)))
     .map(recipeToRow);
   await deps.replaceRecipes(rows);
   await deps.replaceErrors(errors);
 
-  return { projected: rows.length, skipped: errors.length, errors };
+  // Batched capture flush: ONE insert-or-ignore enqueue of the pass's distinct unplaced
+  // ids — never when degraded (an unreadable resolver must not flood the queue with
+  // terms it cannot check). Awaited so the write isn't orphaned past the invocation,
+  // but a flush failure never fails the pass (the terms stay unresolved and re-enqueue
+  // next tick).
+  if (!degraded && unplaced.size) {
+    await deps.enqueueNovelTerms([...unplaced].sort()).catch(() => {});
+  }
+
+  return { projected: rows.length, skipped: errors.length, unresolved: unresolvedIds.size, degraded, errors };
 }
 
 const INSERT_SQL = `INSERT INTO recipes (${RECIPE_COLUMNS.join(", ")}) VALUES (${RECIPE_COLUMNS.map(
@@ -288,6 +351,17 @@ export function buildProjectionDeps(env: Env, store: CorpusStore, now: () => num
       );
       return new Map(rows.map((r) => [r.slug, parseFacetRow(r)]));
     },
+    // Resolve-only (capture off): the projection flushes its own distinct unplaced set
+    // once per pass. A resolver read failure degrades to the empty context (the
+    // grocery/pantry-write pattern) with `degraded: true` — stored values pass through
+    // in their cleaned form, capture is skipped, and every recipe still projects.
+    ingredientContext: () =>
+      ingredientContext(env, { capture: false }).then(
+        (ctx) => ({ ctx, degraded: false }),
+        () => ({ ctx: emptyIngredientContext(env), degraded: true }),
+      ),
+    // Best-effort by contract (enqueueNovelTerms swallows its own errors).
+    enqueueNovelTerms: (terms) => enqueueNovelTerms(env, terms),
   };
 }
 
@@ -304,7 +378,10 @@ export async function runProjectionJob(env: Env, deps: ProjectionDeps, now: () =
   try {
     const priorSlugs = new Set(await deps.loadErrorSlugs());
     const r = await reconcileRecipeIndex(deps);
-    const summary = { projected: r.projected, skipped: r.skipped };
+    // `unresolved` is the convergence gauge and `degraded` the resolver-read-failure
+    // flag (the job stays ok: the projection genuinely succeeded); the usage-trends AE
+    // point below stays [projected, skipped] — its doubles are consumed positionally.
+    const summary = { projected: r.projected, skipped: r.skipped, unresolved: r.unresolved, degraded: r.degraded };
     await writeJobHealth(env, "recipe-index", { ok: true, last_run_at: startedAt, summary });
     await writeJobRun(env, "recipe-index", {
       ok: true,
