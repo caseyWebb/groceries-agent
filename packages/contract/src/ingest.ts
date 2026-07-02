@@ -239,9 +239,18 @@ export function parseSatelliteEnvelope(input: unknown): ParseResult<NormalizedBa
     };
   }
 
-  // v1 — legacy recipe batch, normalized inward to the recipe-scrape capability.
+  // v1 — legacy recipe batch, normalized inward to the recipe-scrape capability. This fork is
+  // reached only when NEITHER v2 discriminator is present, so a failure here means the batch fits
+  // neither shape (e.g. a v2 producer that dropped `capability` and typo'd `observations`). Report
+  // that plainly rather than only the v1-shaped complaint, which would mislead a v2 producer.
   const r = IngestEnvelopeV1Schema.safeParse(o);
-  if (!r.success) return { ok: false, error: fmtIssues(r.error) };
+  if (!r.success) {
+    return {
+      ok: false,
+      error:
+        "(root): batch matches neither the v1 recipe shape (source, scraper_version, contract_version, recipes[]) nor the v2 capability-tagged shape (capability, source, satellite_version, contract_version, observations[])",
+    };
+  }
   return {
     ok: true,
     value: {

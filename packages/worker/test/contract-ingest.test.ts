@@ -127,4 +127,22 @@ describe("parseSatelliteEnvelope (lenient dual-shape)", () => {
     expect(parseSatelliteEnvelope({ source: "X" }).ok).toBe(false);
     expect(parseSatelliteEnvelope(null).ok).toBe(false);
   });
+
+  it("reports a clear neither-shape error for a v2 batch missing both discriminators (typo'd observations)", () => {
+    // A v2 producer that dropped `capability` and typo'd `observations`→`observation` has neither
+    // v2 discriminator, so it falls to the v1 fork — but must not be rejected with a v1-shaped
+    // complaint (scraper_version/recipes) that misleads a v2 author.
+    const r = parseSatelliteEnvelope({
+      source: "NYT Cooking",
+      satellite_version: "1.0.0",
+      contract_version: CONTRACT_VERSION,
+      observation: [validObservation], // typo: should be `observations`
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("matches neither");
+      expect(r.error).toContain("v1 recipe shape");
+      expect(r.error).toContain("v2 capability-tagged shape");
+    }
+  });
 });
