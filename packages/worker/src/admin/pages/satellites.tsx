@@ -1,23 +1,23 @@
-// Discovery › Scrapers (recipe-ingestion): the read-only operator liveness view of walled-source
-// ingest — one card per scraper machine (health in the /health fresh/stale/never posture,
-// reported scraper + contract version with a skew chip, per-source breakdown), the 24h throughput
+// Discovery › Satellites (recipe-ingestion): the read-only operator liveness view of satellite
+// ingest — one card per satellite machine (health in the /health fresh/stale/never posture,
+// reported satellite + contract version with a skew chip, per-source breakdown), the 24h throughput
 // funnel, and the recent-pushes log. Pure SSR (admin/CLAUDE.md rule 8): no island, no mutation —
-// key management lives in Config › Ingest Keys. Seeded from readScraperLiveness.
+// key management lives in Config › Ingest Keys. Seeded from readSatelliteLiveness.
 
 import { Layout } from "../ui/layout.js";
 import { StatCardGrid, StatCard, Badge } from "../ui/kit.js";
 import { InboxIcon, ActivityIcon, DownloadIcon, ShieldIcon, AlertTriangleIcon } from "../ui/icons.js";
 import { relAge } from "../logs-shared.js";
-import type { ScraperRollup, ScraperLiveness, RecentPush, Health } from "../../ingest-db.js";
+import type { SatelliteRollup, SatelliteLiveness, RecentPush, Health } from "../../ingest-db.js";
 
-/** The Candidates | Scrapers sub-nav shared by both Discovery views. */
-export const DiscoverySubNav = ({ active }: { active: "candidates" | "scrapers" }) => (
+/** The Candidates | Satellites sub-nav shared by both Discovery views. */
+export const DiscoverySubNav = ({ active }: { active: "candidates" | "satellites" }) => (
   <div class="data-nav">
     <a href="/admin/discovery" class={active === "candidates" ? "pill active" : "pill"}>
       Candidates
     </a>
-    <a href="/admin/discovery/scrapers" class={active === "scrapers" ? "pill active" : "pill"}>
-      Scrapers
+    <a href="/admin/discovery/satellites" class={active === "satellites" ? "pill active" : "pill"}>
+      Satellites
     </a>
   </div>
 );
@@ -33,7 +33,7 @@ const RESULT_LABEL: Record<RecentPush["result"], string> = {
   bad_key: "Rejected · bad key",
 };
 
-const LivenessCard = ({ s, now, contractVersion }: { s: ScraperLiveness; now: number; contractVersion: string }) => (
+const LivenessCard = ({ s, now, contractVersion }: { s: SatelliteLiveness; now: number; contractVersion: string }) => (
   <div class="ig-live-card">
     <div class="ig-live-head">
       <div>
@@ -60,9 +60,9 @@ const LivenessCard = ({ s, now, contractVersion }: { s: ScraperLiveness; now: nu
       </div>
     ) : null}
     <div class="ig-live-foot muted small">
-      {s.scraperVersion ? (
+      {s.satelliteVersion ? (
         <>
-          scraper <code>v{s.scraperVersion}</code> · contract <code>{s.contractVersion}</code>
+          satellite <code>v{s.satelliteVersion}</code> · contract <code>{s.contractVersion}</code>
           {s.skew ? (
             <span class="txt-bad">
               {" "}
@@ -71,13 +71,13 @@ const LivenessCard = ({ s, now, contractVersion }: { s: ScraperLiveness; now: nu
           ) : null}
         </>
       ) : (
-        <span>key minted — no scraper has authenticated</span>
+        <span>key minted — no satellite has authenticated</span>
       )}
     </div>
   </div>
 );
 
-const Funnel = ({ rollup }: { rollup: ScraperRollup }) => {
+const Funnel = ({ rollup }: { rollup: SatelliteRollup }) => {
   const a = rollup.funnel.arrival;
   const d = rollup.funnel.downstream;
   const arrival: [string, number][] = [
@@ -113,26 +113,26 @@ const Funnel = ({ rollup }: { rollup: ScraperRollup }) => {
   );
 };
 
-export const ScrapersView = ({ rollup, now }: { rollup: ScraperRollup; now: number }) => (
-  <div class="scrapers">
-    <DiscoverySubNav active="scrapers" />
+export const SatellitesView = ({ rollup, now }: { rollup: SatelliteRollup; now: number }) => (
+  <div class="satellites">
+    <DiscoverySubNav active="satellites" />
 
     <StatCardGrid>
-      <StatCard icon={<InboxIcon size={15} />} label="Scrapers" value={rollup.stats.activeScrapers} sub={`${rollup.stats.sources} sources`} />
+      <StatCard icon={<InboxIcon size={15} />} label="Satellites" value={rollup.stats.activeSatellites} sub={`${rollup.stats.sources} sources`} />
       <StatCard icon={<ActivityIcon size={15} />} label="Fresh" value={rollup.stats.fresh} sub={rollup.stats.stale ? `${rollup.stats.stale} stale` : "all live"} />
       <StatCard icon={<DownloadIcon size={15} />} label="Pushes · 24h" value={rollup.stats.pushes24h} />
       <StatCard icon={<ShieldIcon size={15} />} label="Contract" value={rollup.contractVersion} sub="worker" />
     </StatCardGrid>
 
-    {rollup.activeScrapers.length === 0 ? (
+    {rollup.activeSatellites.length === 0 ? (
       <p class="muted">
-        No scrapers yet. Mint an ingest key in Config › Ingest Keys, then run a scraper on your network that pushes recipes here.
+        No satellites yet. Mint an ingest key in Config › Ingest Keys, then run a satellite on your network that pushes recipes here.
       </p>
     ) : (
       <>
-        <p class="group-label">Scraper liveness</p>
+        <p class="group-label">Satellite liveness</p>
         <div class="ig-live-grid">
-          {rollup.activeScrapers.map((s) => (
+          {rollup.activeSatellites.map((s) => (
             <LivenessCard s={s} now={now} contractVersion={rollup.contractVersion} />
           ))}
         </div>
@@ -151,7 +151,7 @@ export const ScrapersView = ({ rollup, now }: { rollup: ScraperRollup; now: numb
           <thead>
             <tr>
               <th>When</th>
-              <th>Scraper</th>
+              <th>Satellite</th>
               <th>Source</th>
               <th>Batch</th>
               <th>Result</th>
@@ -161,7 +161,7 @@ export const ScrapersView = ({ rollup, now }: { rollup: ScraperRollup; now: numb
             {rollup.pushes.map((p) => (
               <tr>
                 <td class="muted small">{relAge(p.at, now)}</td>
-                <td>{p.scraper}</td>
+                <td>{p.satellite}</td>
                 <td>{p.source}</td>
                 <td>{p.count}</td>
                 <td>
@@ -179,11 +179,11 @@ export const ScrapersView = ({ rollup, now }: { rollup: ScraperRollup; now: numb
   </div>
 );
 
-export const ScrapersPage = ({ rollup, now }: { rollup: ScraperRollup; now: number }) => (
-  <Layout title="Scrapers · grocery-agent admin" active="/admin/discovery" wide>
+export const SatellitesPage = ({ rollup, now }: { rollup: SatelliteRollup; now: number }) => (
+  <Layout title="Satellites · grocery-agent admin" active="/admin/discovery" wide>
     <div class="area-head status-head">
       <h2>Discovery</h2>
     </div>
-    <ScrapersView rollup={rollup} now={now} />
+    <SatellitesView rollup={rollup} now={now} />
   </Layout>
 );
