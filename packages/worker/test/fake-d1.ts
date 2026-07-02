@@ -28,6 +28,7 @@ const PK: Record<string, string[]> = {
   ingredient_edge: ["from_id", "to_id", "kind"],
   novel_ingredient_terms: ["term"],
   ingredient_normalization_log: ["id"],
+  ingredient_coresolution_rejection: ["a", "b"],
   feeds: ["url"],
   discovery_members: ["address"],
   discovery_senders: ["address"],
@@ -60,6 +61,7 @@ const GLOBAL_TABLES = new Set([
   "ingredient_edge",
   "novel_ingredient_terms",
   "ingredient_normalization_log",
+  "ingredient_coresolution_rejection",
   "feeds",
   "discovery_members",
   "discovery_senders",
@@ -123,6 +125,8 @@ export function fakeD1(
     if (/reconfirmed_at IS NULL/i.test(sql)) out = out.filter((r) => r.reconfirmed_at == null);
     // Re-audit eligibility (alias/edge backlog: un-stamped rows only).
     if (/audited_at IS NULL/i.test(sql)) out = out.filter((r) => r.audited_at == null);
+    // Edge-drop replay selection (normalization-audit-calibration).
+    if (/\boutcome = \?1/i.test(sql)) eq("outcome", 1);
     if (/normalized_name = \?2/i.test(sql)) eq("normalized_name", 2);
     // Attributed notes: privacy rule (private=0 OR author=?2), and self-scoped
     // findOwnNote (author=?2 AND created_at=?3).

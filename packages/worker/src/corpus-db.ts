@@ -544,7 +544,7 @@ export async function commitReconfirmEdges(
 /** One decision to append to the normalization audit log. */
 export interface NormalizationLog {
   term: string;
-  outcome: "same" | "specialization" | "novel" | "merge" | "error" | "failed" | "edge_drop" | "edge_keep";
+  outcome: "same" | "specialization" | "novel" | "merge" | "error" | "failed" | "edge_drop" | "edge_keep" | "edge_restore";
   resolved_id?: string | null;
   candidates?: { id: string; score: number }[];
   model?: string | null;
@@ -821,14 +821,16 @@ export interface IdentitySourceRow {
   id: string;
   representative: string | null;
   source: "auto" | "human";
+  /** 0 = concept node. Optional so pre-existing fixtures stay valid (absent = concrete). */
+  concrete?: number | null;
 }
 
 /** Every identity row's id/representative/source (full-table + JS, the module's idiom). */
 export async function readIdentitySources(env: Env): Promise<IdentitySourceRow[]> {
-  const rows = await db(env).all<{ id: string; representative: string | null; source: string | null }>(
-    "SELECT id, representative, source FROM ingredient_identity",
+  const rows = await db(env).all<{ id: string; representative: string | null; source: string | null; concrete: number | null }>(
+    "SELECT id, representative, source, concrete FROM ingredient_identity",
   );
-  return rows.map((r) => ({ id: r.id, representative: r.representative, source: normSource(r.source) }));
+  return rows.map((r) => ({ id: r.id, representative: r.representative, source: normSource(r.source), concrete: r.concrete }));
 }
 
 /** One directed edge under audit (its composite PK). */
@@ -841,6 +843,8 @@ export interface EdgeAuditRow {
 /** An edge row with its `source` — the reverse-pair lookup set (a human reverse wins a 2-cycle). */
 export interface EdgeRow extends EdgeAuditRow {
   source: "auto" | "human";
+  /** Audit stamp (NULL = un-audited backlog). Optional so pre-existing fixtures stay valid. */
+  audited_at?: number | null;
 }
 
 /** A batch of edges ELIGIBLE for re-audit — `source='auto' AND audited_at IS NULL`, oldest
@@ -855,10 +859,10 @@ export async function readEdgeAuditBatch(env: Env, limit: number): Promise<EdgeA
 
 /** The full edge table (with `source`) — the edge audit's reverse-pair lookup set. */
 export async function readAllEdges(env: Env): Promise<EdgeRow[]> {
-  const rows = await db(env).all<{ from_id: string; to_id: string; kind: string; source: string | null }>(
-    "SELECT from_id, to_id, kind, source FROM ingredient_edge",
+  const rows = await db(env).all<{ from_id: string; to_id: string; kind: string; source: string | null; audited_at: number | null }>(
+    "SELECT from_id, to_id, kind, source, audited_at FROM ingredient_edge",
   );
-  return rows.map((r) => ({ from_id: r.from_id, to_id: r.to_id, kind: r.kind, source: normSource(r.source) }));
+  return rows.map((r) => ({ from_id: r.from_id, to_id: r.to_id, kind: r.kind, source: normSource(r.source), audited_at: r.audited_at }));
 }
 
 /** Delete one edge by its composite PK — the edge audit's correction write. Only ever pointed
@@ -895,6 +899,180 @@ export async function stampEdgeAudited(
 export async function appendNormalizationLog(env: Env, entry: NormalizationLog): Promise<void> {
   const d = db(env);
   await d.batch([logStmt(d, entry, Date.now())]);
+}
+
+
+// --- audit-calibration helpers (normalization-audit-calibration; see src/ingredient-normalize.ts
+// and src/ingredient-edge-audit.ts) ---
+
+/** A remembered co-resolution rejection: the pair's SURVIVING ids at decision time, ordered a < b. */
+export interface CoResolutionRejection {
+  a: string;
+  b: string;
+  decided_at: number;
+}
+
+/** Every remembered co-resolution rejection (a small table; full read, the module's idiom). */
+export async function readCoResolutionRejections(env: Env): Promise<CoResolutionRejection[]> {
+  return db(env).all<CoResolutionRejection>("SELECT a, b, decided_at FROM ingredient_coresolution_rejection");
+}
+
+/** Remember (or refresh) a rejected co-resolution pair. `(a, b)` MUST already be ordered a < b
+ *  over the pair's surviving ids — a later merge that changes a survivor changes the key, so a
+ *  materially-changed graph re-opens the question by construction. */
+export async function upsertCoResolutionRejection(env: Env, a: string, b: string, now: number): Promise<void> {
+  await db(env).run(
+    "INSERT INTO ingredient_coresolution_rejection (a, b, decided_at) VALUES (?1, ?2, ?3) " +
+      "ON CONFLICT(a, b) DO UPDATE SET decided_at = excluded.decided_at",
+    a,
+    b,
+    now,
+  );
+}
+
+/**
+ * Repair a segment-overflow node (an id deeper than `base::detail`) onto its 2-segment prefix —
+ * the two shapes `mergeIdentities` cannot express (a plain merge goes through it directly):
+ * `reroot` — the prefix currently resolves TO the overflow (an earlier orphan merge ran
+ * child-ward), so the family is re-rooted: the prefix's representative is cleared and the
+ * overflow's pointed at the prefix, one atomic batch (chain members that pointed through the
+ * overflow keep resolving — they end at the overflow, which now points to the prefix);
+ * `mint` — no prefix node exists, so it is minted (embedding NULL — the capture backfill embeds
+ * it) and the overflow pointed at it. The repair is logged as a `merge` with a segment-overflow
+ * marker.
+ */
+export async function repairSegmentOverflow(
+  env: Env,
+  plan: {
+    overflow: string;
+    prefix: string;
+    shape: "reroot" | "mint";
+    prefixNode?: { base: string; detail: string; search_term: string; concrete: boolean };
+  },
+): Promise<void> {
+  const d = db(env);
+  const now = Date.now();
+  const stmts: D1PreparedStatement[] = [];
+  if (plan.shape === "mint" && plan.prefixNode) {
+    stmts.push(
+      d.prepare(
+        "INSERT OR IGNORE INTO ingredient_identity (id, base, detail, search_term, concrete, source, decided_at) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        plan.prefix,
+        plan.prefixNode.base,
+        plan.prefixNode.detail,
+        plan.prefixNode.search_term,
+        plan.prefixNode.concrete ? 1 : 0,
+        "auto",
+        now,
+      ),
+    );
+  }
+  if (plan.shape === "reroot") {
+    stmts.push(d.prepare("UPDATE ingredient_identity SET representative = ?2 WHERE id = ?1", plan.prefix, null));
+  }
+  stmts.push(d.prepare("UPDATE ingredient_identity SET representative = ?2 WHERE id = ?1", plan.overflow, plan.prefix));
+  stmts.push(
+    logStmt(
+      d,
+      {
+        term: plan.overflow,
+        outcome: "merge",
+        resolved_id: plan.prefix,
+        detail:
+          plan.shape === "reroot"
+            ? { note: "segment_overflow", reroot: true }
+            : { note: "segment_overflow", minted_prefix: true },
+      },
+      now,
+    ),
+  );
+  await d.batch(stmts);
+}
+
+/**
+ * Insert a satisfies edge BORN-STAMPED (`audited_at` set — it never enters the audit backlog),
+ * optionally minting a missing base endpoint (embedding NULL — the capture backfill embeds it).
+ * Insert-or-ignore, so the structural guarantee and the edge-drop replay are idempotent. This
+ * write deliberately bypasses the commit-time contradiction gate: the guarantee's edge is
+ * definitionally valid, and the replay resolves a standing reverse itself (the pair re-decision).
+ */
+export async function insertAuditedEdge(
+  env: Env,
+  from: string,
+  to: string,
+  kind: string,
+  opts: { mintBase?: { id: string } } = {},
+): Promise<void> {
+  const d = db(env);
+  const now = Date.now();
+  const stmts: D1PreparedStatement[] = [];
+  if (opts.mintBase) {
+    stmts.push(
+      d.prepare(
+        "INSERT OR IGNORE INTO ingredient_identity (id, base, search_term, concrete, source, decided_at) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        opts.mintBase.id,
+        opts.mintBase.id,
+        opts.mintBase.id,
+        1,
+        "auto",
+        now,
+      ),
+    );
+  }
+  stmts.push(
+    d.prepare(
+      "INSERT OR IGNORE INTO ingredient_edge (from_id, to_id, kind, source, decided_at, audited_at) " +
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      from,
+      to,
+      kind,
+      "auto",
+      now,
+      now,
+    ),
+  );
+  await d.batch(stmts);
+}
+
+/** An `edge_drop` log row awaiting replay, its detail JSON-parsed (null when absent/unparseable). */
+export interface EdgeDropLogRow {
+  id: number;
+  term: string;
+  detail: Record<string, unknown> | null;
+}
+
+/** Un-replayed `edge_drop` log rows, oldest first, bounded — rows whose detail carries a
+ *  `replayed_at` mark (a completed replay, or a born-marked post-calibration drop) are skipped,
+ *  so the replay drains its one-time backlog and quiesces. */
+export async function readUnreplayedEdgeDrops(env: Env, limit: number): Promise<EdgeDropLogRow[]> {
+  const rows = await db(env).all<{ id: number; term: string; detail: string | null }>(
+    "SELECT id, term, detail FROM ingredient_normalization_log WHERE outcome = ?1 ORDER BY id",
+    "edge_drop",
+  );
+  const out: EdgeDropLogRow[] = [];
+  for (const r of rows) {
+    let detail: Record<string, unknown> | null = null;
+    if (typeof r.detail === "string" && r.detail) {
+      try {
+        const v = JSON.parse(r.detail) as unknown;
+        if (v && typeof v === "object" && !Array.isArray(v)) detail = v as Record<string, unknown>;
+      } catch {
+        detail = null; // unparseable detail = un-marked; the replay marks it terminally
+      }
+    }
+    if (detail && detail.replayed_at !== undefined) continue;
+    out.push({ id: r.id, term: r.term, detail });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Write a log row's replay-marked detail (the caller merges the mark into the row's existing
+ *  detail — additive inside the row, so the original decision fields are preserved). */
+export async function markEdgeDropReplayed(env: Env, id: number, detail: unknown): Promise<void> {
+  await db(env).run("UPDATE ingredient_normalization_log SET detail = ?2 WHERE id = ?1", id, JSON.stringify(detail));
 }
 
 // === SKU cache ===============================================================

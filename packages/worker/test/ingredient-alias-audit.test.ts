@@ -307,3 +307,71 @@ describe("auditAliases", () => {
     expect(s).toMatchObject({ audited: 2, minted: 1, repointed: 1, merged: 1 });
   });
 });
+
+describe("auditAliases — calibration guards (normalization-audit-calibration)", () => {
+  const PREFIX = "salmon fillets, skin-on::species-atlantic-sockeye";
+
+  it("keeps the standing mapping when a specialization only re-derives it (the sockeye reproduction)", async () => {
+    // Production defect A: the confirm re-decided the alias as SPECIALIZATION(match = the
+    // already-detailed standing node, detail = that node's own detail) and the unguarded
+    // `${match}::${detail}` minted a 3-segment id. The segment guard demotes to SAME → a keep.
+    const h = harness({
+      batch: [{ variant: "atlantic sockeye salmon fillets", id: PREFIX }],
+      identities: [auto(PREFIX), auto("salmon fillets, skin-on")],
+      vectors: [
+        { id: PREFIX, embedding: [1, 0, 0] },
+        { id: "salmon fillets, skin-on", embedding: [1, 0, 0] },
+      ],
+      confirm: async () => confirm({ outcome: "specialization", match: PREFIX, detail: "species-atlantic-sockeye" }),
+    });
+    const s = await auditAliases(h.deps);
+    const r = h.committed[0];
+    expect(r.id).toBe(PREFIX); // never `${PREFIX}::species-atlantic-sockeye`
+    expect(r.node).toBeUndefined();
+    expect(r.log).toMatchObject({
+      outcome: "same",
+      detail: { audit: "alias", previous_id: PREFIX, note: "specialization_demoted" },
+    });
+    expect(h.merges).toHaveLength(0);
+    expect(s).toMatchObject({ audited: 1, kept: 1, minted: 0, repointed: 0 });
+  });
+
+  it("keeps the standing mapping when a NOVEL canonical resolves to it (no verbatim shadow mint)", async () => {
+    // Without the guard, the canonical collides with the standing id in `knownIds` and
+    // buildResolution falls back to minting the VARIANT verbatim — a duplicate node whose only
+    // effect is shadowing the standing mapping.
+    const h = harness({
+      batch: [{ variant: "atlantic sockeye salmon fillets", id: PREFIX }],
+      identities: [auto(PREFIX)],
+      vectors: [{ id: PREFIX, embedding: [1, 0, 0] }],
+      confirm: async () => confirm({ outcome: "novel", canonical: PREFIX }),
+    });
+    const s = await auditAliases(h.deps);
+    const r = h.committed[0];
+    expect(r.id).toBe(PREFIX);
+    expect(r.node).toBeUndefined();
+    expect(r.log.detail).toMatchObject({ audit: "alias", previous_id: PREFIX, note: "canonical_is_standing" });
+    expect(s).toMatchObject({ audited: 1, kept: 1, minted: 0 });
+  });
+
+  it("resolves a punctuation-variant alias deterministically — no confirm call, junk node merged", async () => {
+    const h = harness({
+      batch: [{ variant: "salmon fillets skin-on", id: "junk node" }],
+      identities: [auto("junk node"), auto("salmon fillets, skin-on")],
+      vectors: [],
+      confirm: async () => {
+        throw new Error("no confirm expected — the lexical fast path decides");
+      },
+    });
+    const s = await auditAliases(h.deps);
+    expect(h.confirmCalls).toBe(0);
+    expect(h.committed[0]).toMatchObject({ id: "salmon fillets, skin-on" });
+    expect(h.committed[0].log).toMatchObject({
+      outcome: "same",
+      model: null,
+      detail: { audit: "alias", previous_id: "junk node", note: "lexical_match" },
+    });
+    expect(h.merges).toEqual([{ loser: "junk node", survivor: "salmon fillets, skin-on" }]);
+    expect(s).toMatchObject({ audited: 1, repointed: 1, merged: 1 });
+  });
+});

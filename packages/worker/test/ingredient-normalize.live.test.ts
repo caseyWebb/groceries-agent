@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import type { Env } from "../src/env.js";
 import { fakeD1 } from "./fake-d1.js";
 import { buildNormalizeDeps, reconcileNormalization } from "../src/ingredient-normalize.js";
+import { confirmIdentity, confirmSatisfiesDirection } from "../src/ingredient-classify.js";
 import { readResolver, enqueueNovelTerms } from "../src/corpus-db.js";
 import { baseOf } from "../src/matching.js";
 
@@ -110,5 +111,42 @@ describe.skipIf(!LIVE)("ingredient-normalize (live Workers AI)", () => {
     for (const term of ["scallions", "80/20 ground beef", "baking powder", "gochujang"]) {
       expect(r.ids.has(r.toId[term])).toBe(true);
     }
+  }, 120_000);
+});
+
+describe.skipIf(!LIVE)("satisfies-direction check (live Workers AI, recalibrated)", () => {
+  const env = { AI: { run: async (m: string, i: unknown) => aiRun(m, i) } } as unknown as Env;
+
+  // The normalization-audit-calibration fixtures: the production over-drop classes must now
+  // hold, and the true-drop classes must still refuse. One assertion per class.
+  const cases: { from: string; to: string; want: (d: string) => boolean; label: string }[] = [
+    { from: "honey raisins", to: "raisins", want: (d) => d === "forward" || d === "both", label: "coated form fulfills the product" },
+    { from: "sweet maui mango habanero sauce", to: "hot sauces (various)", want: (d) => d === "forward", label: "member fulfills the category" },
+    { from: "jellied cranberry sauce", to: "jellies and jams (various)", want: (d) => d === "forward", label: "membership over-drop class" },
+    { from: "whole cardamom pods", to: "ground cardamom", want: (d) => d === "forward", label: "whole grinds to ground" },
+    { from: "ground nutmeg", to: "whole nutmeg", want: (d) => d === "reverse", label: "ground cannot become whole" },
+    { from: "semolina flour", to: "all-purpose flour", want: (d) => d === "neither", label: "distinct flours still refuse" },
+    { from: "fruit pectin", to: "jellies and jams (various)", want: (d) => d === "neither", label: "an ingredient for making jam is not jam" },
+    { from: "frozen fruit mix", to: "dried fruit blend", want: (d) => d === "neither", label: "preservation state still refuses" },
+  ];
+
+  it("holds the recalibrated verdicts on the production fixture set", async () => {
+    for (const c of cases) {
+      const check = await confirmSatisfiesDirection(env, c.from, c.to);
+      // eslint-disable-next-line no-console
+      console.log(`direction ${c.from} -> ${c.to}:`, check.direction, "—", check.reason);
+      expect(check.direction, `${c.label} (${c.from} -> ${c.to})`).toSatisfy((d: string) => c.want(d));
+    }
+  }, 240_000);
+
+  it("treats a punctuation-only variant as SAME in the identity confirm", async () => {
+    const confirm = await confirmIdentity(env, "salmon fillets skin-on", [
+      { id: "salmon fillets, skin-on", score: 0.98 },
+      { id: "canned salmon", score: 0.71 },
+    ]);
+    // eslint-disable-next-line no-console
+    console.log("punctuation confirm:", confirm.outcome, confirm.match, "—", confirm.reason);
+    expect(confirm.outcome).toBe("same");
+    expect(confirm.match).toBe("salmon fillets, skin-on");
   }, 120_000);
 });
