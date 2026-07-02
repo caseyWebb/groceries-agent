@@ -38,3 +38,21 @@ export {
   type PushResult,
   type ParseResult,
 } from "./ingest.js";
+export {
+  TASK_SCOPES,
+  TASK_STATUSES,
+  TaskEnvelopeSchema,
+  DEFAULT_CLAIM_MAX,
+  MAX_CLAIM_TASKS,
+  ClaimRequestSchema,
+  parseClaimRequest,
+  parseResultRequest,
+  parseTaskEnvelope,
+  type TaskScope,
+  type TaskStatus,
+  type TaskEnvelope,
+  type ClaimRequest,
+  type ClaimResponse,
+  type ResultRequest,
+  type ResultResponse,
+} from "./satellite-pull.js";

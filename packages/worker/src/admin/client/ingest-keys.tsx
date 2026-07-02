@@ -43,6 +43,9 @@ function MintDialog({
   open,
   label,
   setLabel,
+  tenant,
+  setTenant,
+  members,
   busy,
   onSubmit,
   onClose,
@@ -50,6 +53,9 @@ function MintDialog({
   open: boolean;
   label: string;
   setLabel: (v: string) => void;
+  tenant: string;
+  setTenant: (v: string) => void;
+  members: string[];
   busy: boolean;
   onSubmit: (e: Event) => void;
   onClose: () => void;
@@ -82,6 +88,25 @@ function MintDialog({
               onInput={(e: Event) => setLabel((e.target as HTMLInputElement).value)}
             />
             <p class="muted small">A name for the satellite — lowercase, no spaces.</p>
+          </div>
+          <div class="grid gap-2" style="margin-top:0.75rem">
+            <label class="label" for="mint-key-tenant">
+              Tenant binding
+            </label>
+            <select
+              class="input"
+              id="mint-key-tenant"
+              value={tenant}
+              onChange={(e: Event) => setTenant((e.target as HTMLSelectElement).value)}
+            >
+              <option value="">operator-global (default)</option>
+              {members.map((m) => (
+                <option value={m}>{m}</option>
+              ))}
+            </select>
+            <p class="muted small">
+              Operator-global claims cross-tenant (sale-scan) work only. Bind to a member so the satellite may also claim that member's own (order-list) work. Immutable — re-mint to change.
+            </p>
           </div>
         </section>
         <footer class="form-actions">
@@ -146,6 +171,15 @@ function KeyRow({ s, now, busy, onRevoke }: { s: SatelliteLiveness; now: number;
         <code class="muted small">{s.prefix}…</code>
       </td>
       <td>
+        {s.tenant == null ? (
+          <span class="muted small">operator-global</span>
+        ) : (
+          <span class="badge" data-variant="outline">
+            {s.tenant}
+          </span>
+        )}
+      </td>
+      <td>
         {s.sources.length === 0 ? (
           <span class="muted small">none yet</span>
         ) : (
@@ -178,10 +212,11 @@ function KeyRow({ s, now, busy, onRevoke }: { s: SatelliteLiveness; now: number;
   );
 }
 
-function IngestKeysIsland(initial: { satellites: SatelliteLiveness[] }) {
+function IngestKeysIsland(initial: { satellites: SatelliteLiveness[]; members: string[] }) {
   const [rows, setRows] = useState<SatelliteLiveness[]>(initial.satellites);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [label, setLabel] = useState("");
+  const [tenant, setTenant] = useState("");
   const [action, setAction] = useState<ActionState>({ status: "idle" });
   const [banner, setBanner] = useState<Banner | null>(null);
   const [confirm, setConfirm] = useState<SatelliteLiveness | null>(null);
@@ -197,11 +232,13 @@ function IngestKeysIsland(initial: { satellites: SatelliteLiveness[] }) {
     e.preventDefault();
     if (!label.trim()) return;
     setAction({ status: "busy", op: { kind: "mint" } });
-    const res = await client.admin.api.ingest.keys.$post({ json: { label } });
+    // An empty tenant selection is operator-global (the server treats "" / absent as no binding).
+    const res = await client.admin.api.ingest.keys.$post({ json: { label, tenant: tenant || null } });
     if (res.ok) {
       const data = await res.json();
       setBanner({ label, secret: data.secret, prefix: data.prefix });
       setLabel("");
+      setTenant("");
       setDialogOpen(false);
       setAction({ status: "idle" });
       await refresh();
@@ -262,6 +299,7 @@ function IngestKeysIsland(initial: { satellites: SatelliteLiveness[] }) {
             <thead>
               <tr>
                 <th>Satellite</th>
+                <th>Binding</th>
                 <th>Sources</th>
                 <th>Created</th>
                 <th>Last used</th>
@@ -278,7 +316,17 @@ function IngestKeysIsland(initial: { satellites: SatelliteLiveness[] }) {
         </div>
       )}
 
-      <MintDialog open={dialogOpen} label={label} setLabel={setLabel} busy={busy} onSubmit={doMint} onClose={() => setDialogOpen(false)} />
+      <MintDialog
+        open={dialogOpen}
+        label={label}
+        setLabel={setLabel}
+        tenant={tenant}
+        setTenant={setTenant}
+        members={initial.members}
+        busy={busy}
+        onSubmit={doMint}
+        onClose={() => setDialogOpen(false)}
+      />
       <RevokeDialog row={confirm} busy={busy} onConfirm={() => confirm && doRevoke(confirm.id)} onClose={() => setConfirm(null)} />
     </div>
   );
@@ -287,7 +335,7 @@ function IngestKeysIsland(initial: { satellites: SatelliteLiveness[] }) {
 const host = document.getElementById("ingest-keys-island");
 const propsEl = document.getElementById("ingest-keys-props");
 if (host && propsEl) {
-  const props = JSON.parse(propsEl.textContent ?? "{}") as { satellites: SatelliteLiveness[] };
+  const props = JSON.parse(propsEl.textContent ?? "{}") as { satellites: SatelliteLiveness[]; members: string[] };
   host.replaceChildren();
-  render(<IngestKeysIsland satellites={props.satellites} />, host);
+  render(<IngestKeysIsland satellites={props.satellites} members={props.members ?? []} />, host);
 }
