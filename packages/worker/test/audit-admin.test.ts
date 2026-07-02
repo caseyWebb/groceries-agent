@@ -3,12 +3,15 @@ import { fakeD1 } from "./fake-d1.js";
 import type { JobRun } from "../src/health.js";
 import {
   backlogSeries,
+  countLiveConcreteDisjunctive,
+  deriveAuditGauges,
   deriveAuditObservability,
   deriveRecipeBackfill,
   readAuditObservability,
   readEdgeDecisionLog,
   readMergeRejections,
   readAuditSurface,
+  AUDIT_GAUGE_CAP,
   CORESOLVE_BACKOFF_DAYS,
 } from "../src/audit-admin.js";
 import { NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS } from "../src/ingredient-normalize.js";
@@ -36,6 +39,112 @@ describe("backlogSeries", () => {
   it("is empty with no run history and exact-at-zero when converged", () => {
     expect(backlogSeries(3, [])).toEqual([]);
     expect(backlogSeries(0, [run("r1", NOW, { audited: 4 }), run("r0", NOW - 5 * MIN, { audited: 0 })])).toEqual([4, 0]);
+  });
+
+  it("sums a multi-counter drain measure (the disjunction sweep's flip + fold)", () => {
+    const runs = [
+      run("n2", NOW - 1 * MIN, { disjunctionFlipped: 1, disjunctionFolded: 2 }), // newest
+      run("n1", NOW - 6 * MIN, { disjunctionFlipped: 3, disjunctionFolded: 0 }),
+    ];
+    // after n1: 4 + (1+2) = 7 · after n2: 4 (live)
+    expect(backlogSeries(4, runs, ["disjunctionFlipped", "disjunctionFolded"])).toEqual([7, 4]);
+  });
+});
+
+describe("countLiveConcreteDisjunctive", () => {
+  it("counts only live, concrete, auto rows whose base is disjunctive", () => {
+    expect(
+      countLiveConcreteDisjunctive([
+        { id: "white or yellow onion", representative: null, source: "auto", concrete: 1 }, // counted
+        { id: "white or yellow onion::small", representative: null, source: "auto", concrete: 1 }, // live spec child — counted via its base
+        { id: "green onion", representative: null, source: "auto", concrete: 1 }, // not disjunctive
+        { id: "lemon or lime", representative: null, source: "auto", concrete: 0 }, // already abstract
+        { id: "salt or msg", representative: null, source: "human", concrete: 1 }, // human — pinned, never backlog
+        { id: "beef or pork", representative: "beef", source: "auto", concrete: 1 }, // merged away — not live
+        { id: "chicken or turkey", representative: null, source: "auto" }, // absent concrete = concrete
+      ]),
+    ).toBe(3);
+  });
+
+  it("mirrors the sweep's family-level skips, so the card settles exactly when the sweep quiesces", () => {
+    // A human concrete disjunctive base pins its WHOLE family — the sweep never folds the
+    // auto child (it only counts disjunctionSkipped), so the card must agree and settle.
+    expect(
+      countLiveConcreteDisjunctive([
+        { id: "salt or msg", representative: null, source: "human", concrete: 1 },
+        { id: "salt or msg::fine", representative: null, source: "auto", concrete: 1 },
+      ]),
+    ).toBe(0);
+    // A base merged ELSEWHERE is not a shape the sweep owns — its stranded live child never counts.
+    expect(
+      countLiveConcreteDisjunctive([
+        { id: "c or d", representative: "celery", source: "auto", concrete: 1 },
+        { id: "c or d::y", representative: null, source: "auto", concrete: 1 },
+        { id: "celery", representative: null, source: "auto", concrete: 1 },
+      ]),
+    ).toBe(0);
+    // The INVERTED merge (base into its own surviving child) IS re-rooted by the sweep — the
+    // live concrete child still counts as pending.
+    expect(
+      countLiveConcreteDisjunctive([
+        { id: "a or b", representative: "a or b::x", source: "auto", concrete: 0 },
+        { id: "a or b::x", representative: null, source: "auto", concrete: 1 },
+      ]),
+    ).toBe(1);
+  });
+});
+
+describe("deriveAuditGauges", () => {
+  const ticks = [
+    { worked: 6, changed: 6 },
+    { worked: 3, changed: 3 },
+  ];
+
+  it("anchors the sku trend on the live plan size and back-sums the ticks", () => {
+    const g = deriveAuditGauges(
+      { skuPending: 2, unreplayedDrops: 0, disjunctionLive: 0, normalizeRuns: [] },
+      ticks,
+    );
+    // after the older tick: 2 + 3 = 5 · after the newest: 2 (live)
+    expect(g.sku).toEqual({ count: 2, capped: false, series: [5, 2] });
+    expect(g.replay).toEqual({ pending: 0, capped: false });
+    expect(g.disjunction).toEqual({ live: 0, series: [], summary: [], lastRun: null });
+  });
+
+  it("caps the plan-sized counts for display, keeping the series anchored on the real count", () => {
+    const g = deriveAuditGauges(
+      { skuPending: AUDIT_GAUGE_CAP + 40, unreplayedDrops: AUDIT_GAUGE_CAP + 1, disjunctionLive: 0, normalizeRuns: [] },
+      [{ worked: 5, changed: 5 }],
+    );
+    expect(g.sku.count).toBe(AUDIT_GAUGE_CAP);
+    expect(g.sku.capped).toBe(true);
+    expect(g.sku.series).toEqual([AUDIT_GAUGE_CAP + 40]); // trend anchors on the uncapped live size
+    expect(g.replay).toEqual({ pending: AUDIT_GAUGE_CAP, capped: true });
+  });
+
+  it("derives the disjunction gauge from the normalize run window", () => {
+    const g = deriveAuditGauges(
+      {
+        skuPending: 0,
+        unreplayedDrops: 0,
+        disjunctionLive: 1,
+        normalizeRuns: [
+          run("n2", NOW - 2 * MIN, { disjunctionFlipped: 1, disjunctionFolded: 0, disjunctionEdges: 1, disjunctionEnqueued: 2, disjunctionSkipped: 1 }),
+          run("n1", NOW - 7 * MIN, { disjunctionFlipped: 2, disjunctionFolded: 1, disjunctionEdges: 0, disjunctionEnqueued: 0, disjunctionSkipped: 0 }),
+        ],
+      },
+      [],
+    );
+    expect(g.disjunction.live).toBe(1);
+    expect(g.disjunction.series).toEqual([2, 1]); // 1 + newest run's flip+fold, then live
+    expect(g.disjunction.summary).toEqual([
+      ["flipped", 1],
+      ["folded", 0],
+      ["edges", 1],
+      ["enqueued", 2],
+      ["skipped", 1],
+    ]);
+    expect(g.disjunction.lastRun).toBe(NOW - 2 * MIN);
   });
 });
 
@@ -156,6 +265,21 @@ describe("deriveRecipeBackfill", () => {
 function seeded() {
   return fakeD1({
     tables: {
+      ingredient_identity: [
+        { id: "green onion", representative: null, source: "auto", concrete: 1 },
+        { id: "olive oil", representative: null, source: "auto", concrete: 1 },
+        // The disjunction gauge's fixtures: one live concrete auto disjunction (counted), one
+        // human (pinned, excluded), one already-abstract concept (converged, excluded).
+        { id: "white or yellow onion", representative: null, source: "auto", concrete: 1 },
+        { id: "salt or msg", representative: null, source: "human", concrete: 1 },
+        { id: "lemon or lime", representative: null, source: "auto", concrete: 0 },
+      ],
+      // One off-key row (evoo resolves through the alias front-door to "olive oil" → one
+      // pending re-key group) + one already-canonical row (plans nothing).
+      sku_cache: [
+        { ingredient: "evoo", location_id: "L1", sku: "s1", brand: null, size: null, last_used: "2026-01-01" },
+        { ingredient: "green onion", location_id: "L1", sku: "s2", brand: null, size: null, last_used: null },
+      ],
       ingredient_alias: [
         { variant: "scallions", id: "green onion", source: "auto", audited_at: null },
         { variant: "evoo", id: "olive oil", source: "auto", audited_at: NOW - 60 * MIN },
@@ -169,6 +293,9 @@ function seeded() {
         { id: "al-1", job: "ingredient-alias-audit", ok: 1, ran_at: NOW - 2 * MIN, duration_ms: 400, summary: JSON.stringify({ audited: 12, self_stamped: 6, kept: 3, repointed: 2, minted: 1, merged: 0, skipped: 0 }) },
         { id: "ed-1", job: "ingredient-edge-audit", ok: 1, ran_at: NOW - 1 * MIN, duration_ms: 400, summary: JSON.stringify({ audited: 4, self_loops: 1, cycles: 0, dropped: 1, kept: 3, skipped: 0, structural: 1, structural_restored: 0, self_loops_swept: 0, replayed: 1, restored: 1 }) },
         { id: "sk-1", job: "sku-cache-rekey", ok: 1, ran_at: NOW - 3 * MIN, duration_ms: 400, summary: JSON.stringify({ rekeyed: 2, merged: 1, truncated: false }) },
+        // The disjunction gauge's trend source: the normalize job's persisted disjunction* counters.
+        { id: "nm-2", job: "ingredient-normalize", ok: 1, ran_at: NOW - 2 * MIN, duration_ms: 400, summary: JSON.stringify({ processed: 3, disjunctionFlipped: 1, disjunctionFolded: 0, disjunctionEdges: 1, disjunctionEnqueued: 2, disjunctionSkipped: 1 }) },
+        { id: "nm-1", job: "ingredient-normalize", ok: 1, ran_at: NOW - 7 * MIN, duration_ms: 400, summary: JSON.stringify({ processed: 5, disjunctionFlipped: 2, disjunctionFolded: 1, disjunctionEdges: 0, disjunctionEnqueued: 0, disjunctionSkipped: 0 }) },
       ],
       ingredient_normalization_log: [
         // Structured post-calibration keep.
@@ -245,5 +372,28 @@ describe("readAuditSurface", () => {
     expect(s.restorations).toHaveLength(2);
     expect(s.rejections).toHaveLength(2);
     expect(s.backoffDays).toBe(30);
+  });
+
+  it("derives the per-card gauges from the live corpus + run windows", async () => {
+    const s = await readAuditSurface(seeded().env, NOW);
+    // evoo → olive oil is the one off-key cache row; no alias is retarget-eligible
+    // (scallions is audit-owned, the others already point at their survivors). One sku
+    // run → a one-point trend landing on the live plan size.
+    expect(s.gauges.sku).toEqual({ count: 1, capped: false, series: [1] });
+    // Log rows 12 (legacy drop, no replayed_at) and 15 (detail-less drop) await replay;
+    // row 11 is born-marked.
+    expect(s.gauges.replay).toEqual({ pending: 2, capped: false });
+    // "white or yellow onion" is the one live concrete auto disjunction; the trend
+    // back-sums the normalize runs' flip+fold counters.
+    expect(s.gauges.disjunction.live).toBe(1);
+    expect(s.gauges.disjunction.series).toEqual([2, 1]);
+    expect(s.gauges.disjunction.summary).toEqual([
+      ["flipped", 1],
+      ["folded", 0],
+      ["edges", 1],
+      ["enqueued", 2],
+      ["skipped", 1],
+    ]);
+    expect(s.gauges.disjunction.lastRun).toBe(NOW - 2 * MIN);
   });
 });

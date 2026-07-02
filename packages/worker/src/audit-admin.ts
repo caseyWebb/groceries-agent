@@ -14,14 +14,29 @@
 // the window read slightly high, and un-audited rows DELETED outside the audited count (the
 // replay's reverse-edge deletions) read slightly low. Both are fine for a trend sparkline —
 // the headline number is always the live COUNT.
+//
+// Beyond the shared hero, each pass card carries its OWN burndown gauge (see the per-card
+// gauges section): alias/edge reuse the hero's counts/series, the stampless sku pass gauges
+// its live plan size through its own pure planners, the edge card surfaces the one-shot
+// replay's remaining `edge_drop` backlog, and a fourth card tracks the disjunction sweep's
+// live-concrete-disjunctive count burning to zero.
 
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { readJobRuns, type JobRun } from "./health.js";
 import { ALIAS_AUDIT_JOB } from "./ingredient-alias-audit.js";
 import { EDGE_AUDIT_JOB, EDGE_TERM_RE } from "./ingredient-edge-audit.js";
-import { SKU_REKEY_JOB } from "./sku-cache-rekey.js";
-import { NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS } from "./ingredient-normalize.js";
+import { SKU_REKEY_JOB, planSkuRekey, planAliasRetarget, type SkuCacheRekeyRow } from "./sku-cache-rekey.js";
+import { NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS, NORMALIZE_JOB } from "./ingredient-normalize.js";
+import { isDisjunctiveTerm } from "./ingredient-disjunction.js";
+import { normalizeIngredient, baseOf } from "./matching.js";
+import {
+  readIdentitySources,
+  readAliasTargets,
+  countUnreplayedEdgeDrops,
+  representativeResolver,
+  type IdentitySourceRow,
+} from "./corpus-db.js";
 
 /** How many recent runs each pass's sparkline shows (and the reader fetches per job). */
 export const AUDIT_RUN_WINDOW = 15;
@@ -168,14 +183,16 @@ function derivePass(id: AuditPassId, runs: readonly JobRun[], fields: readonly s
  * the live un-audited count: walking newest→oldest, each step back ADDS the rows that run
  * audited (they were still in the backlog before it ran). Returned oldest→newest; the last
  * point is exactly `current`. Empty history → empty series (the hero shows the count alone).
+ * `fields` is the per-run drain measure — summed when a pass's work spans several counters
+ * (the disjunction sweep's flip + fold).
  */
-export function backlogSeries(current: number, runs: readonly JobRun[]): number[] {
+export function backlogSeries(current: number, runs: readonly JobRun[], fields: readonly string[] = ["audited"]): number[] {
   const ordered = [...runs].reverse();
   const out: number[] = new Array(ordered.length);
   let remaining = current;
   for (let i = ordered.length - 1; i >= 0; i--) {
     out[i] = remaining;
-    remaining += numField(ordered[i].summary, "audited");
+    remaining += fields.reduce((a, f) => a + numField(ordered[i].summary, f), 0);
   }
   return out;
 }
@@ -239,6 +256,164 @@ export async function readAuditObservability(env: Env): Promise<AuditObservabili
     aliasBacklog: aliasCount?.n ?? 0,
     edgeBacklog: edgeCount?.n ?? 0,
   });
+}
+
+// === Per-card gauges (the Audits tab's pass-card burndowns) =================================
+// Each pass card carries its OWN current burndown status. The alias/edge cards reuse the
+// hero's live counts + back-summed series verbatim (assembled in the view from `obs.backlog`
+// — no re-query, no stored duplicate); the gauges below are the ones that need extra reads:
+// the stampless sku plan, the one-shot replay backlog, and the disjunction sweep. They ride
+// `AuditSurface` (the Audits tab's payload), NOT `AuditObservability` — the Status row never
+// renders them, so the Status reader never pays their reads.
+
+/** Live-count display cap for the plan-sized gauges ("200+"); mirrors SKU_REKEY_MAX_PER_TICK. */
+export const AUDIT_GAUGE_CAP = 200;
+
+/** A pass card's own remaining-backlog gauge (count + trend). */
+export interface PassGauge {
+  /** Live remaining rows (a lower bound when capped). */
+  count: number;
+  /** The live count hit the display cap — rendered "200+". */
+  capped: boolean;
+  /** Remaining-after-each-run, oldest→newest (trend only; empty with no history). */
+  series: number[];
+}
+
+/** The disjunction shape sweep's convergence gauge (a normalize-job sub-pass; the card's
+ *  converged state is `live === 0` — the sweep's own quiesce predicate). */
+export interface DisjunctionGauge {
+  /** Live concrete disjunctive ids still to flip/fold. */
+  live: number;
+  /** Back-summed from the normalize runs' flip+fold counters, oldest→newest. */
+  series: number[];
+  /** The latest normalize run's disjunction* counters, short-labeled for chips. */
+  summary: Array<[string, number]>;
+  /** Epoch ms of the most recent normalize run, or null with no history. */
+  lastRun: number | null;
+}
+
+/** The Audits tab's extra per-card gauges (alias/edge come straight from `obs.backlog`). */
+export interface AuditGauges {
+  /** The sku-cache re-key's live plan size: pending re-key groups + eligible alias retargets. */
+  sku: PassGauge;
+  /** The one-shot replay's un-replayed `edge_drop` backlog (0 = replay done). */
+  replay: { pending: number; capped: boolean };
+  disjunction: DisjunctionGauge;
+}
+
+/** Cap a live count for display. */
+function capCount(n: number): { count: number; capped: boolean } {
+  return { count: Math.min(n, AUDIT_GAUGE_CAP), capped: n > AUDIT_GAUGE_CAP };
+}
+
+/** Live concrete disjunctive ids the sweep will actually flip/fold — its quiesce predicate,
+ *  mirrored at FAMILY level (`reconcileDisjunctions`' own grouping and skip conditions) so
+ *  the count reaches zero exactly when the sweep quiesces. Excluded, matching the sweep:
+ *  human rows anywhere (pinned operator intent — `disjunctionSkipped`, never reshaped), the
+ *  whole family under a human-sourced base, and a family whose base merged ELSEWHERE (only
+ *  the inverted merge — into its own surviving child — is a shape the sweep re-roots). */
+export function countLiveConcreteDisjunctive(rows: readonly IdentitySourceRow[]): number {
+  const families = new Map<string, { baseRow?: IdentitySourceRow; members: IdentitySourceRow[] }>();
+  for (const r of rows) {
+    const b = baseOf(r.id);
+    if (!isDisjunctiveTerm(b)) continue;
+    let f = families.get(b);
+    if (!f) families.set(b, (f = { members: [] }));
+    if (r.id === b) f.baseRow = r;
+    f.members.push(r);
+  }
+  if (families.size === 0) return 0;
+  const resolve = representativeResolver([...rows]);
+  let n = 0;
+  for (const [base, f] of families) {
+    if (f.baseRow?.source === "human") continue; // operator intent pins the whole family
+    if (f.baseRow && f.baseRow.representative != null) {
+      // Base merged away: swept only when INVERTED (into one of its own live auto children).
+      const surv = resolve(base);
+      if (!f.members.some((m) => m.id === surv && m.id !== base && !m.representative && m.source === "auto")) continue;
+    }
+    for (const m of f.members) {
+      if (m.representative || m.source === "human") continue;
+      if ((m.concrete ?? 1) === 0) continue;
+      n++;
+    }
+  }
+  return n;
+}
+
+/** The disjunction* counters as short chip labels, in the summary's declared order. */
+const DISJUNCTION_CHIPS = [
+  ["disjunctionFlipped", "flipped"],
+  ["disjunctionFolded", "folded"],
+  ["disjunctionEdges", "edges"],
+  ["disjunctionEnqueued", "enqueued"],
+  ["disjunctionSkipped", "skipped"],
+] as const;
+
+/** The raw inputs the gauge derivation needs (read impurely, derived purely). */
+export interface AuditGaugeInputs {
+  /** Live sku-rekey plan size (pending groups + eligible alias retargets), uncapped. */
+  skuPending: number;
+  /** Un-replayed `edge_drop` rows found under the cap probe (may be cap+1). */
+  unreplayedDrops: number;
+  /** Live concrete disjunctive id count. */
+  disjunctionLive: number;
+  /** The normalize job's run window, newest first. */
+  normalizeRuns: readonly JobRun[];
+}
+
+/** Derive the per-card gauges. `skuTicks` is the sku pass's tick series from the shared model
+ *  (oldest→newest) — its back-summed trend anchors on the live plan size; per-tick `worked`
+ *  includes collision-loser merges, so the old tail reads slightly high (trend-only, same
+ *  accepted skew as the hero series). */
+export function deriveAuditGauges(input: AuditGaugeInputs, skuTicks: readonly AuditTick[]): AuditGauges {
+  const skuSeries: number[] = new Array(skuTicks.length);
+  let remaining = input.skuPending;
+  for (let i = skuTicks.length - 1; i >= 0; i--) {
+    skuSeries[i] = remaining;
+    remaining += skuTicks[i].worked;
+  }
+  const latest = input.normalizeRuns[0];
+  const replay = capCount(input.unreplayedDrops);
+  return {
+    sku: { ...capCount(input.skuPending), series: skuSeries },
+    replay: { pending: replay.count, capped: replay.capped },
+    disjunction: {
+      live: input.disjunctionLive,
+      series: backlogSeries(input.disjunctionLive, input.normalizeRuns, ["disjunctionFlipped", "disjunctionFolded"]),
+      summary: latest ? DISJUNCTION_CHIPS.map(([k, label]) => [label, numField(latest.summary, k)] as [string, number]) : [],
+      lastRun: latest ? latest.ran_at : null,
+    },
+  };
+}
+
+/** Read the gauge inputs — five bounded-or-small queries per Audits view: ONE identity scan +
+ *  ONE alias scan (shared by the sku planners AND the disjunction count; the alias front-door
+ *  map is rebuilt from those rows exactly as `readResolver` builds it, so the resolver read is
+ *  not repeated), the tiny `sku_cache`, the SQL-bounded un-replayed-drop probe (one past the
+ *  cap), and the 15-row normalize run window. Failures propagate like the backlog COUNT reads
+ *  (structured `storage_error`) — no fabricated gauge. */
+async function readAuditGaugeInputs(env: Env): Promise<AuditGaugeInputs> {
+  const d = db(env);
+  const [identities, aliases, cacheRows, unreplayedDrops, normalizeRuns] = await Promise.all([
+    readIdentitySources(env),
+    readAliasTargets(env),
+    d.all<SkuCacheRekeyRow>("SELECT ingredient, location_id, sku, brand, size, last_used FROM sku_cache"),
+    countUnreplayedEdgeDrops(env, AUDIT_GAUGE_CAP + 1),
+    readJobRuns(env, NORMALIZE_JOB, AUDIT_RUN_WINDOW),
+  ]);
+  const chase = representativeResolver(identities);
+  // The alias front-door with the representative chain baked in — `readResolver`'s own toId
+  // construction over the rows already in hand (variant → surviving id).
+  const toId: Record<string, string> = {};
+  for (const a of aliases) toId[a.variant] = chase(a.id);
+  const resolve = (term: string): string => chase(normalizeIngredient(term, toId));
+  return {
+    skuPending: planSkuRekey(cacheRows, resolve).length + planAliasRetarget(aliases, chase).length,
+    unreplayedDrops,
+    disjunctionLive: countLiveConcreteDisjunctive(identities),
+    normalizeRuns,
+  };
 }
 
 // === Edge decisions (Decisions › Edges + the Audits restorations log) =======================
@@ -430,6 +605,8 @@ export async function readMergeRejections(env: Env, now = Date.now()): Promise<M
  *  the SSR props like the rest of the page model). */
 export interface AuditSurface {
   obs: AuditObservability;
+  /** The pass cards' extra burndown gauges (alias/edge reuse `obs.backlog` in the view). */
+  gauges: AuditGauges;
   edges: EdgeDecisionCard[];
   restorations: EdgeRestoration[];
   rejections: MergeRejection[];
@@ -437,12 +614,21 @@ export interface AuditSurface {
 }
 
 export async function readAuditSurface(env: Env, now = Date.now()): Promise<AuditSurface> {
-  const [obs, log, rejections] = await Promise.all([
+  const [obs, gaugeInputs, log, rejections] = await Promise.all([
     readAuditObservability(env),
+    readAuditGaugeInputs(env),
     readEdgeDecisionLog(env),
     readMergeRejections(env, now),
   ]);
-  return { obs, edges: log.decisions, restorations: log.restorations, rejections, backoffDays: CORESOLVE_BACKOFF_DAYS };
+  const skuTicks = obs.passes.find((p) => p.id === "sku")?.ticks ?? [];
+  return {
+    obs,
+    gauges: deriveAuditGauges(gaugeInputs, skuTicks),
+    edges: log.decisions,
+    restorations: log.restorations,
+    rejections,
+    backoffDays: CORESOLVE_BACKOFF_DAYS,
+  };
 }
 
 // === Recipe backfill (Status › recipe-index gauge) ==========================================

@@ -57,6 +57,8 @@ import {
 import { confirmIdentity, NORMALIZE_MODEL, type IdentityConfirm, type ScoredCandidate } from "./ingredient-classify.js";
 import { writeJobHealth, writeJobRun } from "./health.js";
 
+/** The background-job name the capture pass records its health + per-run history under. */
+export const NORMALIZE_JOB = "ingredient-normalize";
 /** Terms drained per scheduled tick (bounded; the rest defer to later ticks). */
 export const NORMALIZE_MAX_PER_TICK = 25;
 /** Cosine floor: a nearest candidate below this → mint NOVEL with no confirm call. Low (~0.5)
@@ -728,8 +730,8 @@ export async function runNormalizeJob(env: Env, deps: NormalizeDeps): Promise<vo
   const startedAt = deps.now();
   try {
     const s = await reconcileNormalization(deps);
-    await writeJobHealth(env, "ingredient-normalize", { ok: true, last_run_at: startedAt, summary: { ...s } });
-    await writeJobRun(env, "ingredient-normalize", {
+    await writeJobHealth(env, NORMALIZE_JOB, { ok: true, last_run_at: startedAt, summary: { ...s } });
+    await writeJobRun(env, NORMALIZE_JOB, {
       ok: true,
       ran_at: startedAt,
       duration_ms: deps.now() - startedAt,
@@ -738,10 +740,10 @@ export async function runNormalizeJob(env: Env, deps: NormalizeDeps): Promise<vo
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[ingredient-normalize] pass failed:", msg);
-    await writeJobHealth(env, "ingredient-normalize", { ok: false, last_run_at: startedAt, summary: { error: msg } }).catch(
+    await writeJobHealth(env, NORMALIZE_JOB, { ok: false, last_run_at: startedAt, summary: { error: msg } }).catch(
       () => {},
     );
-    await writeJobRun(env, "ingredient-normalize", {
+    await writeJobRun(env, NORMALIZE_JOB, {
       ok: false,
       ran_at: startedAt,
       duration_ms: deps.now() - startedAt,

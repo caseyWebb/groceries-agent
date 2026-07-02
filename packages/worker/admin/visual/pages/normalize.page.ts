@@ -28,15 +28,34 @@ export class NormalizePage extends AdminPage {
     await expect(this.page.locator(".rk-title", { hasText: "grocery / pantry reconcile" })).toBeVisible();
   }
 
-  // --- The Audits tab (admin-audit-observability): backlog-burndown hero + pass cards +
-  // restorations log + merge-rejection memory. All SSR, time-free landmarks.
+  // --- The Audits tab (admin-audit-observability + audit-pass-card-burndown): backlog-burndown
+  // hero + four pass cards (each with its own burndown gauge; the edge card carries the replay
+  // state) + restorations log + merge-rejection memory. All SSR, time-free landmarks.
 
-  /** The Audits tab's convergence surface: the burndown hero + the three pass cards. */
+  /** The Audits tab's convergence surface: the burndown hero + the four pass cards. */
   async expectAuditsSurface(): Promise<void> {
     await expect(this.page.locator(".rk-title", { hasText: "audit backlog" })).toBeVisible();
-    for (const pass of ["alias audit", "edge audit", "sku-cache re-key"]) {
+    for (const pass of ["alias audit", "edge audit", "sku-cache re-key", "disjunction sweep"]) {
       await expect(this.page.locator(".au-pass-name", { hasText: pass })).toBeVisible();
     }
+  }
+
+  /** One pass card, scoped by its monospace name. */
+  passCard(name: string): Locator {
+    return this.page.locator(".au-pass", { has: this.page.locator(".au-pass-name", { hasText: name }) });
+  }
+
+  /** A pass card's own burndown status: the state chip word + the remaining-backlog count
+   *  (both time-free; converged renders the green `zero` count treatment). */
+  async expectPassBurndown(name: string, state: "auditing" | "settled" | "sweeping", count: string): Promise<void> {
+    const card = this.passCard(name);
+    await expect(card.locator(".au-pass-badge")).toHaveText(state);
+    await expect(card.locator(".au-pass-burn .au-burn-v")).toHaveText(count);
+  }
+
+  /** The edge card's one-shot replay line (pending count, or the done-state at zero). */
+  async expectReplayLine(text: string): Promise<void> {
+    await expect(this.passCard("edge audit").locator(".au-pass-replay")).toHaveText(text);
   }
 
   /** A restorations-log entry for a revisited edge (asserted by its from-endpoint). */

@@ -7,7 +7,7 @@
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { baseOf } from "./matching.js";
-import { NORMALIZE_FLOOR } from "./ingredient-normalize.js";
+import { NORMALIZE_FLOOR, NORMALIZE_JOB } from "./ingredient-normalize.js";
 
 /** UI presentation kind — derived from the raw log outcome + whether an LLM ran. */
 export type DecisionKind = "same" | "spec" | "novel" | "merge" | "nollm" | "fail";
@@ -270,7 +270,7 @@ export async function readNormalizationPage(env: Env, opts: { decisionLimit?: nu
     d.all<{ term: string; first_seen: number | null; attempts: number; next_retry_at: number | null }>(
       "SELECT term, first_seen, attempts, next_retry_at FROM novel_ingredient_terms ORDER BY first_seen",
     ),
-    d.first<{ last_run_at: number | null }>("SELECT last_run_at FROM job_health WHERE name = ?1", "ingredient-normalize"),
+    d.first<{ last_run_at: number | null }>("SELECT last_run_at FROM job_health WHERE name = ?1", NORMALIZE_JOB),
   ]);
 
   const byId = new Map(identityRows.map((r) => [r.id, r]));

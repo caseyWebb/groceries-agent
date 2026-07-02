@@ -108,8 +108,11 @@ export function d1Statements(now) {
     );
   }
   // The identity-audit passes (Normalize › Audits + the Status identity-audit row): three
-  // self-terminating convergence jobs, each with a draining worked-per-tick history (the
-  // burndown series back-sums these onto the live un-audited counts).
+  // self-terminating convergence jobs plus the normalize job's disjunction sweep, each with a
+  // draining worked-per-tick history (the burndown series back-sum these onto the live
+  // counts). Per-card burndown states the seed pins: alias + edge cards CONVERGING (one
+  // un-audited row each, below), sku + disjunction cards CONVERGED (no sku_cache rows, no
+  // disjunctive identity rows), replay backlog 1 (log row 9103 lacks a replayed_at mark).
   const auditRuns = {
     "ingredient-alias-audit": [40, 32, 25, 18, 10, 6].map((audited) => {
       const repointed = Math.round(audited * 0.15);
@@ -137,6 +140,24 @@ export function d1Statements(now) {
       };
     }),
     "sku-cache-rekey": [5, 4, 3, 2, 1, 0].map((rekeyed, k) => ({ rekeyed, merged: k < 2 ? 1 : 0, truncated: false })),
+    // The disjunction sweep rides the normalize job: its flip+fold counters drain to zero and
+    // no disjunctive identity row is seeded (live-concrete count 0), so the fourth pass card
+    // renders settled with a burndown trend landing on the green floor.
+    "ingredient-normalize": [
+      [3, 2],
+      [2, 1],
+      [1, 1],
+      [1, 0],
+      [0, 0],
+      [0, 0],
+    ].map(([disjunctionFlipped, disjunctionFolded], k) => ({
+      processed: Math.max(0, 4 - k),
+      disjunctionFlipped,
+      disjunctionFolded,
+      disjunctionEdges: k < 3 ? 1 : 0,
+      disjunctionEnqueued: k < 2 ? 2 : 0,
+      disjunctionSkipped: 0,
+    })),
   };
   for (const [job, runs] of Object.entries(auditRuns)) {
     for (const [k, summary] of runs.entries()) {

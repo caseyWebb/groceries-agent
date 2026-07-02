@@ -7,8 +7,10 @@
 // (Basecoat lacks them) — see `styles.css`.
 //
 //   · BurndownSpark        — remaining-backlog bars falling to a green floor (shared with the
-//                            Status row and the recipe-backfill gauge).
-//   · AuditsTab            — the burndown hero + three pass cards + restorations log +
+//                            Status row, the pass cards, and the recipe-backfill gauge).
+//   · AuditsTab            — the burndown hero + four pass cards (each with its own backlog
+//                            burndown gauge; the edge card carries the replay state and the
+//                            fourth card is the disjunction sweep) + restorations log +
 //                            merge-rejection memory.
 //   · AuditStatusRow       — the identity audit as ONE Status › Background-jobs sibling row.
 //   · RecipeBackfillGauge  — the recipe-index row's inline unresolved-terms burndown.
@@ -21,6 +23,7 @@ import {
   LinkIcon,
   GitMergeIcon,
   DatabaseIcon,
+  LayersIcon,
   ArrowRightIcon,
   RotateIcon,
   XCircleIcon,
@@ -29,12 +32,15 @@ import {
 import { assertNever } from "../lib/remote.js";
 import { relAge, relFuture } from "../logs-shared.js";
 import type {
+  AuditGauges,
   AuditObservability,
   AuditPass,
   AuditPassId,
   AuditState,
+  DisjunctionGauge,
   EdgeRestoration,
   MergeRejection,
+  PassGauge,
   RecipeBackfill,
 } from "../../audit-admin.js";
 
@@ -172,40 +178,70 @@ const BurndownHero = ({ s, now }: { s: AuditObservability; now: number }) => {
   );
 };
 
-/** Per-pass presentation (label/blurb/icon) — static, keyed by the reader's pass ids. */
-const PASS_META: Record<AuditPassId, { label: string; blurb: string; icon: (size: number) => unknown }> = {
+/** Per-pass presentation (label/blurb/icon/backlog vocabulary) — static, keyed by the reader's
+ *  pass ids. Burndown tones reuse the established palette: alias=accent, edge=terra, and the
+ *  sku plan rides the derived-gauge blue (the recipe backfill's tone) — no new colors. */
+const PASS_META: Record<
+  AuditPassId,
+  { label: string; blurb: string; icon: (size: number) => unknown; backlogLabel: string; tone: "g" | "p" | "b" }
+> = {
   alias: {
     label: "alias audit",
     blurb:
       "Re-reads every alias row and reconciles it with the current graph — stamping it audited, repointing wrong maps, minting missing ids, and merging duplicates.",
     icon: (size) => <LinkIcon size={size} />,
+    backlogLabel: "un-audited alias rows",
+    tone: "g",
   },
   edge: {
     label: "edge audit",
     blurb:
       "Re-reads every satisfies-edge and drops the unsound ones — self-loops and the edges that close a cycle — keeping the directed graph acyclic.",
     icon: (size) => <GitMergeIcon size={size} />,
+    backlogLabel: "un-audited edge rows",
+    tone: "p",
   },
   sku: {
     label: "sku-cache re-key",
     blurb:
       "Re-keys cached Kroger SKU rows onto their canonical ingredient id and collapses duplicate cache entries left behind by merges.",
     icon: (size) => <DatabaseIcon size={size} />,
+    backlogLabel: "pending re-keys (live plan)",
+    tone: "b",
   },
 };
 
-/** One audit pass as a compact convergence card: state, this-tick summary chips, worked/tick spark. */
-const PassCard = ({ pass, now }: { pass: AuditPass; now: number }) => {
+/** A card's own backlog count + trend row (the hero's treatment, card-sized). */
+const PassBurndown = ({ gauge, label, tone }: { gauge: PassGauge; label: string; tone: "g" | "p" | "b" }) => (
+  <div class="au-pass-burn">
+    <div class="au-burn-count">
+      <span class={gauge.count === 0 && !gauge.capped ? "au-burn-v sm zero" : "au-burn-v sm"}>
+        {gauge.count.toLocaleString()}
+        {gauge.capped ? "+" : ""}
+      </span>
+      <span class="au-burn-k">{label}</span>
+    </div>
+    {gauge.series.length > 0 ? <BurndownSpark series={gauge.series} tone={tone} compact /> : null}
+  </div>
+);
+
+/** One audit pass as a compact convergence card: its OWN backlog burndown (count + trend +
+ *  state chip — converged is the green positive terminal), this-tick summary chips, and the
+ *  worked/tick spark. The edge card also carries the one-shot replay's state. */
+const PassCard = ({ pass, gauge, replay, now }: { pass: AuditPass; gauge: PassGauge; replay?: { pending: number; capped: boolean }; now: number }) => {
   const meta = PASS_META[pass.id];
-  const cls = pass.settled ? "converged" : "converging";
+  const converged = gauge.count === 0 && !gauge.capped;
+  const cls = converged ? "converged" : "converging";
   return (
     <div class={`au-pass ${cls}`}>
       <div class="au-pass-head">
         <span class={`au-pass-ico ${cls}`}>{meta.icon(16)}</span>
         <span class="au-pass-name">{meta.label}</span>
-        <span class={`au-pass-badge ${cls}`}>{pass.settled ? "settled" : "auditing"}</span>
+        <span class={`au-pass-badge ${cls}`}>{converged ? "settled" : "auditing"}</span>
       </div>
       <p class="au-pass-blurb">{meta.blurb}</p>
+
+      <PassBurndown gauge={gauge} label={meta.backlogLabel} tone={meta.tone} />
 
       {pass.ticks.length > 0 ? (
         <div class="au-pass-spark">
@@ -228,8 +264,59 @@ const PassCard = ({ pass, now }: { pass: AuditPass; now: number }) => {
         </div>
       ) : null}
 
+      {replay ? (
+        <p class="au-pass-foot au-pass-replay">
+          <RotateIcon size={11} />{" "}
+          {replay.pending === 0
+            ? "replay done — every pre-calibration drop re-checked"
+            : `${replay.pending.toLocaleString()}${replay.capped ? "+" : ""} pre-calibration drop${
+                replay.pending === 1 && !replay.capped ? "" : "s"
+              } awaiting replay`}
+        </p>
+      ) : null}
+
       <p class="au-pass-foot">
         <ClockIcon size={11} /> {pass.lastRun != null ? `ran ${age(pass.lastRun, now)}` : "never run"}
+      </p>
+    </div>
+  );
+};
+
+/** The disjunction shape sweep as a compact fourth convergence card: live concrete disjunctive
+ *  ids burning to zero (the sweep's quiesce predicate), the normalize job's latest disjunction
+ *  counters as chips. It deliberately does NOT feed the hero/Status converged state. */
+const DisjunctionCard = ({ g, now }: { g: DisjunctionGauge; now: number }) => {
+  const converged = g.live === 0;
+  const cls = converged ? "converged" : "converging";
+  return (
+    <div class={`au-pass ${cls}`}>
+      <div class="au-pass-head">
+        <span class={`au-pass-ico ${cls}`}>
+          <LayersIcon size={16} />
+        </span>
+        <span class="au-pass-name">disjunction sweep</span>
+        <span class={`au-pass-badge ${cls}`}>{converged ? "settled" : "sweeping"}</span>
+      </div>
+      <p class="au-pass-blurb">
+        Models "X or Y" terms as abstract constraints — flipping wrongly-concrete disjunction nodes, folding their spec
+        children, and guaranteeing member edges.
+      </p>
+
+      <PassBurndown gauge={{ count: g.live, capped: false, series: g.series }} label="live concrete disjunctive ids" tone="b" />
+
+      {g.summary.length > 0 ? (
+        <div class="jstats au-pass-stats">
+          {g.summary.map(([k, v]) => (
+            <span class="jstat">
+              <span class="jstat-k">{k}</span>
+              <span class="jstat-v">{v.toLocaleString()}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <p class="au-pass-foot">
+        <ClockIcon size={11} /> {g.lastRun != null ? `swept ${age(g.lastRun, now)} · rides the normalize job` : "never run"}
       </p>
     </div>
   );
@@ -321,15 +408,32 @@ const RejectionsTable = ({ rejections, now }: { rejections: MergeRejection[]; no
   </div>
 );
 
+/** A pass card's burndown gauge: alias/edge reuse the hero's live counts + series verbatim
+ *  (derived here, never stored twice); the stampless sku pass carries its own plan gauge. */
+function gaugeOf(pass: AuditPass, s: AuditObservability, gauges: AuditGauges): PassGauge {
+  switch (pass.id) {
+    case "alias":
+      return { count: s.backlog.alias, capped: false, series: s.backlog.aliasSeries };
+    case "edge":
+      return { count: s.backlog.edge, capped: false, series: s.backlog.edgeSeries };
+    case "sku":
+      return gauges.sku;
+    default:
+      return assertNever(pass.id);
+  }
+}
+
 /** The Normalize › Audits tab body. */
 export const AuditsTab = ({
   s,
+  gauges,
   restorations,
   rejections,
   backoffDays,
   now,
 }: {
   s: AuditObservability;
+  gauges: AuditGauges;
   restorations: EdgeRestoration[];
   rejections: MergeRejection[];
   backoffDays: number;
@@ -337,8 +441,9 @@ export const AuditsTab = ({
 }) => (
   <div class="au-tab">
     <p class="nz-queue-blurb muted small">
-      The identity graph re-checks itself continuously. Three rolling passes drain a backlog of un-audited rows to zero and
-      hold it there — repointing bad aliases, dropping unsound edges, and re-keying the SKU cache. Empty is healthy.
+      The identity graph re-checks itself continuously. Rolling passes drain a backlog of un-audited rows to zero and hold
+      it there — repointing bad aliases, dropping unsound edges, re-keying the SKU cache, and sweeping disjunctive shapes.
+      Empty is healthy.
     </p>
 
     <BurndownHero s={s} now={now} />
@@ -346,8 +451,9 @@ export const AuditsTab = ({
     <p class="group-label">Audit passes</p>
     <div class="au-pass-grid">
       {s.passes.map((p) => (
-        <PassCard pass={p} now={now} />
+        <PassCard pass={p} gauge={gaugeOf(p, s, gauges)} replay={p.id === "edge" ? gauges.replay : undefined} now={now} />
       ))}
+      <DisjunctionCard g={gauges.disjunction} now={now} />
     </div>
 
     <p class="group-label">Restorations · replay log</p>

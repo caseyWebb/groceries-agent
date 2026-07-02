@@ -1153,8 +1153,26 @@ export interface EdgeDropLogRow {
   detail: Record<string, unknown> | null;
 }
 
-/** Un-replayed `edge_drop` log rows, oldest first, bounded — rows whose detail carries a
- *  `replayed_at` mark (a completed replay, or a born-marked post-calibration drop) are skipped,
+/** The replay-pending predicate over a drop row's raw detail: the parsed detail object (null
+ *  when absent/unparseable — un-marked; the replay marks it terminally), or `undefined` when
+ *  the row already carries a `replayed_at` mark (a completed replay, or a born-marked
+ *  post-calibration drop). The ONE definition the replay's selection and the admin gauge's
+ *  bounded count share. */
+function pendingReplayDetail(raw: string | null): Record<string, unknown> | null | undefined {
+  let detail: Record<string, unknown> | null = null;
+  if (typeof raw === "string" && raw) {
+    try {
+      const v = JSON.parse(raw) as unknown;
+      if (v && typeof v === "object" && !Array.isArray(v)) detail = v as Record<string, unknown>;
+    } catch {
+      detail = null;
+    }
+  }
+  if (detail && detail.replayed_at !== undefined) return undefined;
+  return detail;
+}
+
+/** Un-replayed `edge_drop` log rows, oldest first, bounded — replay-marked rows are skipped,
  *  so the replay drains its one-time backlog and quiesces. */
 export async function readUnreplayedEdgeDrops(env: Env, limit: number): Promise<EdgeDropLogRow[]> {
   const rows = await db(env).all<{ id: number; term: string; detail: string | null }>(
@@ -1163,20 +1181,31 @@ export async function readUnreplayedEdgeDrops(env: Env, limit: number): Promise<
   );
   const out: EdgeDropLogRow[] = [];
   for (const r of rows) {
-    let detail: Record<string, unknown> | null = null;
-    if (typeof r.detail === "string" && r.detail) {
-      try {
-        const v = JSON.parse(r.detail) as unknown;
-        if (v && typeof v === "object" && !Array.isArray(v)) detail = v as Record<string, unknown>;
-      } catch {
-        detail = null; // unparseable detail = un-marked; the replay marks it terminally
-      }
-    }
-    if (detail && detail.replayed_at !== undefined) continue;
+    const detail = pendingReplayDetail(r.detail);
+    if (detail === undefined) continue;
     out.push({ id: r.id, term: r.term, detail });
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/** The un-replayed backlog SIZE, bounded — the admin gauge's probe, never the replay's
+ *  selection (that stays `readUnreplayedEdgeDrops`, unchanged). The SQL mirror of the replay
+ *  mark (absent / unparseable / markless detail) narrows and LIMITs server-side so the render
+ *  path never materializes the whole drop log; the shared JS predicate re-validates the
+ *  survivors, so the count can only agree with the replay (the SQL over-selects at worst —
+ *  e.g. a literal-null mark the replay never writes — and the JS layer drops it). */
+export async function countUnreplayedEdgeDrops(env: Env, probe: number): Promise<number> {
+  const rows = await db(env).all<{ detail: string | null }>(
+    "SELECT detail FROM ingredient_normalization_log WHERE outcome = ?1 " +
+      "AND (detail IS NULL OR NOT json_valid(detail) OR json_extract(detail, '$.replayed_at') IS NULL) " +
+      "ORDER BY id LIMIT ?2",
+    "edge_drop",
+    probe,
+  );
+  let n = 0;
+  for (const r of rows) if (pendingReplayDetail(r.detail) !== undefined) n++;
+  return n;
 }
 
 /** Write a log row's replay-marked detail (the caller merges the mark into the row's existing

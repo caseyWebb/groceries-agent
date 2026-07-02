@@ -967,8 +967,9 @@
   .au-burn-bar.b { background: #0969da; }
   .au-burn-floor { width: 100%; height: 2px; background: #2da44e; border-radius: 2px; }
 
-  /* Audit pass cards. */
-  .au-pass-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-bottom: .5rem; }
+  /* Audit pass cards (four: the three audit passes + the disjunction sweep — auto-fit keeps
+     them on one row at desktop and wraps gracefully at mid widths). */
+  .au-pass-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .75rem; margin-bottom: .5rem; }
   .au-pass { border: 1px solid var(--border); border-top: 2px solid var(--accent); border-radius: var(--radius-lg); background: #fff; box-shadow: var(--shadow-xs); padding: .9rem 1rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
   .au-pass.converged { border-top-color: #2da44e; }
   .au-pass-head { display: flex; align-items: center; gap: .5rem; }
@@ -979,6 +980,9 @@
   .au-pass-badge.converging { color: #b4552b; background: color-mix(in oklch, var(--accent) 12%, transparent); border-color: color-mix(in oklch, var(--accent) 40%, var(--border)); }
   .au-pass-badge.converged { color: #1a7f37; background: #eafbef; border-color: #b7e4c7; }
   .au-pass-blurb { margin: 0; font-size: .76rem; line-height: 1.5; color: #555; }
+  /* A card's own backlog burndown row (the hero's count treatment, card-sized). */
+  .au-pass-burn { display: flex; flex-direction: column; gap: .35rem; }
+  .au-burn-v.sm { font-size: 1.15rem; }
   .au-pass-spark-cap { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .35rem; font-size: .68rem; color: var(--muted-foreground); }
   .au-pass-axis { color: #bbb; white-space: nowrap; }
   .au-spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; }

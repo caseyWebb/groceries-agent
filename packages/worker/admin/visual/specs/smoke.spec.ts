@@ -40,6 +40,15 @@ test("normalize reconcile tab renders its convergence card", async ({ normalizeP
 test("normalize audits tab renders the convergence surface and its logs", async ({ normalizePage }) => {
   await normalizePage.gotoTab("audits");
   await normalizePage.expectAuditsSurface();
+  // Per-card burndown states the seed pins: alias/edge converging (one un-audited row each),
+  // sku (empty live plan) and the disjunction sweep (no disjunctive ids) converged — both
+  // states render side by side.
+  await normalizePage.expectPassBurndown("alias audit", "auditing", "1");
+  await normalizePage.expectPassBurndown("edge audit", "auditing", "1");
+  await normalizePage.expectPassBurndown("sku-cache re-key", "settled", "0");
+  await normalizePage.expectPassBurndown("disjunction sweep", "settled", "0");
+  // The one-shot replay's backlog: seed log row 9103 is an un-replayed pre-calibration drop.
+  await normalizePage.expectReplayLine("1 pre-calibration drop awaiting replay");
   await normalizePage.expectRestoration(SEED.audit.droppedEdge);
   await normalizePage.expectRejection(SEED.audit.rejection);
   await normalizePage.captureForReview("normalize-audits");

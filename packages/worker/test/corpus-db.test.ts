@@ -30,6 +30,7 @@ import {
   readConceptIds,
   insertAuditedEdge,
   readUnreplayedEdgeDrops,
+  countUnreplayedEdgeDrops,
   markEdgeDropReplayed,
   readSkuCache,
   upsertSkuMappings,
@@ -803,6 +804,25 @@ describe("normalization audit calibration (D1)", () => {
     expect(rows[0].detail).toEqual({ note: "self_loop" });
     expect(rows[2].detail).toBeNull();
     expect((await readUnreplayedEdgeDrops(env, 2)).map((r) => r.id)).toEqual([1, 3]); // bounded
+  });
+
+  it("countUnreplayedEdgeDrops probes the backlog size — SQL-narrowed + LIMITed, JS-validated", async () => {
+    const { env } = fakeD1({
+      tables: {
+        ingredient_normalization_log: [
+          { id: 1, term: "a -[general]-> b", outcome: "edge_drop", detail: JSON.stringify({ note: "self_loop" }) },
+          { id: 2, term: "x -[general]-> y", outcome: "edge_drop", detail: JSON.stringify({ replayed_at: 500 }) }, // marked — filtered SQL-side
+          { id: 3, term: "e -[membership]-> f", outcome: "edge_drop", detail: null }, // no detail = un-marked
+          { id: 4, term: "kept", outcome: "edge_keep", detail: null }, // wrong outcome
+          // A literal-null mark (the replay never writes one): the SQL mirror over-selects it,
+          // the shared JS predicate drops it — the count agrees with readUnreplayedEdgeDrops.
+          { id: 5, term: "n -[general]-> m", outcome: "edge_drop", detail: JSON.stringify({ replayed_at: null }) },
+        ],
+      },
+    });
+    expect(await countUnreplayedEdgeDrops(env, 10)).toBe(2);
+    expect((await readUnreplayedEdgeDrops(env, 10)).map((r) => r.id)).toEqual([1, 3]); // parity
+    expect(await countUnreplayedEdgeDrops(env, 1)).toBe(1); // bounded probe
   });
 
   it("markEdgeDropReplayed rewrites exactly the addressed row's detail", async () => {
