@@ -41,6 +41,7 @@ import { readInsights } from "../insights.js";
 import { InsightsPage } from "./pages/insights.js";
 import { readDiscoveryLog, readDiscoveryCandidates, readDiscoveryRowById, deleteDiscoveryRow } from "../discovery-db.js";
 import { mintIngestKey, revokeIngestKey, readSatelliteLiveness } from "../ingest-db.js";
+import { directoryFromEnv, normalizeTenantId } from "../tenant.js";
 import { buildDiscoveryDeps, processCandidate, DEFAULT_CONFIG } from "../discovery-sweep.js";
 import { addDiscoveryRejection } from "../corpus-db.js";
 import { canonicalizeUrl } from "../url.js";
@@ -219,10 +220,23 @@ const routes = app
   // rollup's per-satellite rows (label/prefix/sources/status/versions/skew — no secret); mint
   // returns the plaintext secret ONCE; revoke is immediate.
   .get("/api/ingest/keys", async (c) => c.json({ satellites: (await readSatelliteLiveness(c.env)).satellites }))
-  .post("/api/ingest/keys", validator("json", (v) => v as { label?: string }), async (c) => {
-    const label = String(c.req.valid("json").label ?? "").trim();
+  .post("/api/ingest/keys", validator("json", (v) => v as { label?: string; tenant?: string | null }), async (c) => {
+    const body = c.req.valid("json");
+    const label = String(body.label ?? "").trim();
     if (!label) throw new ToolError("validation_failed", "an ingest key needs a satellite label");
-    return c.json(await mintIngestKey(c.env, label));
+    // Optional tenant BINDING (satellite-pull-channel): absent/blank = operator-global. A bound
+    // tenant is resolved against the SAME allowlist the rest of /admin* uses; a non-allowlisted
+    // target mints nothing. The binding is immutable for the key's life.
+    let tenant: string | null = null;
+    const rawTenant = body.tenant == null ? "" : String(body.tenant).trim();
+    if (rawTenant) {
+      const id = normalizeTenantId(rawTenant);
+      if (!(await directoryFromEnv(c.env).get(id))) {
+        throw new ToolError("validation_failed", `tenant ${id} is not on the allowlist`, { field: "tenant" });
+      }
+      tenant = id;
+    }
+    return c.json(await mintIngestKey(c.env, label, Date.now(), tenant));
   })
   .post("/api/ingest/keys/:id/revoke", async (c) =>
     c.json({ id: c.req.param("id"), revoked: await revokeIngestKey(c.env, c.req.param("id")) }),
