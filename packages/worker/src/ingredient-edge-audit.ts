@@ -257,7 +257,10 @@ async function ensureStructuralEdges(deps: EdgeAuditDeps, summary: EdgeAuditSumm
   }
 }
 
-const DROP_TERM_RE = /^(.+) -\[(general|containment|membership)\]-> (.+)$/;
+/** The strict parse of an edge-shaped log `term` (`` `from -[kind]-> to` `` — the shape `edgeLog`
+ *  writes). The ONE definition shared by the replay's legacy-row parse and the admin audit
+ *  reader (`audit-admin.ts`), so a drift in the term shape breaks loudly in both. */
+export const EDGE_TERM_RE = /^(.+) -\[(general|containment|membership)\]-> (.+)$/;
 
 /**
  * The one-shot replay of the pre-calibration `edge_drop` backlog: each row re-evaluated ONCE
@@ -283,7 +286,7 @@ async function replayEdgeDrops(deps: EdgeAuditDeps, summary: EdgeAuditSummary, v
     const mark = (patch: Record<string, unknown>): Promise<void> =>
       deps.markReplayed(row.id, { ...prior, replayed_at: view.now, ...patch });
     try {
-      const m = DROP_TERM_RE.exec(row.term);
+      const m = EDGE_TERM_RE.exec(row.term);
       if (!m) {
         await mark({ replay: "unparseable" });
         summary.replayed++;
