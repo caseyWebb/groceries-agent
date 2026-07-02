@@ -84,6 +84,8 @@ export const NORMALIZE_EMBED_BACKFILL_MAX_PER_TICK = 25;
 export const NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS = 30 * 24 * 60 * 60 * 1000;
 /** Segment-overflow nodes (ids deeper than base::detail) repaired per tick (deterministic, no LLM). */
 export const SEGMENT_REPAIR_MAX_PER_TICK = 5;
+/** Surviving lexical-twin pairs merged per tick by the retro reconcile (deterministic, no LLM). */
+export const LEXICAL_TWIN_MAX_PER_TICK = 5;
 
 export interface NormalizeDeps {
   loadBatch(limit: number, now: number): Promise<string[]>;
@@ -136,6 +138,7 @@ export interface NormalizeDeps {
   coResolveMaxPerTick: number;
   embedBackfillMaxPerTick: number;
   segmentRepairMaxPerTick: number;
+  twinMergeMaxPerTick: number;
   rejectBackoffMs: number;
 }
 
@@ -159,6 +162,10 @@ export interface NormalizeSummary {
   segmentRepaired: number;
   /** Segment-overflow nodes skipped because they are human-sourced (never auto-repaired). */
   segmentSkipped: number;
+  /** Surviving lexical-twin pairs merged by the retro reconcile this tick (no model call). */
+  lexicalTwinMerged: number;
+  /** Twin candidates deliberately skipped (human-involved, mixed concreteness, or 3+ on a key). */
+  lexicalTwinSkipped: number;
   /** Co-resolution pairs suppressed by a remembered rejection (no confirm call spent). */
   mergeSuppressed: number;
   /** Disjunctive terms disposed as abstract concepts at capture (no classifier call). */
@@ -187,28 +194,49 @@ function nearest(
     .slice(0, topK);
 }
 
-/** The punctuation-insensitive lexical form of a term or id: lowercased, every run of
- *  characters outside [a-z0-9:] collapsed to one space, trimmed. `:` survives so a
- *  `base::detail` id keeps its shape. Pluralization/word-order folding is deliberately NOT
- *  attempted here (false-positive risk) — the confirm prompt covers those. */
+/** Conservative singular fold for one lexical token. Only a letters-only token of ≥ 4 chars
+ *  folds — `-ies` → `-y` (berries), `-oes` → `-o` (tomatoes), else one trailing `-s` strips
+ *  unless the token ends `-ss`/`-us`/`-is` (glass, molasses, hummus, couscous, asparagus). An
+ *  irregular plural the fold misses falls through to the classifier — fragmentation at worst,
+ *  never a mis-collapse. */
+function foldPluralToken(token: string): string {
+  if (!/^[a-z]{4,}$/.test(token)) return token;
+  if (token.length >= 5 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
+  if (token.length >= 5 && token.endsWith("oes")) return token.slice(0, -2);
+  if (token.endsWith("s") && !/(?:ss|us|is)$/.test(token)) return token.slice(0, -1);
+  return token;
+}
+
+/** The punctuation- and plural-insensitive lexical form of a term or id: lowercased, every run
+ *  of characters outside [a-z0-9:] collapsed to one space, trimmed, each token plural-folded
+ *  (`foldPluralToken` — the pluralization-is-the-same-product rule the confirm prompt states,
+ *  applied deterministically). `:` survives so a `base::detail` id keeps its shape (and an
+ *  id-shaped token never folds). Word-order folding is deliberately NOT attempted here
+ *  (false-positive risk) — the confirm prompt covers it. */
 export function lexicalKey(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9:]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .split(" ")
+    .map(foldPluralToken)
+    .join(" ");
 }
 
 /**
  * Build the lexical-identity map: lexical form → representative-resolved survivor, over the
  * surviving node ids plus (optionally) the alias variants. A term whose lexical form has a
  * UNIQUE survivor is mechanically that product — SAME with no model call. An ambiguous form
- * (two distinct survivors) is dropped so the fast path never guesses. Shared with the alias
- * re-audit (which passes node ids only — a variant's own alias row must not self-satisfy it).
+ * (two distinct survivors) is dropped so the fast path never guesses; `ambiguousOut` (when
+ * given) receives those dropped keys so the in-tick append can honor them. Shared with the
+ * alias re-audit (which passes node ids only — a variant's own alias row must not self-satisfy
+ * it).
  */
 export function buildLexicalMap(
   identities: { id: string; representative: string | null }[],
   aliases: { variant: string; id: string }[] = [],
+  ambiguousOut?: Set<string>,
 ): Map<string, string> {
   const resolve = representativeResolver(identities);
   const map = new Map<string, string>();
@@ -223,8 +251,34 @@ export function buildLexicalMap(
   };
   for (const r of identities) if (!r.representative) add(r.id, r.id);
   for (const a of aliases) add(a.variant, a.id);
-  for (const k of ambiguous) map.delete(k);
+  for (const k of ambiguous) {
+    map.delete(k);
+    if (ambiguousOut) ambiguousOut.add(k);
+  }
   return map;
+}
+
+/**
+ * In-tick lexical append: admit a just-minted form to the batch's live lexical map with
+ * `buildLexicalMap`'s exact ambiguity semantics — a key already ambiguous never re-enters, and
+ * a collision with a DIFFERENT survivor drops the entry and marks the key, so the fast path
+ * never guesses. The lexical-map mirror of the just-minted retrieval-set append.
+ */
+export function appendLexicalForm(
+  map: Map<string, string>,
+  ambiguous: Set<string>,
+  form: string,
+  survivor: string,
+): void {
+  const key = lexicalKey(form);
+  if (!key || ambiguous.has(key)) return;
+  const existing = map.get(key);
+  if (existing !== undefined && existing !== survivor) {
+    ambiguous.add(key);
+    map.delete(key);
+  } else {
+    map.set(key, survivor);
+  }
 }
 
 /** A NOVEL resolution (below-floor no-LLM mint, the fail-safe on a bad confirm, or the
@@ -436,6 +490,8 @@ function emptySummary(): NormalizeSummary {
     lexical: 0,
     segmentRepaired: 0,
     segmentSkipped: 0,
+    lexicalTwinMerged: 0,
+    lexicalTwinSkipped: 0,
     mergeSuppressed: 0,
     disjunctionCaptured: 0,
     disjunctionFlipped: 0,
@@ -527,6 +583,70 @@ async function reconcileSegmentOverflow(deps: NormalizeDeps, summary: NormalizeS
       // retry state); never fail the tick over the repair.
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`[ingredient-normalize] segment repair failed for "${node.id}":`, msg);
+    }
+  }
+}
+
+/**
+ * The retro lexical-twin merge: a deterministic per-tick sub-pass (no model calls) that converges
+ * two surviving nodes whose ids share one lexical form — the same mechanical evidence the lexical
+ * fast path acts on, applied to twins that were both minted before it could catch them
+ * (production: the same-batch plural pairs onion/onions, chile/chiles, chili pepper/chili
+ * peppers, tomato/tomatoes). Only auto/auto pairs of EQUAL concreteness merge — a mixed pair
+ * mirrors the concept-concrete guard, human intent is never auto-merged on mechanical evidence,
+ * and a form shared by 3+ survivors is never guessed (all skipped + counted). Survivor: the
+ * lexicographically smaller id (the co-resolution auto/auto convention — a suffix twin's
+ * singular always survives, and the pick depends on nothing mutable). Bounded per tick;
+ * self-quiescing (merged losers leave the live set, and the in-tick lexical append stops new
+ * twins forming); a transient merge failure leaves the pair live for a later tick (unmerged IS
+ * the retry state), never failing the tick.
+ */
+async function reconcileLexicalTwins(deps: NormalizeDeps, summary: NormalizeSummary): Promise<void> {
+  let identities: IdentitySourceRow[];
+  try {
+    identities = await deps.identitySources();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[ingredient-normalize] lexical-twin read failed:", msg);
+    return;
+  }
+  const groups = new Map<string, IdentitySourceRow[]>();
+  for (const r of identities) {
+    if (r.representative) continue;
+    const key = lexicalKey(r.id);
+    if (!key) continue;
+    const group = groups.get(key);
+    if (group) group.push(r);
+    else groups.set(key, [r]);
+  }
+  const twinKeys = [...groups.entries()].filter(([, nodes]) => nodes.length > 1).map(([key]) => key).sort();
+  let merged = 0;
+  for (const key of twinKeys) {
+    if (merged >= deps.twinMergeMaxPerTick) break;
+    const nodes = groups.get(key) ?? [];
+    if (nodes.length > 2) {
+      summary.lexicalTwinSkipped++; // 3+ survivors on one form — ambiguous, never guessed
+      continue;
+    }
+    const [a, b] = nodes;
+    if (a.source === "human" || b.source === "human") {
+      summary.lexicalTwinSkipped++; // operator intent is never auto-merged on mechanical evidence
+      continue;
+    }
+    if (((a.concrete ?? 1) !== 0) !== ((b.concrete ?? 1) !== 0)) {
+      summary.lexicalTwinSkipped++; // the concept-concrete boundary is not identity evidence
+      continue;
+    }
+    const survivor = a.id < b.id ? a.id : b.id;
+    const loser = a.id < b.id ? b.id : a.id;
+    try {
+      await deps.merge(loser, survivor); // union-find merge (cycle-guarded, logged)
+      summary.lexicalTwinMerged++;
+      merged++;
+    } catch (e) {
+      // Transient (D1) → the pair stays live and is retried next tick; never fail the tick.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[ingredient-normalize] lexical-twin merge failed for "${loser}"→"${survivor}":`, msg);
     }
   }
 }
@@ -638,8 +758,12 @@ export async function reconcileNormalization(deps: NormalizeDeps): Promise<Norma
 
   const identityVecs = terms.length ? await deps.identityEmbeddings() : [];
   const knownIds = terms.length ? await deps.knownIds() : new Set<string>();
-  // The lexical-identity map (punctuation-equality fast path) — surviving ids + alias variants.
-  const lexical = terms.length ? buildLexicalMap(await deps.identitySources(), await deps.aliasTargets()) : new Map<string, string>();
+  // The lexical-identity map (punctuation/plural-equality fast path) — surviving ids + alias
+  // variants, with the ambiguous keys kept so in-tick appends can honor them.
+  const lexicalAmbiguous = new Set<string>();
+  const lexical = terms.length
+    ? buildLexicalMap(await deps.identitySources(), await deps.aliasTargets(), lexicalAmbiguous)
+    : new Map<string, string>();
   const vecs = terms.length ? await deps.embed(terms) : []; // a chunk failure throws → the whole tick fails (terms stay queued)
 
   for (let i = 0; i < terms.length; i++) {
@@ -654,10 +778,14 @@ export async function reconcileNormalization(deps: NormalizeDeps): Promise<Norma
       if (note === "lexical_match") summary.lexical++;
       if (note === "disjunction_concept") summary.disjunctionCaptured++;
       // Let later terms this tick match a node just minted (append to the retrieval +
-      // canonical-collision sets).
+      // canonical-collision sets, AND the lexical map — so the second twin of a same-batch
+      // pair hits the fast path instead of minting; ambiguity-guarded).
       if (r.node) {
         identityVecs.push({ id: r.id, embedding: r.node.embedding });
         knownIds.add(r.id);
+        // r.id is a fresh mint this batch (representative is null by construction), so no chain resolution needed.
+        appendLexicalForm(lexical, lexicalAmbiguous, r.id, r.id);
+        if (r.term !== r.id) appendLexicalForm(lexical, lexicalAmbiguous, r.term, r.id);
       }
     } catch (e) {
       // Transient (env.AI/D1) → leave queued with backoff; never lose the term.
@@ -672,6 +800,11 @@ export async function reconcileNormalization(deps: NormalizeDeps): Promise<Norma
   // backlog converges without traffic). Runs BEFORE the co-resolution pass so a repaired chain
   // is what the pairing reads.
   await reconcileSegmentOverflow(deps, summary);
+
+  // Converge surviving lexical twins (the same mechanical evidence as the fast path) BEFORE the
+  // disjunction + co-resolution passes so they read post-merge chains. Runs even on an empty
+  // queue so the live backlog converges without traffic.
+  await reconcileLexicalTwins(deps, summary);
 
   // The disjunction reconcile (shape sweep + membership guarantee + disjunct enqueue) —
   // deterministic, runs even on an empty queue, BEFORE co-resolution so the pairing reads
@@ -718,6 +851,7 @@ export function buildNormalizeDeps(env: Env): NormalizeDeps {
     coResolveMaxPerTick: NORMALIZE_CORESOLVE_MAX_PER_TICK,
     embedBackfillMaxPerTick: NORMALIZE_EMBED_BACKFILL_MAX_PER_TICK,
     segmentRepairMaxPerTick: SEGMENT_REPAIR_MAX_PER_TICK,
+    twinMergeMaxPerTick: LEXICAL_TWIN_MAX_PER_TICK,
     rejectBackoffMs: NORMALIZE_CORESOLVE_REJECT_BACKOFF_MS,
   };
 }

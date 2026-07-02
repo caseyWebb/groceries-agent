@@ -622,8 +622,16 @@ rep-resolved self-loop auto edges. A one-shot **replay** re-evaluates every pre-
 `replay_of`); a drop whose resolved reverse edge still stands is re-decided as a pair by that one
 check — the true direction restored and a wrongly-kept reverse deleted (logged `edge_drop` with
 `note: "replay_cycle"`), with human and structural reverses immune. A term (or re-audited
-variant) whose punctuation-insensitive lexical form uniquely equals a surviving node id or known
-alias variant resolves SAME deterministically (`note: "lexical_match"`, no model call). Alias +
+variant) whose punctuation- and plural-insensitive lexical form (lowercased, punctuation
+collapsed to spaces, letters-only tokens of ≥ 4 chars conservatively singular-folded: `-ies`→`-y`,
+`-oes`→`-o`, else one trailing `-s` unless the token ends `-ss`/`-us`/`-is`) uniquely equals a
+surviving node id or known alias variant resolves SAME deterministically
+(`note: "lexical_match"`, no model call) — mid-batch mints join the tick's lexical map
+immediately, and a colliding form goes ambiguous (the fast path abstains). A per-tick
+lexical-twin reconcile merges two surviving auto nodes of equal `concrete` whose ids share one
+lexical form into the lexicographically smaller id via `representative` (plain `merge` log rows;
+human-involved pairs, mixed-concreteness pairs, and 3+-survivor forms are skipped and counted in
+the job summary's `lexicalTwinMerged`/`lexicalTwinSkipped`). Alias +
 edge rows written by capture/re-confirm/the guarantee/the replay are born-stamped (`audited_at`
 set at write time), and the edge audit's drop rows are born-marked `replayed_at`; human rows are
 never selected by any audit.
