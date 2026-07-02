@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconcileNormalization, validateCanonicalId, type NormalizeDeps } from "../src/ingredient-normalize.js";
+import { lexicalKey, reconcileNormalization, validateCanonicalId, type NormalizeDeps } from "../src/ingredient-normalize.js";
 import { validateConfirm, type IdentityConfirm, type ScoredCandidate } from "../src/ingredient-classify.js";
 import type {
   Resolution,
@@ -64,6 +64,8 @@ function harness(opts: {
   rejectBackoffMs?: number;
   /** The full edge table for the disjunction reconcile's pair check. */
   allEdges?: EdgeRow[];
+  /** Lexical-twin merges allowed per tick (defaults to the production cap). */
+  twinMergeMaxPerTick?: number;
 }): Harness {
   const committed: Resolution[] = [];
   const deferred: string[] = [];
@@ -158,6 +160,7 @@ function harness(opts: {
     coResolveMaxPerTick: 10,
     embedBackfillMaxPerTick: 25,
     segmentRepairMaxPerTick: 5,
+    twinMergeMaxPerTick: opts.twinMergeMaxPerTick ?? 5,
     rejectBackoffMs: opts.rejectBackoffMs ?? 30 * 24 * 60 * 60 * 1000,
   };
   return h;
@@ -660,6 +663,180 @@ describe("reconcileNormalization — lexical-identity fast path", () => {
     });
     await reconcileNormalization(h.deps);
     expect(h.confirmCalls).toBe(1); // ambiguity falls through to the normal confirm flow
+  });
+
+  it("resolves a plural variant SAME to the surviving singular with no confirm call", async () => {
+    const h = harness({
+      terms: ["onions"],
+      identities: [{ id: "onion", embedding: [1, 0, 0] }],
+      // no confirm handler: a classifier call would throw "confirm not expected"
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(0);
+    expect(h.committed[0]).toMatchObject({ term: "onions", id: "onion" });
+    expect(h.committed[0].node).toBeUndefined();
+    expect(h.committed[0].log).toMatchObject({ outcome: "same", model: null, detail: { note: "lexical_match" } });
+    expect(s).toMatchObject({ same: 1, lexical: 1 });
+  });
+
+  it("abstains when both plural forms survive (ambiguous) — and the twin reconcile heals the pair", async () => {
+    const h = harness({
+      terms: ["onions!"],
+      identities: [
+        { id: "onion", embedding: [1, 0, 0] },
+        { id: "onions", embedding: [1, 0, 0] },
+      ],
+      confirm: async () => confirm({ outcome: "novel" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(1); // the fast path never guesses between live twins
+    expect(h.merges).toEqual([{ loser: "onions", survivor: "onion" }]); // …but the retro pass converges them
+    expect(s.lexicalTwinMerged).toBe(1);
+  });
+});
+
+describe("lexicalKey — conservative plural fold", () => {
+  it("folds the production twin forms onto one key", () => {
+    expect(lexicalKey("onions")).toBe(lexicalKey("onion"));
+    expect(lexicalKey("chiles")).toBe(lexicalKey("chile"));
+    expect(lexicalKey("chili peppers")).toBe(lexicalKey("chili pepper"));
+    expect(lexicalKey("tomatoes")).toBe(lexicalKey("tomato")); // -oes → -o
+    expect(lexicalKey("berries")).toBe(lexicalKey("berry")); // -ies → -y
+    expect(lexicalKey("peas")).toBe("pea"); // 4-letter minimum folds
+  });
+
+  it("guards the hazard classes and short/id-shaped tokens", () => {
+    expect(lexicalKey("swiss chard")).toBe("swiss chard"); // -ss protected
+    expect(lexicalKey("hummus")).toBe("hummus"); // -us protected
+    expect(lexicalKey("couscous")).toBe("couscous");
+    expect(lexicalKey("asparagus")).toBe("asparagus");
+    expect(lexicalKey("gas")).toBe("gas"); // < 4 letters never folds
+    expect(lexicalKey("ras el hanout")).toBe("ras el hanout");
+    expect(lexicalKey("cheese::cheddars")).toBe("cheese::cheddars"); // id-shaped token never folds
+    expect(lexicalKey("m&ms 2")).toBe("m ms 2"); // digit tokens never fold
+  });
+});
+
+describe("reconcileNormalization — in-tick lexical append", () => {
+  it("resolves the second same-batch twin through the just-minted first (no second node)", async () => {
+    const h = harness({ terms: ["onion", "onions"] }); // empty registry: first mints below-floor
+    const s = await reconcileNormalization(h.deps);
+    expect(h.confirmCalls).toBe(0);
+    expect(h.committed).toHaveLength(2);
+    expect(h.committed[0]).toMatchObject({ term: "onion", id: "onion" });
+    expect(h.committed[0].node).toBeTruthy();
+    expect(h.committed[1]).toMatchObject({ term: "onions", id: "onion" });
+    expect(h.committed[1].node).toBeUndefined(); // aliased, not minted
+    expect(h.committed[1].log).toMatchObject({ outcome: "same", detail: { note: "lexical_match" } });
+    expect(s).toMatchObject({ novel: 1, same: 1, lexical: 1 });
+  });
+
+  it("marks a colliding mid-batch mint ambiguous — later same-form terms take the confirm flow", async () => {
+    const h = harness({
+      terms: ["fancy red bulbs", "red onion!"],
+      identities: [{ id: "red onion", embedding: [1, 0, 0] }],
+      confirm: async (term) =>
+        term === "fancy red bulbs"
+          ? confirm({ outcome: "novel", canonical: "red onions", concrete: true })
+          : confirm({ outcome: "novel" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    // The canonical mint `red onions` collides lexically with `red onion` → the key is ambiguous,
+    // so `red onion!` misses the fast path and the classifier decides; both nodes stand.
+    expect(h.confirmCalls).toBe(2);
+    expect(h.committed[0]).toMatchObject({ id: "red onions" });
+    expect(h.committed[0].node).toBeTruthy();
+    expect(h.committed[1].node).toBeTruthy();
+    expect(h.committed[1].log.detail).not.toMatchObject({ note: "lexical_match" });
+    expect(s.lexical).toBe(0);
+  });
+
+  it("keeps a batch-start-ambiguous key ambiguous after a same-key mint", async () => {
+    const h = harness({
+      terms: ["salmon with skin", "skin on salmon!"],
+      identities: [
+        { id: "skin on salmon", embedding: [1, 0, 0] },
+        { id: "skin-on, salmon", embedding: [1, 0, 0] },
+      ],
+      confirm: async (term) =>
+        term === "salmon with skin"
+          ? confirm({ outcome: "novel", canonical: "skin-on salmon", concrete: true })
+          : confirm({ outcome: "novel" }),
+    });
+    const s = await reconcileNormalization(h.deps);
+    // The mint's key was ambiguous at batch start (two distinct survivors) — the append must not
+    // repopulate it, so the second term still takes the confirm flow.
+    expect(h.confirmCalls).toBe(2);
+    expect(s.lexical).toBe(0);
+  });
+});
+
+describe("reconcileNormalization — retro lexical-twin merge", () => {
+  const src = (id: string, representative: string | null = null, source: "auto" | "human" = "auto", concrete = 1): IdentitySourceRow => ({
+    id,
+    representative,
+    source,
+    concrete,
+  });
+
+  it("merges a surviving twin pair into the lexicographically smaller id (the singular)", async () => {
+    const h = harness({ terms: [], identitySources: [src("onions"), src("onion")] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toEqual([{ loser: "onions", survivor: "onion" }]);
+    expect(h.confirmCalls).toBe(0); // deterministic — no model call
+    expect(s).toMatchObject({ lexicalTwinMerged: 1, lexicalTwinSkipped: 0 });
+  });
+
+  it("merges twin abstract concepts (both concrete=0)", async () => {
+    const h = harness({
+      terms: [],
+      identitySources: [src("chile", null, "auto", 0), src("chiles", null, "auto", 0)],
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toEqual([{ loser: "chiles", survivor: "chile" }]);
+    expect(s.lexicalTwinMerged).toBe(1);
+  });
+
+  it("never merges across the concreteness boundary", async () => {
+    const h = harness({
+      terms: [],
+      identitySources: [src("chile", null, "auto", 0), src("chiles", null, "auto", 1)],
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toHaveLength(0);
+    expect(s).toMatchObject({ lexicalTwinMerged: 0, lexicalTwinSkipped: 1 });
+  });
+
+  it("never merges a pair involving a human node", async () => {
+    const h = harness({ terms: [], identitySources: [src("onion", null, "human"), src("onions")] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toHaveLength(0);
+    expect(s).toMatchObject({ lexicalTwinMerged: 0, lexicalTwinSkipped: 1 });
+  });
+
+  it("never guesses among 3+ survivors sharing one form", async () => {
+    const h = harness({ terms: [], identitySources: [src("onion"), src("onions"), src("onion!!")] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toHaveLength(0);
+    expect(s).toMatchObject({ lexicalTwinMerged: 0, lexicalTwinSkipped: 1 });
+  });
+
+  it("is bounded per tick and converges the remainder later", async () => {
+    const h = harness({
+      terms: [],
+      twinMergeMaxPerTick: 1,
+      identitySources: [src("chile", null, "auto", 0), src("chiles", null, "auto", 0), src("onion"), src("onions")],
+    });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toEqual([{ loser: "chiles", survivor: "chile" }]); // sorted key order, capped
+    expect(s.lexicalTwinMerged).toBe(1);
+  });
+
+  it("self-quiesces once the loser has a representative", async () => {
+    const h = harness({ terms: [], identitySources: [src("onion"), src("onions", "onion")] });
+    const s = await reconcileNormalization(h.deps);
+    expect(h.merges).toHaveLength(0);
+    expect(s).toMatchObject({ lexicalTwinMerged: 0, lexicalTwinSkipped: 0 });
   });
 });
 
