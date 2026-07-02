@@ -1,4 +1,4 @@
-# The walled-source scraper container. It runs OFF-CLOUD on the operator's own network.
+# The satellite container. It runs OFF-CLOUD on the operator's own network.
 #
 # Base image: the official Playwright image, which ships Chromium + all its system libraries
 # preinstalled at a known PLAYWRIGHT_BROWSERS_PATH — so the browser tier and the `login` verb
@@ -21,24 +21,24 @@ RUN mise install
 # --- dependencies -------------------------------------------------------------
 # Copy the workspace manifests + lockfile first for a cached install layer. All three workspace
 # manifests are copied so the frozen `aube ci` matches `aube-lock.yaml` (which records every
-# importer); the scraper image thus also carries the worker's dev deps — a size cost accepted in
+# importer); the satellite image thus also carries the worker's dev deps — a size cost accepted in
 # exchange for a lockfile-faithful, npm-free install. `@grocery-agent/contract` resolves at
 # runtime via tsx, so no build step is needed.
 COPY pnpm-workspace.yaml package.json aube-lock.yaml ./
 COPY packages/contract/package.json packages/contract/package.json
-COPY packages/scraper/package.json packages/scraper/package.json
+COPY packages/satellite/package.json packages/satellite/package.json
 COPY packages/worker/package.json packages/worker/package.json
 RUN mise exec -- aube ci
 
 # --- source -------------------------------------------------------------------
-# The scraper + the shared contract source (both run as TS via tsx — no build step).
+# The satellite + the shared contract source (both run as TS via tsx — no build step).
 COPY packages/contract packages/contract
-COPY packages/scraper packages/scraper
+COPY packages/satellite packages/satellite
 
-WORKDIR /app/packages/scraper
+WORKDIR /app/packages/satellite
 
-# The config/session/state volume the operator mounts. Holds scraper.toml, sessions/, state/.
-ENV SCRAPER_CONFIG_DIR=/config
+# The config/session/state volume the operator mounts. Holds satellite.toml, sessions/, state/.
+ENV SATELLITE_CONFIG_DIR=/config
 VOLUME ["/config"]
 
 # The ingest key is supplied at run time via the environment, never baked into the image:

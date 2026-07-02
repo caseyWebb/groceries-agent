@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const DEFAULT_MAX = 50_000;
 
 /** Strip query + fragment + trailing slash so tracker-wrapped and bare links compare equal
- *  (mirrors the Worker's canonicalizeUrl, kept local so the scraper has no Worker import). */
+ *  (mirrors the Worker's canonicalizeUrl, kept local so the satellite has no Worker import). */
 export function canonicalizeUrl(raw: string): string {
   try {
     const u = new URL(raw.trim());

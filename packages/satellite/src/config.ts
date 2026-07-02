@@ -1,7 +1,7 @@
-// Config loading: the operator's scraper.toml (parsed by smol-toml) + the two pieces of
+// Config loading: the operator's satellite.toml (parsed by smol-toml) + the two pieces of
 // runtime context that are NOT in the file — the ingest key (a secret, from the env) and
 // the config/session directory (the mounted volume). We validate the parsed shape into a
-// typed ScraperConfig and throw a clear, actionable error on anything malformed, since a
+// typed SatelliteConfig and throw a clear, actionable error on anything malformed, since a
 // misconfigured machine should fail loud at startup rather than push garbage.
 
 import { readFileSync } from "node:fs";
@@ -25,7 +25,7 @@ export interface SourceConfig {
 }
 
 /** The whole machine's config. */
-export interface ScraperConfig {
+export interface SatelliteConfig {
   /** The grocery-mcp connector base URL; `/admin/api/ingest` is appended for the push. */
   connector_url: string;
   /** Optional mounted directory of operator-authored adapter modules. */
@@ -37,7 +37,7 @@ export interface ScraperConfig {
 
 /** Runtime context resolved outside the TOML: the secret key + the mounted volume path. */
 export interface RuntimeContext {
-  config: ScraperConfig;
+  config: SatelliteConfig;
   /** The single ingest key for this machine (from INGEST_API_KEY). */
   ingestKey: string;
   /** The mounted config/session/state volume (default /config). */
@@ -50,7 +50,7 @@ const KNOWN_MODES = new Set(["incremental", "backfill"]);
 /** Assert a value is a non-empty string, throwing a field-scoped error otherwise. */
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`scraper config: "${field}" must be a non-empty string`);
+    throw new Error(`satellite config: "${field}" must be a non-empty string`);
   }
   return value.trim();
 }
@@ -58,7 +58,7 @@ function requireString(value: unknown, field: string): string {
 /** Validate one raw `[[sources]]` table into a SourceConfig. */
 function parseSource(raw: unknown, index: number): SourceConfig {
   if (raw === null || typeof raw !== "object") {
-    throw new Error(`scraper config: sources[${index}] must be a table`);
+    throw new Error(`satellite config: sources[${index}] must be a table`);
   }
   const o = raw as Record<string, unknown>;
   const id = requireString(o.id, `sources[${index}].id`);
@@ -68,13 +68,13 @@ function parseSource(raw: unknown, index: number): SourceConfig {
 
   if (o.fetch_tier !== undefined) {
     if (typeof o.fetch_tier !== "string" || !KNOWN_TIERS.has(o.fetch_tier)) {
-      throw new Error(`scraper config: sources[${index}].fetch_tier must be "http" or "browser"`);
+      throw new Error(`satellite config: sources[${index}].fetch_tier must be "http" or "browser"`);
     }
     source.fetch_tier = o.fetch_tier as SourceConfig["fetch_tier"];
   }
   if (o.mode !== undefined) {
     if (typeof o.mode !== "string" || !KNOWN_MODES.has(o.mode)) {
-      throw new Error(`scraper config: sources[${index}].mode must be "incremental" or "backfill"`);
+      throw new Error(`satellite config: sources[${index}].mode must be "incremental" or "backfill"`);
     }
     source.mode = o.mode as SourceConfig["mode"];
   }
@@ -84,10 +84,10 @@ function parseSource(raw: unknown, index: number): SourceConfig {
   return source;
 }
 
-/** Validate a raw parsed TOML object into a ScraperConfig, throwing on a bad shape. */
-export function parseConfig(raw: unknown): ScraperConfig {
+/** Validate a raw parsed TOML object into a SatelliteConfig, throwing on a bad shape. */
+export function parseConfig(raw: unknown): SatelliteConfig {
   if (raw === null || typeof raw !== "object") {
-    throw new Error("scraper config: top level must be a table");
+    throw new Error("satellite config: top level must be a table");
   }
   const o = raw as Record<string, unknown>;
   const connector_url = requireString(o.connector_url, "connector_url");
@@ -95,57 +95,57 @@ export function parseConfig(raw: unknown): ScraperConfig {
     const u = new URL(connector_url);
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("scheme");
   } catch {
-    throw new Error(`scraper config: "connector_url" must be a valid http(s) URL (got ${connector_url})`);
+    throw new Error(`satellite config: "connector_url" must be a valid http(s) URL (got ${connector_url})`);
   }
 
   if (!Array.isArray(o.sources) || o.sources.length === 0) {
-    throw new Error('scraper config: at least one [[sources]] entry is required');
+    throw new Error('satellite config: at least one [[sources]] entry is required');
   }
   const sources = o.sources.map(parseSource);
 
   const ids = new Set<string>();
   for (const s of sources) {
-    if (ids.has(s.id)) throw new Error(`scraper config: duplicate source id "${s.id}"`);
+    if (ids.has(s.id)) throw new Error(`satellite config: duplicate source id "${s.id}"`);
     ids.add(s.id);
   }
 
-  const config: ScraperConfig = { connector_url, sources };
+  const config: SatelliteConfig = { connector_url, sources };
   if (o.adapters_dir !== undefined) config.adapters_dir = requireString(o.adapters_dir, "adapters_dir");
   if (o.schedule !== undefined) config.schedule = requireString(o.schedule, "schedule");
   return config;
 }
 
-/** Parse a TOML string into a validated ScraperConfig. */
-export function parseConfigToml(toml: string): ScraperConfig {
+/** Parse a TOML string into a validated SatelliteConfig. */
+export function parseConfigToml(toml: string): SatelliteConfig {
   let raw: unknown;
   try {
     raw = parseToml(toml);
   } catch (err) {
-    throw new Error(`scraper config: TOML parse error: ${(err as Error).message}`);
+    throw new Error(`satellite config: TOML parse error: ${(err as Error).message}`);
   }
   return parseConfig(raw);
 }
 
 /**
- * Load the machine's full runtime context: read scraper.toml from the config dir, read the
- * ingest key from INGEST_API_KEY, and resolve the config dir (arg → SCRAPER_CONFIG_DIR env
+ * Load the machine's full runtime context: read satellite.toml from the config dir, read the
+ * ingest key from INGEST_API_KEY, and resolve the config dir (arg → SATELLITE_CONFIG_DIR env
  * → /config default). Throws a clear error when the file, key, or shape is missing/invalid.
  */
 export function loadRuntimeContext(opts: { configDir?: string; configPath?: string } = {}): RuntimeContext {
-  const configDir = opts.configDir ?? process.env.SCRAPER_CONFIG_DIR ?? "/config";
-  const configPath = opts.configPath ?? join(configDir, "scraper.toml");
+  const configDir = opts.configDir ?? process.env.SATELLITE_CONFIG_DIR ?? "/config";
+  const configPath = opts.configPath ?? join(configDir, "satellite.toml");
 
   let toml: string;
   try {
     toml = readFileSync(configPath, "utf8");
   } catch (err) {
-    throw new Error(`scraper config: could not read ${configPath}: ${(err as Error).message}`);
+    throw new Error(`satellite config: could not read ${configPath}: ${(err as Error).message}`);
   }
   const config = parseConfigToml(toml);
 
   const ingestKey = process.env.INGEST_API_KEY?.trim();
   if (!ingestKey) {
-    throw new Error("scraper config: INGEST_API_KEY environment variable is required (the machine's ingest key)");
+    throw new Error("satellite config: INGEST_API_KEY environment variable is required (the machine's ingest key)");
   }
 
   return { config, ingestKey, configDir };

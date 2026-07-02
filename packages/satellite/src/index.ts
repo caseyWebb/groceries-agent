@@ -1,17 +1,17 @@
-// @grocery-agent/scraper — the home-network walled-source recipe scraper. Public surface:
+// @grocery-agent/satellite — the home-network satellite. Public surface:
 // the config loader, the Node layer-1 JSON-LD extractor + shared parse, fact-stripping, the
 // session helpers, the tiered fetch, the adapter plugin model + generic adapter, the push
 // layer, the dedup cursor, and the scheduler's `runTick`. The CLI (src/cli.ts, the `bin`)
 // wires these together for the operator verbs.
 
-export const SCRAPER_PACKAGE = "@grocery-agent/scraper";
+export const SATELLITE_PACKAGE = "@grocery-agent/satellite";
 
 // config
 export {
   parseConfig,
   parseConfigToml,
   loadRuntimeContext,
-  type ScraperConfig,
+  type SatelliteConfig,
   type SourceConfig,
   type RuntimeContext,
 } from "./config.js";
@@ -59,7 +59,7 @@ export { createJsonLdAdapter, extractUrlsFromXml } from "./adapters/jsonld.js";
 export {
   buildBatch,
   pushBatch,
-  SCRAPER_VERSION,
+  SATELLITE_VERSION,
   type PushOutcome,
   type PushOptions,
   type FetchImpl,

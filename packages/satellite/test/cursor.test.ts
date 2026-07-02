@@ -6,7 +6,7 @@ import { Cursor, canonicalizeUrl, cursorPath } from "../src/cursor.js";
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "scraper-cursor-"));
+  dir = mkdtempSync(join(tmpdir(), "satellite-cursor-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

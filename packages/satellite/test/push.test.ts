@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CONTRACT_VERSION, type BatchResponse, type RecipeItem } from "@grocery-agent/contract";
-import { buildBatch, pushBatch, SCRAPER_VERSION, type FetchImpl } from "../src/push.js";
+import { buildBatch, pushBatch, SATELLITE_VERSION, type FetchImpl } from "../src/push.js";
 
 const item = (source: string): RecipeItem => ({
   title: "T",
@@ -36,12 +36,14 @@ const partialBody: BatchResponse = {
 };
 
 describe("buildBatch", () => {
-  it("stamps the source, scraper version, and contract version", () => {
+  it("stamps the capability, source, satellite version, and contract version", () => {
     const batch = buildBatch("Paid Example", [item("https://paid.example/r/1")]);
+    expect(batch.capability).toBe("recipe-scrape");
     expect(batch.source).toBe("Paid Example");
-    expect(batch.scraper_version).toBe(SCRAPER_VERSION);
+    expect(batch.satellite_version).toBe(SATELLITE_VERSION);
     expect(batch.contract_version).toBe(CONTRACT_VERSION);
-    expect(batch.recipes).toHaveLength(1);
+    expect(batch.observations).toHaveLength(1);
+    expect(batch.observations[0].kind).toBe("recipe");
   });
 });
 
@@ -106,8 +108,8 @@ describe("pushBatch", () => {
 
   it("self-validates and returns bad_payload before any network call", async () => {
     const f = fakeFetch([{ status: 200, body: cleanBody }]);
-    // An empty recipes array violates the strict schema.
-    const bad = { source: "S", scraper_version: "1", contract_version: "v1", recipes: [] };
+    // An empty observations array violates the strict v2 schema.
+    const bad = { capability: "recipe-scrape", source: "S", satellite_version: "1", contract_version: CONTRACT_VERSION, observations: [] };
     const out = await pushBatch(CONNECTOR, KEY, bad as never, f, noWait);
     expect(out.result).toBe("bad_payload");
     expect(f.calls).toHaveLength(0);

@@ -7,14 +7,14 @@
 // Base adapters ship in the image (keyed by name in BUILTIN_ADAPTERS); operator adapters
 // load at runtime from the mounted adapters_dir as modules default-exporting a factory
 // `(sdk) => SourceAdapter`. Every adapter's emitted item is validated against the shared
-// contract (parseRecipeItem) before the scraper will push it — an adapter cannot smuggle a
+// contract (parseRecipeItem) before the satellite will push it — an adapter cannot smuggle a
 // non-contract shape onto the wire.
 
 import { parseRecipeItem, type RecipeItem } from "@grocery-agent/contract";
 import { pathToFileURL } from "node:url";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ScraperConfig, SourceConfig } from "./config.js";
+import type { SatelliteConfig, SourceConfig } from "./config.js";
 import type { FetchResult } from "./fetch.js";
 import type { StorageState } from "./session.js";
 
@@ -34,7 +34,7 @@ export interface Sdk {
   /** The source this SDK instance is bound to. */
   source: SourceConfig;
   /** The machine's config (for adapters_dir, connector, etc.). */
-  config: ScraperConfig;
+  config: SatelliteConfig;
   /** The source's loaded session (null when none captured — extract may still work on public pages). */
   session: StorageState | null;
   /** Fetch a URL through this source's selected tier (HTTP or browser), replaying the session. */
@@ -88,7 +88,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterFactory> = {
  * override a built-in by using the same name. Returns a name → factory map; instantiation
  * (calling the factory with a per-source SDK) happens later in the scheduler.
  */
-export async function loadAdapters(config: ScraperConfig): Promise<Record<string, AdapterFactory>> {
+export async function loadAdapters(config: SatelliteConfig): Promise<Record<string, AdapterFactory>> {
   const adapters: Record<string, AdapterFactory> = { ...BUILTIN_ADAPTERS };
   if (!config.adapters_dir) return adapters;
 

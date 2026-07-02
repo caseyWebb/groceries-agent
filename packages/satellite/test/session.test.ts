@@ -14,7 +14,7 @@ import {
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "scraper-session-"));
+  dir = mkdtempSync(join(tmpdir(), "satellite-session-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

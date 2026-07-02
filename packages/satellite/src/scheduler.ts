@@ -7,7 +7,7 @@
 // browser, no filesystem. The CLI wires the real deps; tests wire fakes.
 
 import { MAX_BATCH_ITEMS, type RecipeItem } from "@grocery-agent/contract";
-import type { ScraperConfig, SourceConfig } from "./config.js";
+import type { SatelliteConfig, SourceConfig } from "./config.js";
 import type { AdapterFactory, Sdk, SourceAdapter } from "./adapter.js";
 import { validateEmit } from "./adapter.js";
 import type { FetchResult, FetchTier } from "./fetch.js";
@@ -90,7 +90,7 @@ async function collectDiscovered(adapter: SourceAdapter, sdk: Sdk, cap: number):
 }
 
 /** Process one source end-to-end, returning its summary. Never throws — errors become skips/logs. */
-async function runSource(config: ScraperConfig, source: SourceConfig, deps: TickDeps): Promise<SourceSummary> {
+async function runSource(config: SatelliteConfig, source: SourceConfig, deps: TickDeps): Promise<SourceSummary> {
   const summary: SourceSummary = { source: source.id, pushed: 0, failed: 0, skippedSeen: 0, authExpired: false };
 
   const factory = deps.adapters[source.adapter];
@@ -183,7 +183,7 @@ async function runSource(config: ScraperConfig, source: SourceConfig, deps: Tick
 }
 
 /** Run one tick over all configured sources, returning a per-source summary array. */
-export async function runTick(config: ScraperConfig, deps: TickDeps): Promise<SourceSummary[]> {
+export async function runTick(config: SatelliteConfig, deps: TickDeps): Promise<SourceSummary[]> {
   const summaries: SourceSummary[] = [];
   for (const source of config.sources) {
     summaries.push(await runSource(config, source, deps));

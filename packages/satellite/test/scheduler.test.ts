@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BatchResponse } from "@grocery-agent/contract";
 import { runTick, type TickDeps } from "../src/scheduler.js";
-import type { ScraperConfig, SourceConfig } from "../src/config.js";
+import type { SatelliteConfig, SourceConfig } from "../src/config.js";
 import { BUILTIN_ADAPTERS } from "../src/adapter.js";
 import type { FetchResult, FetchTier } from "../src/fetch.js";
 import type { StorageState } from "../src/session.js";
@@ -55,7 +55,7 @@ function fakePush(summary: BatchResponse): FetchImpl & { calls: unknown[] } {
   return impl;
 }
 
-const config = (sources: SourceConfig[]): ScraperConfig => ({ connector_url: "https://mcp.example", sources });
+const config = (sources: SourceConfig[]): SatelliteConfig => ({ connector_url: "https://mcp.example", sources });
 
 const baseDeps = (over: Partial<TickDeps>): TickDeps => ({
   loadSession: () => EMPTY_SESSION,
@@ -154,7 +154,7 @@ describe("runTick", () => {
   });
 
   it("chunks a large backfill into batches of at most MAX_BATCH_ITEMS", async () => {
-    // 201 discovered recipes → the worker does one D1 write per item, so the scraper must
+    // 201 discovered recipes → the worker does one D1 write per item, so the satellite must
     // split into 200 + 1 rather than POSTing a single oversized batch (which the endpoint
     // would reject with bad_payload / blow the subrequest budget).
     const N = 201;
@@ -171,7 +171,7 @@ describe("runTick", () => {
     // A push that echoes each batch's actual size back as `accepted`, and records the sizes.
     const sizes: number[] = [];
     const echoPush = ((_url: string, init: { body: string }) => {
-      const n = (JSON.parse(init.body) as { recipes: unknown[] }).recipes.length;
+      const n = (JSON.parse(init.body) as { observations: unknown[] }).observations.length;
       sizes.push(n);
       return Promise.resolve({
         status: 200,

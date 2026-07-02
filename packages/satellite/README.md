@@ -1,24 +1,26 @@
-# @grocery-agent/scraper — the home-network walled-source recipe scraper
+# @grocery-agent/satellite — the home-network satellite
 
-A small daemon you run **on your own network** (not in the cloud, not in the Worker) to feed
-recipes from **paid recipe sites you subscribe to** into your grocery-agent. One machine holds
-**one ingest key** and can be configured with **many sources**. For each source it authenticates
-with **your own subscription session**, extracts only the **functional recipe facts**, and POSTs
-them per-source to your grocery-mcp Worker's `POST <connector>/admin/api/ingest`. The Worker feeds
-those pushes into its discovery sweep.
+A satellite is an operator-run node that orbits the grocery-mcp Worker: it holds sessions the
+Worker can't, does bounded observation on the LAN, and reports home over an outbound-only link.
+Its one capability today is **`recipe-scrape`** — a small daemon you run **on your own network**
+(not in the cloud, not in the Worker) to feed recipes from **paid recipe sites you subscribe to**
+into your grocery-agent. One machine holds **one ingest key** and can be configured with **many
+sources**. For each source it authenticates with **your own subscription session**, extracts only
+the **functional recipe facts**, and POSTs them per-source to your grocery-mcp Worker's
+`POST <connector>/admin/api/ingest`. The Worker feeds those pushes into its discovery sweep.
 
 ## Legal / ethical posture
 
 This tool is deliberately narrow so it stays on the right side of the line:
 
-- **Your own session, your own subscription.** The scraper never creates accounts, never
+- **Your own session, your own subscription.** The satellite never creates accounts, never
   automates a login, and never defeats bot detection. You capture your *own* logged-in session
   (a headful `login` on a machine with a display, or by importing cookies from your own browser)
   and the daemon replays it read-only. There is no credential handling and no login automation.
 - **Functional facts only.** Only title, ingredients, instructions, times, servings, and the
   canonical source URL cross the wire — enforced by the shared contract. Publisher prose
   (headnotes) and images are **never** extracted or pushed. The contract has no field for them.
-- **A source you already pay for.** A walled source is one you subscribe to; the scraper is the
+- **A source you already pay for.** A walled source is one you subscribe to; the satellite is the
   sole intake path for it (it is not registered as a Worker-polled public feed).
 
 ## How it works
@@ -39,7 +41,7 @@ This tool is deliberately narrow so it stays on the right side of the line:
 1. **Mint an ingest key** in your Worker's `/admin` panel. Keep it secret; supply it via the
    `INGEST_API_KEY` environment variable (never in the config file).
 
-2. **Configure your sources.** Copy `scraper.example.toml` to `./config/scraper.toml` and edit
+2. **Configure your sources.** Copy `satellite.example.toml` to `./config/satellite.toml` and edit
    `connector_url` and the `[[sources]]` entries (each references the `jsonld` adapter with a
    `sitemap_url` or `feed_url`, and a `fetch_tier` of `http` or `browser`).
 
@@ -73,11 +75,11 @@ Copy `docker-compose.example.yml` to `docker-compose.yml`, set `INGEST_API_KEY` 
 a `.env` file, and:
 
 ```
-INGEST_API_KEY=… docker compose run --rm scraper run     # one tick
-INGEST_API_KEY=… docker compose up -d scraper            # the --watch daemon
+INGEST_API_KEY=… docker compose run --rm satellite run     # one tick
+INGEST_API_KEY=… docker compose up -d satellite            # the --watch daemon
 ```
 
-The container mounts `./config` at `/config` (holding `scraper.toml`, `sessions/`, `state/`).
+The container mounts `./config` at `/config` (holding `satellite.toml`, `sessions/`, `state/`).
 The image is built on the Playwright base, so Chromium (browser tier + `login`) is preinstalled.
 `login` needs a display — on a headless server use **cookie-import** or attach a noVNC/X sidecar.
 
@@ -93,10 +95,10 @@ The image is built on the Playwright base, so Chromium (browser tier + `login`) 
 
 ## Configuration reference
 
-See `scraper.example.toml`. Top-level: `connector_url` (required), `adapters_dir`, `schedule`.
+See `satellite.example.toml`. Top-level: `connector_url` (required), `adapters_dir`, `schedule`.
 Each `[[sources]]`: `id`, `adapter` (`jsonld` or an operator adapter name), `fetch_tier`
 (`http` default | `browser`), `sitemap_url` **or** `feed_url`, `mode` (`incremental` | `backfill`).
 
-When a source's session is missing or has expired (a login/paywall bounce), the scraper surfaces
+When a source's session is missing or has expired (a login/paywall bounce), the satellite surfaces
 an **`auth_expired`** signal for that source so your operator liveness view prompts a re-capture,
 rather than silently dropping the source.

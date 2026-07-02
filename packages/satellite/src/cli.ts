@@ -17,7 +17,7 @@ import { parsePageToRecipe } from "./jsonld.js";
 import { loadSession, saveSession, importSession, looksLikeAuthWall, type StorageState } from "./session.js";
 import { Cursor } from "./cursor.js";
 import { runTick, type TickDeps } from "./scheduler.js";
-import { SCRAPER_VERSION } from "./push.js";
+import { SATELLITE_VERSION } from "./push.js";
 
 /** A plain console logger — structured extras are appended as JSON for grep-ability. */
 const log = {
@@ -93,7 +93,7 @@ async function cmdRun(watch: boolean): Promise<void> {
   try {
     const deps = await buildTickDeps(ctx, browserTier);
     do {
-      log.info("tick start", { sources: ctx.config.sources.length, version: SCRAPER_VERSION });
+      log.info("tick start", { sources: ctx.config.sources.length, version: SATELLITE_VERSION });
       const summaries = await runTick(ctx.config, deps);
       reportSummaries(summaries);
       if (watch) {
@@ -222,7 +222,7 @@ function waitForEnter(): Promise<void> {
 function usage(): never {
   console.error(
     [
-      "grocery-scraper <verb> [args]",
+      "grocery-satellite <verb> [args]",
       "",
       "  run [--watch]                     one scrape tick over all sources (--watch loops on schedule)",
       "  test <source> <url>               dry-run one URL: fetch+extract+validate, print item, no POST",

@@ -5,7 +5,7 @@
 // block, JSON.parse each (with the same minimal entity-decode fallback the Worker uses),
 // collecting the parsed objects into unknown[]. From there we hand off to the shared,
 // runtime-agnostic parse (findRecipe + normalizeRecipe from @grocery-agent/contract) so
-// the scraper and the Worker can never disagree on what a recipe page means.
+// the satellite and the Worker can never disagree on what a recipe page means.
 
 import { findRecipe, normalizeRecipe, type RecipeItem } from "@grocery-agent/contract";
 import { toRecipeItem } from "./strip.js";

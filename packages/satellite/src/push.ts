@@ -1,4 +1,4 @@
-// The push layer: build a wire-contract IngestBatch and POST it to the Worker's
+// The push layer: build a v2 wire-contract SatelliteBatch and POST it to the Worker's
 // /admin/api/ingest, self-validating with the shared strict schema before the network so a
 // bad batch is caught locally, and mapping the endpoint's status/body to a coarse outcome.
 //
@@ -10,17 +10,17 @@
 
 import {
   CONTRACT_VERSION,
-  parseIngestBatch,
+  parseSatelliteBatch,
   type BatchResponse,
-  type IngestBatch,
+  type SatelliteBatch,
   type RecipeItem,
 } from "@grocery-agent/contract";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-/** Read this package's version from package.json (stamped onto every batch as scraper_version). */
-function readScraperVersion(): string {
+/** Read this package's version from package.json (stamped onto every batch as satellite_version). */
+function readSatelliteVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version?: string };
@@ -31,15 +31,19 @@ function readScraperVersion(): string {
 }
 
 /** The machine's reported build version — resolved once at module load. */
-export const SCRAPER_VERSION = readScraperVersion();
+export const SATELLITE_VERSION = readSatelliteVersion();
 
-/** Build a validated-shape batch for one source. Does not self-validate — pushBatch does that. */
-export function buildBatch(source: string, items: RecipeItem[]): IngestBatch {
+/**
+ * Build a validated-shape v2 batch for one source under the `recipe-scrape` capability, tagging
+ * each functional-facts item with its observation `kind`. Does not self-validate — pushBatch does.
+ */
+export function buildBatch(source: string, items: RecipeItem[]): SatelliteBatch {
   return {
+    capability: "recipe-scrape",
     source,
-    scraper_version: SCRAPER_VERSION,
+    satellite_version: SATELLITE_VERSION,
     contract_version: CONTRACT_VERSION,
-    recipes: items,
+    observations: items.map((item) => ({ kind: "recipe" as const, ...item })),
   };
 }
 
@@ -72,7 +76,7 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 /**
  * POST a batch to <connectorUrl>/admin/api/ingest with the ingest key.
  *
- * - Self-validates with the strict IngestBatchSchema first → `bad_payload` locally, no network.
+ * - Self-validates with the strict SatelliteBatchSchema first → `bad_payload` locally, no network.
  * - 200 → accepted (clean) or partial (any deduped/rejected), carrying the response summary.
  * - 401 → bad_key (no retry — the key won't fix itself).
  * - 400 → bad_payload (no retry — the payload won't fix itself).
@@ -81,11 +85,11 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 export async function pushBatch(
   connectorUrl: string,
   key: string,
-  batch: IngestBatch,
+  batch: SatelliteBatch,
   fetchImpl: FetchImpl = fetch as unknown as FetchImpl,
   options: PushOptions = {},
 ): Promise<PushOutcome> {
-  const self = parseIngestBatch(batch);
+  const self = parseSatelliteBatch(batch);
   if (!self.ok) return { result: "bad_payload", error: self.error };
 
   const url = `${connectorUrl.replace(/\/+$/, "")}/admin/api/ingest`;
@@ -118,8 +122,8 @@ export async function pushBatch(
     if (status === 200) {
       const response = (await bodyReader().catch(() => null)) as BatchResponse | null;
       const summary: BatchResponse = response ?? {
-        received: batch.recipes.length,
-        accepted: batch.recipes.length,
+        received: batch.observations.length,
+        accepted: batch.observations.length,
         deduped: 0,
         rejected: 0,
         results: [],

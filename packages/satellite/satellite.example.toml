@@ -1,11 +1,11 @@
-# scraper.toml — the walled-source scraper's config for ONE machine on your home network.
+# satellite.toml — the satellite's config for ONE machine on your home network.
 #
 # This machine holds ONE ingest key (supplied via the INGEST_API_KEY environment variable,
 # NOT this file) and is configured with MANY sources. It authenticates to each paid site
 # with YOUR OWN subscription session (captured out-of-band; see the README), extracts only
 # the functional recipe facts, and POSTs them per-source to your grocery-mcp Worker.
 #
-# Copy this to <configDir>/scraper.toml (the mounted volume, default /config) and edit.
+# Copy this to <configDir>/satellite.toml (the mounted volume, default /config) and edit.
 
 # Your grocery-mcp connector base URL. "/admin/api/ingest" is appended for the push.
 connector_url = "https://grocery-mcp.<your-account>.workers.dev"

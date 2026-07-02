@@ -1,15 +1,15 @@
 {
-  "name": "@grocery-agent/scraper",
+  "name": "@grocery-agent/satellite",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The home-network walled-source recipe scraper (walled-source-scraper): authenticates to paid recipe sites with the operator's own session, extracts recipes to the shared wire contract, and POSTs them to the grocery-mcp Worker's /admin/api/ingest.",
+  "description": "The home-network satellite (satellite): runs off-cloud on the operator's own network, authenticates to walled recipe sites with the operator's own session, extracts recipes to the shared wire contract, and POSTs them to the grocery-mcp Worker's /admin/api/ingest under the recipe-scrape capability.",
   "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "grocery-scraper": "./src/cli.ts"
+    "grocery-satellite": "./src/cli.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

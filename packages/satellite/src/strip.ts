@@ -1,5 +1,5 @@
 // Fact-stripping: a NormalizedRecipe (the shared parse's output) → the wire-contract
-// RecipeItem the scraper pushes. This is where the functional-facts-only posture is
+// RecipeItem the satellite pushes. This is where the functional-facts-only posture is
 // enforced: title / ingredients / instructions / times / servings / source and an
 // optional summary are the ONLY fields that cross the wire. Publisher prose (headnotes)
 // and images are never carried — the contract has no field for them and we never invent
