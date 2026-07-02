@@ -11,7 +11,8 @@ import {
 } from "../src/recipe-projection.js";
 import { readJobHealth } from "../src/health.js";
 import type { Env } from "../src/env.js";
-import type { ClassifiedFacets } from "../src/recipe-facets.js";
+import type { IngredientContext } from "../src/corpus-db.js";
+import { EMPTY_FACETS, type ClassifiedFacets } from "../src/recipe-facets.js";
 import { serializeMarkdown } from "../src/serialize.js";
 import { createR2CorpusStore } from "../src/corpus-store.js";
 import { fakeR2 } from "./fake-r2.js";
@@ -44,13 +45,56 @@ function recipeMd(over: Record<string, unknown> = {}, body = BODY): string {
   return serializeMarkdown(fm, body);
 }
 
+/**
+ * A minimal resolve-only fake IngredientContext over a `toId` front-door + `ids`
+ * survivor set, mirroring the real capture-off funnel the projection uses:
+ * lowercase/trim clean, alias lookup, dedup/drop-empty in `resolveNames`. Capture is
+ * the projection's own batched flush (recorded by `makeDeps`), not a context concern.
+ */
+function fakeContext(over: { toId?: Record<string, string>; ids?: string[] } = {}): IngredientContext {
+  const toId = over.toId ?? {};
+  const ids = new Set(over.ids ?? []);
+  const resolveOne = (term: string): string => {
+    const cleaned = term.toLowerCase().trim();
+    return toId[cleaned] ?? cleaned;
+  };
+  return {
+    resolver: { toId, ids, searchTerms: {} },
+    resolve: resolveOne,
+    resolveList: (v) => v,
+    resolveNames(value: unknown): string[] {
+      if (!Array.isArray(value)) return [];
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const entry of value) {
+        if (typeof entry !== "string") continue;
+        const norm = resolveOne(entry);
+        if (norm && !seen.has(norm)) {
+          seen.add(norm);
+          out.push(norm);
+        }
+      }
+      return out;
+    },
+    base: (id) => id,
+    searchTerm: (id) => id,
+    satisfiesAmong: async () => [],
+  };
+}
+
 /** Injected in-memory deps over a `path -> markdown` map; captures what was written. */
 function makeDeps(
   files: Record<string, string>,
   priorErrorSlugs: string[] = [],
   classified: Map<string, ClassifiedFacets> = new Map(),
+  funnel: { ctx?: IngredientContext; degraded?: boolean } = {},
 ) {
-  const written = { recipes: [] as unknown[][], errors: [] as ReconcileError[] };
+  const written = {
+    recipes: [] as unknown[][],
+    errors: [] as ReconcileError[],
+    /** Each enqueueNovelTerms call's batch — the projection flushes at most once per pass. */
+    enqueued: [] as string[][],
+  };
   const deps: ProjectionDeps = {
     listRecipePaths: async () => Object.keys(files),
     readRecipe: async (p) => files[p] ?? null,
@@ -62,6 +106,10 @@ function makeDeps(
     },
     loadErrorSlugs: async () => priorErrorSlugs,
     loadClassifiedFacets: async () => classified,
+    ingredientContext: async () => ({ ctx: funnel.ctx ?? fakeContext(), degraded: funnel.degraded ?? false }),
+    enqueueNovelTerms: async (terms) => {
+      written.enqueued.push(terms);
+    },
   };
   return { deps, written };
 }
@@ -109,7 +157,7 @@ describe("reconcileRecipeIndex — valid corpus", () => {
   it("projects an empty corpus as an empty index (no errors)", async () => {
     const { deps, written } = makeDeps({});
     const res = await reconcileRecipeIndex(deps);
-    expect(res).toEqual({ projected: 0, skipped: 0, errors: [] });
+    expect(res).toEqual({ projected: 0, skipped: 0, unresolved: 0, degraded: false, errors: [] });
     expect(written.recipes).toEqual([]);
   });
 });
@@ -171,6 +219,177 @@ describe("reconcileRecipeIndex — dangling pairs_with is flagged corpus-wide", 
     expect(res.skipped).toBe(1);
     expect(written.errors[0]).toMatchObject({ slug: "orphan-main" });
     expect(written.errors[0].message).toMatch(/pairs_with references unknown recipe "ghost-side"/);
+  });
+});
+
+// Positional JSON-column offsets in a projected row (RECIPE_COLUMNS order):
+// slug + 5 scalars + source_url, then the JSON columns.
+const COL_INGREDIENTS_KEY = 7;
+const COL_PERISHABLE = 13;
+
+describe("reconcileRecipeIndex — projection-time re-resolution (the IngredientContext funnel)", () => {
+  it("writes surviving canonical ids; an unmapped term projects as its cleaned form", async () => {
+    const ctx = fakeContext({ toId: { scallions: "green-onion" }, ids: ["green-onion"] });
+    const classified = new Map<string, ClassifiedFacets>([
+      [
+        "soup",
+        {
+          ...EMPTY_FACETS,
+          ingredients_key: ["scallions", "Mystery Leaf"],
+          perishable_ingredients: ["scallions"],
+        },
+      ],
+    ]);
+    const { deps, written } = makeDeps({ "recipes/soup.md": recipeMd({ title: "Soup" }) }, [], classified, { ctx });
+    const res = await reconcileRecipeIndex(deps);
+
+    const row = written.recipes[0];
+    expect(JSON.parse(row[COL_INGREDIENTS_KEY] as string)).toEqual(["green-onion", "mystery leaf"]);
+    expect(JSON.parse(row[COL_PERISHABLE] as string)).toEqual(["green-onion"]);
+    // "mystery leaf" is the one projected id the resolver has not placed.
+    expect(res.unresolved).toBe(1);
+  });
+
+  it("does not silently re-point a stored canonical id that has no alias-variant row", async () => {
+    // "spring-onion" was stored as a canonical id but the graph has no alias row for it
+    // (e.g. a merged-away id whose surface term never got a variant). It is NOT
+    // re-pointed to the survivor: it projects cleaned/unchanged, counts unresolved, and
+    // is enqueued for capture — convergence is eventual, via the capture job.
+    const ctx = fakeContext({ toId: { scallions: "green-onion" }, ids: ["green-onion"] });
+    const classified = new Map<string, ClassifiedFacets>([
+      ["soup", { ...EMPTY_FACETS, ingredients_key: ["spring-onion"], perishable_ingredients: [] }],
+    ]);
+    const { deps, written } = makeDeps({ "recipes/soup.md": recipeMd({ title: "Soup" }) }, [], classified, { ctx });
+    const res = await reconcileRecipeIndex(deps);
+
+    expect(JSON.parse(written.recipes[0][COL_INGREDIENTS_KEY] as string)).toEqual(["spring-onion"]);
+    expect(res.unresolved).toBe(1);
+    expect(written.enqueued).toEqual([["spring-onion"]]);
+  });
+
+  it("flushes ONE batch of distinct unplaced ids — deduped across recipes, never a known survivor, from both facet fields and authored Tier-A fallbacks", async () => {
+    const ctx = fakeContext({ ids: ["salt"] });
+    const classified = new Map<string, ClassifiedFacets>([
+      // Both classified recipes share "scallions" (dedup) and carry the known "salt".
+      ["a", { ...EMPTY_FACETS, ingredients_key: ["scallions", "salt"], perishable_ingredients: ["scallions"] }],
+      ["b", { ...EMPTY_FACETS, ingredients_key: ["scallions"], perishable_ingredients: ["fresh dill"] }],
+    ]);
+    const { deps, written } = makeDeps(
+      {
+        "recipes/a.md": recipeMd({ title: "A" }),
+        "recipes/b.md": recipeMd({ title: "B" }),
+        // No classified row: the merge falls back to the authored Tier-A values, which
+        // go through the same funnel.
+        "recipes/c.md": recipeMd({ title: "C", ingredients_key: ["Heirloom Beans"] }),
+      },
+      [],
+      classified,
+      { ctx },
+    );
+    await reconcileRecipeIndex(deps);
+
+    // Exactly one flush call; the distinct-set dedup means "scallions" appears once,
+    // and the known survivor "salt" is never enqueued. Sorted for determinism.
+    expect(written.enqueued).toEqual([["fresh dill", "heirloom beans", "scallions"]]);
+  });
+
+  it("survives a flush failure — the pass still projects and succeeds", async () => {
+    const { deps, written } = makeDeps({ "recipes/a.md": recipeMd({ title: "A" }) });
+    deps.enqueueNovelTerms = async () => {
+      throw new Error("queue write failed");
+    };
+    const res = await reconcileRecipeIndex(deps);
+    expect(res.projected).toBe(1);
+    expect(written.recipes).toHaveLength(1);
+  });
+
+  it("degrades on an empty context: every recipe projects with stored values passed through, nothing enqueued", async () => {
+    const classified = new Map<string, ClassifiedFacets>([
+      ["a", { ...EMPTY_FACETS, ingredients_key: ["scallions"], perishable_ingredients: [] }],
+    ]);
+    const { deps, written } = makeDeps(
+      { "recipes/a.md": recipeMd({ title: "A" }), "recipes/b.md": recipeMd({ title: "B" }) },
+      [],
+      classified,
+      { ctx: fakeContext(), degraded: true },
+    );
+    const res = await reconcileRecipeIndex(deps);
+
+    expect(res.projected).toBe(2);
+    expect(res.degraded).toBe(true);
+    expect(written.enqueued).toEqual([]); // no flush on a degraded pass
+    const a = written.recipes.find((r) => r[0] === "a")!;
+    expect(JSON.parse(a[COL_INGREDIENTS_KEY] as string)).toEqual(["scallions"]); // cleaned passthrough
+    // The empty resolver places nothing, so every distinct term reports unresolved (the spike).
+    expect(res.unresolved).toBe(2); // "scallions" + b's "x"
+  });
+
+  it("still projects through the real wiring when the resolver read fails (buildProjectionDeps + fakeD1)", async () => {
+    const fake = fakeD1({ tables: { recipes: [], reconcile_errors: [], novel_ingredient_terms: [] } });
+    const realPrepare = fake.env.DB.prepare.bind(fake.env.DB);
+    (fake.env.DB as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (/ingredient_identity|ingredient_alias/i.test(sql)) throw new Error("resolver read failed");
+      return realPrepare(sql);
+    };
+    const { bucket } = fakeR2({ "recipes/a.md": recipeMd({ title: "A" }) });
+    const deps = buildProjectionDeps(fake.env, createR2CorpusStore(bucket));
+    const res = await reconcileRecipeIndex(deps);
+
+    expect(res.projected).toBe(1); // the projection succeeded despite the resolver failure
+    expect(res.degraded).toBe(true);
+    expect(fake.tables.recipes).toHaveLength(1); // the row really was written
+    expect(fake.tables.novel_ingredient_terms).toEqual([]); // no flush on a degraded pass
+  });
+
+  it("flushes to the real novel-term queue through the real wiring (buildProjectionDeps + fakeD1)", async () => {
+    const fake = fakeD1({ tables: { recipes: [], novel_ingredient_terms: [] } });
+    const { bucket } = fakeR2({ "recipes/a.md": recipeMd({ title: "A" }) });
+    const deps = buildProjectionDeps(fake.env, createR2CorpusStore(bucket));
+    const res = await reconcileRecipeIndex(deps);
+
+    expect(res.degraded).toBe(false); // empty identity tables read fine — not a failure
+    expect(res.unresolved).toBe(1); // "x" is unplaced
+    expect(fake.tables.novel_ingredient_terms.map((r) => r.term)).toEqual(["x"]);
+  });
+});
+
+describe("runProjectionJob — unresolved convergence gauge + degraded flag in the summary", () => {
+  it("counts distinct unresolved terms across recipes", async () => {
+    const ctx = fakeContext({ ids: ["x"] });
+    const { deps } = makeDeps(
+      {
+        // Both share the unknown "weird thing"; "x" is a known survivor.
+        "recipes/a.md": recipeMd({ title: "A", ingredients_key: ["x", "weird thing"] }),
+        "recipes/b.md": recipeMd({ title: "B", ingredients_key: ["weird thing"] }),
+      },
+      [],
+      new Map(),
+      { ctx },
+    );
+    const env = fakeD1().env;
+    await runProjectionJob(env, deps, () => 1000);
+    const health = (await readJobHealth(env, "recipe-index"))!;
+    expect(health.summary).toEqual({ projected: 2, skipped: 0, unresolved: 1, degraded: false });
+  });
+
+  it("reports zero when every projected term resolves", async () => {
+    const ctx = fakeContext({ ids: ["x"] });
+    const { deps } = makeDeps({ "recipes/a.md": recipeMd({ title: "A" }) }, [], new Map(), { ctx });
+    const env = fakeD1().env;
+    await runProjectionJob(env, deps, () => 1000);
+    const health = (await readJobHealth(env, "recipe-index"))!;
+    expect(health.summary).toEqual({ projected: 1, skipped: 0, unresolved: 0, degraded: false });
+  });
+
+  it("flags a degraded pass in the summary while the job stays ok", async () => {
+    const { deps } = makeDeps({ "recipes/a.md": recipeMd({ title: "A" }) }, [], new Map(), {
+      degraded: true,
+    });
+    const env = fakeD1().env;
+    await runProjectionJob(env, deps, () => 1000);
+    const health = (await readJobHealth(env, "recipe-index"))!;
+    expect(health.ok).toBe(true); // the projection genuinely succeeded
+    expect(health.summary).toEqual({ projected: 1, skipped: 0, unresolved: 1, degraded: true });
   });
 });
 
@@ -249,7 +468,7 @@ describe("runProjectionJob — health record + new-error alert", () => {
 
     const health = (await readJobHealth(env, "recipe-index"))!;
     expect(health.ok).toBe(true);
-    expect(health.summary).toEqual({ projected: 0, skipped: 2 });
+    expect(health.summary).toEqual({ projected: 0, skipped: 2, unresolved: 0, degraded: false });
     // exactly one alert, naming the NEW failure only
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toMatch(/1 recipe\(s\) failed to index/);
@@ -267,6 +486,8 @@ describe("runProjectionJob — health record + new-error alert", () => {
       replaceErrors: async () => {},
       loadErrorSlugs: async () => [],
       loadClassifiedFacets: async () => new Map(),
+      ingredientContext: async () => ({ ctx: fakeContext(), degraded: false }),
+      enqueueNovelTerms: async () => {},
     };
     vi.stubGlobal("fetch", (async () => new Response("ok")) as unknown as typeof fetch);
     const env = fakeD1().env; // no NTFY_URL → notifyFailure is a no-op

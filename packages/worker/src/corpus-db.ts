@@ -153,9 +153,11 @@ export interface IngredientContext {
  * is NOT a known survivor (a novel surface form), enqueues it via `enqueueNovelTerms` —
  * deduped within the context (a `Set` of already-enqueued terms) and best-effort (the enqueue
  * is fire-and-forget and swallows its own errors, so it never throws into the caller).
+ * Pass `{ capture: false }` for a resolve-only context over the live resolver, for a caller
+ * that batches its own enqueue (the recipe-index projection flushes once per pass).
  */
-export async function ingredientContext(env: Env): Promise<IngredientContext> {
-  return contextFromResolver(env, await readResolver(env));
+export async function ingredientContext(env: Env, opts?: { capture: boolean }): Promise<IngredientContext> {
+  return contextFromResolver(env, await readResolver(env), opts);
 }
 
 /** An empty (no-alias) context — the graceful-degradation fallback when a resolver read fails
