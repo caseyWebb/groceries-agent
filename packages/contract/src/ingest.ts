@@ -112,11 +112,49 @@ export const SaleObservationSchema = z.object({ kind: z.literal("sale"), ...sale
 export type SaleObservation = z.infer<typeof SaleObservationSchema>;
 
 /**
- * An observation item — a discriminated union keyed by `kind`: `recipe` (recipe-scrape) and
- * `sale` (sale-scan). A later capability adds its kind here without breaking a consumer that
- * handles only the existing kinds.
+ * The RAW per-item outcome of one satellite cart-fill line (satellite-order-cart-fill) —
+ * sensor-not-judge: what HAPPENED to this line in the store cart, keyed to the canonical
+ * ingredient id the pull-list carried, with NO derived grocery-list state. `item_id` is the
+ * authoritative key (=== `grocery_list.normalized_name`); `disposition` is the raw outcome
+ * (`carted`/`substituted`/`unavailable`); `product` is the matched or substitute store product
+ * (raw provenance — its price/url retained for spot-checkability), absent when `unavailable`.
+ * The Worker re-derives the `in_cart` transition itself (it never trusts a state from the wire),
+ * exactly as it re-derives on-sale/savings from a `sale`'s raw `{ regular, promo }`. An `order`
+ * observation travels ONLY over the order-receipt endpoint (against an issued order-list), not
+ * the capability-tagged push batch (so `CAPABILITIES` is untouched) and not the pull-results.
  */
-export const ObservationItemSchema = z.discriminatedUnion("kind", [RecipeObservationSchema, SaleObservationSchema]);
+const orderFields = {
+  /** The canonical ingredient id the pull-list carried (the authoritative key; === grocery_list.normalized_name). */
+  item_id: z.string().trim().min(1),
+  /** What happened to this line in the cart. Raw outcome, not a derived state. */
+  disposition: z.enum(["carted", "substituted", "unavailable"]),
+  /** The store product carted or substituted in — raw provenance, absent when unavailable. */
+  product: z
+    .object({
+      productId: z.string().trim().min(1),
+      description: z.string().trim().min(1),
+      size: z.string().optional(),
+      price: z.number().nonnegative().optional(),
+      url: z.string().refine(isHttpUrl, { message: "url must be a public http(s) URL" }).optional(),
+    })
+    .optional(),
+  note: z.string().optional(),
+} as const;
+
+/** An `order` observation item: the raw cart-fill disposition tagged with its discriminant `kind`. */
+export const OrderObservationSchema = z.object({ kind: z.literal("order"), ...orderFields });
+export type OrderObservation = z.infer<typeof OrderObservationSchema>;
+
+/**
+ * An observation item — a discriminated union keyed by `kind`: `recipe` (recipe-scrape),
+ * `sale` (sale-scan), and `order` (order-fill). A later capability adds its kind here without
+ * breaking a consumer that handles only the existing kinds.
+ */
+export const ObservationItemSchema = z.discriminatedUnion("kind", [
+  RecipeObservationSchema,
+  SaleObservationSchema,
+  OrderObservationSchema,
+]);
 export type ObservationItem = z.infer<typeof ObservationItemSchema>;
 
 /**
@@ -221,6 +259,18 @@ export function parseRecipeItem(input: unknown): ParseResult<RecipeItem> {
  */
 export function parseSaleObservation(input: unknown): ParseResult<SaleObservation> {
   const r = SaleObservationSchema.safeParse(input);
+  if (r.success) return { ok: true, value: r.data };
+  return { ok: false, error: fmtIssues(r.error) };
+}
+
+/**
+ * Validate a single `order` observation (an order-fill adapter self-validates its per-item emit
+ * with this before the satellite posts the receipt — so a non-contract disposition, or an
+ * unmodeled derived-state field, never reaches the wire). Returns the parsed observation with any
+ * unmodeled field stripped.
+ */
+export function parseOrderObservation(input: unknown): ParseResult<OrderObservation> {
+  const r = OrderObservationSchema.safeParse(input);
   if (r.success) return { ok: true, value: r.data };
   return { ok: false, error: fmtIssues(r.error) };
 }

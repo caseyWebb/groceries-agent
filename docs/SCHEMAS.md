@@ -1034,6 +1034,46 @@ sale observation         { kind: "sale", store, locationId, productId, descripti
    -- task's store even when empty/all-rejected (clears stale sales); a `failed` does not.
 ```
 
+## order_lists (D1 table, shared) — the satellite cart-fill issued set
+
+The issued to-buy set for a **satellite cart-fill** (satellite-order-cart-fill). Order-fill is a **direct request/response**, not a pull-channel task: a satellite-fulfilled tenant's local helper calls two `/satellite/*` endpoints — a **pull-list** (`POST /satellite/order/list`) and a **receipt** (`POST /satellite/order/receipt`) — added alongside the claim/results routes, outside `/admin*` so the Access gate never applies, authenticated by the **same** ingest-key bearer + rate limit. Both endpoints require a **tenant-bound** key (an operator-global key is rejected `403` — there is no operator-scope order-fill). The pull-list **mints one row here per Refresh**, recording the exact canonical ingredient ids the Worker handed that tenant; the receipt references the row by id. The **`item_ids` column is the AUTHORITATIVE issued set** the receipt is validated against — a receipt can only advance ids the Worker issued (it cannot invent an item, graft in another list's id, or redirect another tenant's list), the order-fill analog of the sale intake's task-scoped-authoritative rule. All access goes through `src/order-lists-db.ts` → `src/db.ts`. Schema: `migrations/d1/0038_satellite_order_lists.sql`.
+
+```sql
+-- D1 order_lists table. PRIMARY KEY (id).
+id           TEXT     -- "ol_<hex>" opaque order-list id (the receipt correlation key)  (PK)
+tenant       TEXT     -- the issuing tenant (from the ingest key's binding)  NOT NULL
+store        TEXT     -- primary store slug at issue time  NOT NULL
+location_id  TEXT     -- store location id (may be NULL — the operator's preferred_location label)
+item_ids     TEXT     -- JSON array of canonical ingredient ids issued (AUTHORITATIVE)  NOT NULL
+status       TEXT     -- 'issued' | 'received'  NOT NULL DEFAULT 'issued'
+created_at   INTEGER  -- epoch ms  NOT NULL
+received_at  INTEGER  -- epoch ms a receipt was applied; NULL until then
+-- INDEX order_lists_tenant (tenant, created_at) — per-tenant recency scan (audit / prune ordering).
+```
+
+The **pull-list** is served **only** when the tenant's primary store is satellite-fulfilled (`preferences.stores.fulfillment === "satellite"`); a Kroger/Worker-native primary gets a structured `409` directing to `place_order`, and a non-Kroger primary **without** the marker (a plain walk store) gets a `409` directing to the in-store walk (so a walk-only tenant can't mint an order-list by accident). The list is `computeToBuy` over the current `active` grocery list minus pantry on-hand (the same set algebra `place_order` shares), each line keyed to its canonical id — it is **not** resolved against store product availability (product matching is the satellite's browser job). A cron step reaps orphaned **`issued`** rows past a ~7-day retention (`pruneStaleOrderLists`, wired into `scheduled()` beside the sale-scan prune); **`received`** rows are retained as the audit trail. (`order_lists.status`'s `issued | received` is unrelated to the `grocery_list` lifecycle's own states, below.)
+
+The **`order` observation** (`ingest.ts`, the third member of the shared observation union — `recipe | sale | order`) and the two **endpoint shapes** (`@grocery-agent/contract`, `satellite-order.ts`):
+
+```
+POST /satellite/order/list      {}
+   → { order_list_id, store, location_id, items: [{ item_id, name, quantity, for_recipes, assumed_quantity }], partials: [{ name, for_recipes }] }
+      -- item_id is the canonical ingredient id (=== grocery_list.normalized_name); store/location_id are the tenant's primary.
+
+POST /satellite/order/receipt   { order_list_id, observations: OrderObservation[], mark_placed? }
+   → { order_list: { id, status }, results: ItemResult[] }
+
+order observation   { kind: "order", item_id, disposition: "carted"|"substituted"|"unavailable", product?: { productId, description, size?, price?, url? }, note? }
+   -- RAW per-item cart-fill outcome only (sensor-not-judge): NO derived grocery-list state. The Worker re-derives the
+   -- in_cart transition itself (it never trusts a state from the wire), the way it re-derives on-sale/savings from a `sale`.
+   -- item_id is the AUTHORITATIVE key — one NOT in the referenced order-list's item_ids is rejected per-item. An `order`
+   -- observation is valid ONLY on the receipt endpoint against an issued order-list; on the push path (/admin/api/ingest)
+   -- or the pull-results path it is rejected (as `sale` is pull-channel-only). Delivered over the order-receipt endpoint,
+   -- NOT the capability-tagged push batch, so the CAPABILITIES enum is unchanged by it.
+```
+
+**Receipt reconciliation** (`grocery_list` reused unchanged — no schema change): `carted` and `substituted` lines advance to **`in_cart`** via the **same** `advanceInCartRows` `place_order` uses (keyed by canonical id — a substitute still satisfies the canonical ingredient), but ONLY for ids still on the list as `active`, so a stale pull-list cannot resurrect a removed line or regress an `ordered` one; an `unavailable` line stays `active` to retry on the next order. No line advances past `in_cart` automatically (the satellite stops at the store's review page and never checks out — see `docs/ARCHITECTURE.md`). The optional **mark-placed** re-post (`mark_placed: true`, no new observations) advances the issued `in_cart` lines to **`ordered`** (`advanceOrderedRows`); unused, a line stays `in_cart`, identical to an unconfirmed Kroger cart. Application is **idempotent** — a re-posted receipt converges rather than double-advancing.
+
 ## discovery_sources (shared corpus, D1 `discovery_senders` + `discovery_members`)
 
 **Shared** (D1 shared corpus), allowlist config. The trust gate for inbound-email discovery: only mail from a listed source is processed. Two tables — `discovery_members` (friend-group personal addresses: anything they forward gets indexed) and `discovery_senders` (newsletter `From` addresses: auto-forwarded mail from them gets indexed). Editable by `update_discovery_sources` (anyone trusted with the MCP can widen intake), deduped by `address`.

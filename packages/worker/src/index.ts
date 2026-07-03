@@ -36,7 +36,8 @@ import { handleHealthRequest, handleHealthSvgRequest, writeJobHealth, writeJobRu
 import { handleCookbook } from "./cookbook.js";
 import { handleSource } from "./source.js";
 import { handleIngest } from "./ingest.js";
-import { handleSatelliteClaim, handleSatelliteResults } from "./satellite.js";
+import { handleSatelliteClaim, handleSatelliteResults, handleOrderList, handleOrderReceipt } from "./satellite.js";
+import { pruneStaleOrderLists, ORDER_LIST_RETENTION_MS } from "./order-lists-db.js";
 import adminApp from "./admin/app.js";
 
 /**
@@ -91,6 +92,11 @@ const defaultHandler = {
     // satellite initiates every call; the Worker opens nothing toward it.
     if (url.pathname === "/satellite/tasks/claim") return handleSatelliteClaim(request, env);
     if (url.pathname === "/satellite/results") return handleSatelliteResults(request, env);
+    // Order-fill (satellite-order-cart-fill): two DIRECT request/response endpoints (not pull-channel
+    // tasks), same ingest-key bearer auth, tenant-bound key required. Outside `/admin*` so the Access
+    // gate never applies; the satellite's local helper calls them outbound (the Worker dials nothing).
+    if (url.pathname === "/satellite/order/list") return handleOrderList(request, env);
+    if (url.pathname === "/satellite/order/receipt") return handleOrderReceipt(request, env);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
       // The operator admin panel (Hono SSR + islands), gated by Cloudflare Access in the app
       // middleware. `run_worker_first` routes /admin* here before any static asset is served.
@@ -238,6 +244,11 @@ export default {
       // idempotent every tick (a converged pass plans nothing); no capture side effect, so
       // non-food legacy keys never enter the graph.
       runSkuRekeyJob(env),
+      // Reap orphaned satellite order-lists (satellite-order-cart-fill): an `issued` row is minted on
+      // every cart-fill Refresh but only reaches `received` if a receipt is posted, so a Refresh-and-
+      // abandon leaves it forever. Delete `issued` rows past the retention window (received rows are
+      // kept as the audit trail) — the order-fill analog of sale-scan-plan's terminal-task prune.
+      pruneStaleOrderLists(env, Date.now() - ORDER_LIST_RETENTION_MS),
     ]);
     // Phase 2: the index projection (merges the fresh classified facets + authored overrides).
     const phase2 = await Promise.allSettled([runProjectionJob(env, buildProjectionDeps(env, corpus))]);

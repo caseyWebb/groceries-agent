@@ -30,6 +30,8 @@ import { writeStoreRollup, KROGER_STORE } from "./flyer-warm.js";
 import type { FlyerItem } from "./matching.js";
 import type { KvStore } from "./kroger-user.js";
 import { validateSale } from "./sale-intake.js";
+import { advanceInCartRows, readGroceryKeyIndex } from "./session-db.js";
+import { markOrderListReceived } from "./order-lists-db.js";
 import { ToolError } from "./errors.js";
 
 /** Per-key fixed-window rate limit (best-effort, KV-backed; fail-open on a KV error). */
@@ -67,7 +69,7 @@ export async function underRateLimit(env: Env, keyId: string, now: number): Prom
 const salePairKey = (store: string, locationId: string): string => `${store}\u0000${locationId}`;
 
 /**
- * Task context for the `sale` arm. Sale intake is TASK-SCOPED (Decision 6).
+ * Task/order-scoped authoritative context for the `sale` and `order` arms.
  */
 export interface IntakeOptions {
   /**
@@ -78,6 +80,15 @@ export interface IntakeOptions {
    * (`/admin/api/ingest`), where `sale` items are therefore rejected — sale-scan is pull-channel-only.
    */
   saleTask?: { store: string; locationId: string };
+  /**
+   * Present ONLY when the observations were posted for an ISSUED order-list (via the order-receipt
+   * endpoint): the order-AUTHORITATIVE record the receipt is validated against — the exact set of
+   * canonical `itemIds` the Worker handed this tenant, plus its identity/store. The write identity
+   * is this record's, never the observation's (the order-fill analog of `saleTask`). Absent on the
+   * push path AND the pull-results path, where `order` items are therefore rejected — order-fill is
+   * order-receipt-only.
+   */
+  orderList?: { id: string; tenant: string; store: string; locationId: string | null; itemIds: string[] };
 }
 
 /**
@@ -93,8 +104,16 @@ export interface IntakeOptions {
  * The sale arm is TASK-SCOPED: a `sale` observation is valid ONLY as a claimed `sale-scan` task's
  * result, and the rollup identity is `options.saleTask`'s `(store, locationId)` — never the
  * observation's, never the Worker-owned `kroger` namespace. Called WITHOUT `saleTask` (the push
- * path), every `sale` item is rejected (recipe items unaffected). May throw a `storage_error`
- * ToolError on a D1/KV failure (the caller wraps it into a structured `503`).
+ * path), every `sale` item is rejected (recipe items unaffected).
+ *
+ * The `order` arm is ORDER-SCOPED (satellite-order-cart-fill): an `order` observation is valid ONLY
+ * against an ISSUED order-list (`options.orderList`), keyed by canonical `item_id`. A per-item
+ * `item_id` NOT in the issued `itemIds` set is rejected; `carted`/`substituted` lines advance to
+ * `in_cart` (via the SAME `advanceInCartRows` `place_order` uses, filtered to still-`active` rows so
+ * a stale pull-list can't resurrect a removed line), an `unavailable` line stays `active`, and the
+ * order-list is marked `received`. Called WITHOUT `orderList` (the push path OR the pull-results
+ * path), every `order` item is rejected. Application is idempotent (a re-post converges). May throw
+ * a `storage_error` ToolError on a D1/KV failure (the caller wraps it into a structured `503`).
  */
 export async function intakeObservations(
   env: Env,
@@ -155,6 +174,16 @@ export async function intakeObservations(
     saleByStore.set(salePairKey(saleStore, saleLocation), { store: saleStore, locationId: saleLocation, items: new Map() });
   }
 
+  // The order arm is ORDER-SCOPED: the AUTHORITATIVE issued set is `options.orderList.itemIds` — a
+  // per-item `item_id` outside it is rejected (a receipt cannot invent an item or graft another
+  // list's id). Carted/substituted ids accumulate here for a single `in_cart` advance after the
+  // loop; `unavailable` collects nothing (the line stays `active` to retry). Absent an orderList
+  // context (the push / pull-results paths) every `order` item is rejected.
+  const orderList = options.orderList;
+  const orderIssuedIds = orderList ? new Set(orderList.itemIds) : null;
+  const orderSeenIds = new Set<string>();
+  const orderCartedIds: string[] = [];
+
   for (const { raw, parsed } of parsedItems) {
     if (!parsed.ok) {
       const src = typeof (raw as { source?: unknown })?.source === "string" ? (raw as { source: string }).source : "";
@@ -208,6 +237,39 @@ export async function intakeObservations(
       continue;
     }
 
+    // --- order arm: per-item cart-fill disposition, keyed to the ISSUED order-list (Decision 4) ---
+    if (item.kind === "order") {
+      // Provenance echoed in the ItemResult.source slot: the product url/id when reported, else the item_id.
+      const provenance = item.product?.url ?? item.product?.productId ?? item.item_id;
+      // Order-receipt-only: an `order` is valid ONLY against an issued order-list. On the push path
+      // (`/admin/api/ingest`) or the pull-results path there is no order-list context, so reject it.
+      if (!orderList || !orderIssuedIds) {
+        results.push({ disposition: "rejected", source: item.item_id, reason: "order observation requires an issued order-list (order-receipt endpoint only)" });
+        rejected++;
+        continue;
+      }
+      // Issued-set membership: an item_id the Worker did not issue for this list is rejected per-item
+      // (a receipt cannot invent an item or graft in another list's id).
+      if (!orderIssuedIds.has(item.item_id)) {
+        results.push({ disposition: "rejected", source: item.item_id, reason: "item_id is not in the issued order-list" });
+        rejected++;
+        continue;
+      }
+      // Arrival dedup by item_id within the receipt — a double-reported line lands once.
+      if (orderSeenIds.has(item.item_id)) {
+        results.push({ disposition: "deduped", source: provenance });
+        deduped++;
+        continue;
+      }
+      orderSeenIds.add(item.item_id);
+      // Carted/substituted advance to in_cart (a substitute still satisfies the canonical ingredient);
+      // unavailable collects nothing (the line stays active to retry on the next order).
+      if (item.disposition === "carted" || item.disposition === "substituted") orderCartedIds.push(item.item_id);
+      results.push({ disposition: "accepted", source: provenance });
+      accepted++;
+      continue;
+    }
+
     // --- recipe arm: dedup on canonical URL → insert ingest_candidates (unchanged) ---
     const url = canonicalizeUrl(item.source);
     if (!url) {
@@ -255,7 +317,31 @@ export async function intakeObservations(
     await writeStoreRollup(env.KROGER_KV as unknown as KvStore, store, locationId, [...items.values()], now);
   }
 
+  // Publish the order arm (satellite-order-cart-fill): advance the carted/substituted lines to
+  // `in_cart` via the SAME helper `place_order` uses, keyed by canonical id — but ONLY ids still
+  // on the list as `active`, so a stale pull-list can't resurrect a removed line or regress an
+  // `ordered`/`in_cart` one. Then mark the order-list `received` (idempotent — a re-post converges).
+  if (orderList) {
+    if (orderCartedIds.length > 0) {
+      const idx = await readGroceryKeyIndex(env, orderList.tenant);
+      // Pass each active row's DISPLAY name (not the id) so `advanceInCartRows`' resolve keys it to
+      // the existing row exactly — never hitting its insert-missing branch for the filtered set.
+      const advanceLines: { name: string }[] = [];
+      for (const id of orderCartedIds) {
+        const row = idx.get(id);
+        if (row && row.status === "active") advanceLines.push({ name: row.name });
+      }
+      if (advanceLines.length > 0) await advanceInCartRows(env, orderList.tenant, advanceLines, now2day(now));
+    }
+    await markOrderListReceived(env, orderList.id, now);
+  }
+
   return { received: observations.length, accepted, deduped, rejected, results };
+}
+
+/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the `added_at`/advance stamp the grocery helpers take. */
+function now2day(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 /**

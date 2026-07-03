@@ -18,16 +18,26 @@ import {
   parseClaimRequest,
   parseResultRequest,
   parseSaleScanPayload,
+  parseOrderReceiptRequest,
   SALE_SCAN_KIND,
   type BatchResponse,
   type ClaimResponse,
   type ResultResponse,
   type TaskStatus,
+  type OrderLine,
+  type OrderListResponse,
+  type OrderReceiptResponse,
 } from "@grocery-agent/contract";
 import type { Env } from "./env.js";
 import { bearer, underRateLimit, intakeObservations } from "./ingest.js";
 import { lookupIngestKey, type IngestKeyRow } from "./ingest-db.js";
 import { claimTasks, completeTask, failTask, getTask, type SatelliteTaskRow } from "./satellite-tasks-db.js";
+import { insertOrderList, getOrderList, parseItemIds } from "./order-lists-db.js";
+import { readPreferences } from "./profile-db.js";
+import { readGroceryList, readPantryNames, readGroceryKeyIndex, advanceOrderedRows } from "./session-db.js";
+import { computeToBuy } from "./order.js";
+import { ingredientContext } from "./corpus-db.js";
+import { KROGER_STORE } from "./flyer-warm.js";
 import { ToolError } from "./errors.js";
 
 function json(body: unknown, status: number): Response {
@@ -183,6 +193,151 @@ export async function handleSatelliteResults(request: Request, env: Env, now: nu
     // A D1 failure anywhere (the auth key lookup / getTask / intake / transition). Structured
     // storage_error (503, retryable) — arrival dedup + idempotent transition make the retry safe.
     const message = e instanceof ToolError ? e.message : "results storage failure";
+    return json({ error: "storage_error", message }, 503);
+  }
+}
+
+// === Order-fill (satellite-order-cart-fill) ==================================
+//
+// Two DIRECT request/response endpoints — NOT pull-channel tasks (ordering is human-directed and a
+// store cart write is a non-idempotent side effect, so there is no claim/lease/task). Both reuse
+// the SAME ingest-key bearer auth (`authKey`) and require a TENANT-BOUND key — an order-list is
+// per-tenant working state, so an operator-global (unbound) key is rejected (there is no
+// operator-scope order-fill). Handlers are throw-free and map a D1 failure to `503 storage_error`.
+
+/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the mark-placed advance stamp the grocery helpers take. */
+function today(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * POST /satellite/order/list — mint + serve a satellite-fulfilled tenant's to-buy pull-list.
+ *
+ * Served ONLY when the tenant's primary store is satellite-fulfilled (`preferences.stores.fulfillment
+ * === "satellite"`): a Kroger/Worker-native primary gets a structured error directing to `place_order`,
+ * and a non-Kroger primary WITHOUT the marker (a plain walk store) gets one directing to the in-store
+ * walk (so a walk-only tenant can't mint an order-list by accident). The to-buy set is `computeToBuy`
+ * over the current `active` grocery list minus pantry on-hand, each line keyed to its canonical id;
+ * the mint records the exact issued id set the receipt is later validated against. A POST (not GET)
+ * because it MUTATES state (it records the issued set). The list is NOT resolved against store product
+ * availability — product matching is the satellite's browser job.
+ */
+export async function handleOrderList(request: Request, env: Env, now: number = Date.now()): Promise<Response> {
+  try {
+    const auth = await authKey(request, env, now);
+    if ("reject" in auth) return auth.reject;
+    const { key } = auth;
+    // Tenant-scope only — an operator-global (unbound) key has no order-list.
+    if (key.tenant == null) {
+      return json({ error: "forbidden", message: "order-fill requires a tenant-bound ingest key" }, 403);
+    }
+    const tenant = key.tenant;
+
+    // Fulfillment-mode gate (Decision 10): read the tenant's primary store + marker from the profile.
+    const prefs = await readPreferences(env, tenant);
+    const stores = prefs?.stores as Record<string, unknown> | undefined;
+    const primary =
+      typeof stores?.primary === "string" && stores.primary.trim() ? stores.primary.trim().toLowerCase() : KROGER_STORE;
+    const fulfillment = typeof stores?.fulfillment === "string" ? stores.fulfillment : null;
+    if (primary === KROGER_STORE) {
+      return json({ error: "wrong_fulfillment_mode", message: "primary store is Kroger (Worker-native); use place_order to fill the cart" }, 409);
+    }
+    if (fulfillment !== "satellite") {
+      return json({ error: "wrong_fulfillment_mode", message: "primary store is a walk store, not satellite-fulfilled; shop it as an in-store walk" }, 409);
+    }
+    // A satellite store's location is the operator's `preferred_location` label (the Worker has no API
+    // to resolve it), which may be unset → a null location_id on the pull-list.
+    const locationId = typeof stores?.preferred_location === "string" ? stores.preferred_location : null;
+
+    // Resolve the to-buy set (active list − pantry on-hand), keyed by canonical id via the same funnel
+    // `place_order` uses. No menu-needs / quantities / include-partials — the standing list is the input.
+    const list = await readGroceryList(env, tenant);
+    const pantryNames = await readPantryNames(env, tenant);
+    const ctx = await ingredientContext(env);
+    const { to_buy, partials } = computeToBuy({ list, pantryNames, resolve: (n) => ctx.resolve(n) });
+    const items: OrderLine[] = to_buy.map((t) => ({
+      item_id: ctx.resolve(t.name),
+      name: t.name,
+      quantity: t.quantity,
+      for_recipes: t.for_recipes,
+      assumed_quantity: t.assumed_quantity,
+    }));
+
+    // Mint the issued-set record (the receipt correlation key + authoritative issued ids).
+    const orderListId = await insertOrderList(
+      env,
+      { tenant, store: primary, locationId, itemIds: items.map((i) => i.item_id) },
+      now,
+    );
+    const response: OrderListResponse = { order_list_id: orderListId, store: primary, location_id: locationId, items, partials };
+    return json(response, 200);
+  } catch (e) {
+    const message = e instanceof ToolError ? e.message : "order-list storage failure";
+    return json({ error: "storage_error", message }, 503);
+  }
+}
+
+/**
+ * POST /satellite/order/receipt — land a cart-fill receipt against its issued order-list.
+ *
+ * The write identity is the ISSUED order-list (loaded by id), never the observation: a foreign or
+ * unknown `order_list_id` is masked as `404` (never revealing another tenant's list exists, exactly
+ * as `handleSatelliteResults` masks a cross-tenant task). The per-item `order` observations run
+ * through the SHARED intake with the order-list as the authoritative context — carted/substituted
+ * active lines advance to `in_cart`, an `unissued` id is rejected per-item, `unavailable` stays
+ * `active`, and the order-list is marked `received`. The optional `mark_placed` re-post (no new
+ * observations) then advances the issued `in_cart` lines to `ordered`.
+ */
+export async function handleOrderReceipt(request: Request, env: Env, now: number = Date.now()): Promise<Response> {
+  try {
+    const auth = await authKey(request, env, now);
+    if ("reject" in auth) return auth.reject;
+    const { key } = auth;
+    if (key.tenant == null) {
+      return json({ error: "forbidden", message: "order-fill requires a tenant-bound ingest key" }, 403);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "bad_payload", message: "body is not valid JSON" }, 400);
+    }
+    const parsed = parseOrderReceiptRequest(body);
+    if (!parsed.ok) return json({ error: "bad_payload", message: parsed.error }, 400);
+    const req = parsed.value;
+
+    // Load the issued order-list; mask a foreign/unknown id as 404 (tenant isolation — never reveal
+    // that another tenant's order-list exists), exactly as results masks a cross-tenant task.
+    const row = await getOrderList(env, req.order_list_id);
+    if (!row || row.tenant !== key.tenant) {
+      return json({ error: "not_found", message: `no order-list ${req.order_list_id}` }, 404);
+    }
+
+    // Land the observations through the SHARED intake with the order-list as authoritative context.
+    const orderList = { id: row.id, tenant: row.tenant, store: row.store, locationId: row.location_id, itemIds: parseItemIds(row.item_ids) };
+    const intake = await intakeObservations(env, req.observations ?? [], `satellite-order:${row.id}`, key.id, now, { orderList });
+
+    // Optional mark-placed: advance the issued lines that are (now) `in_cart` to `ordered`. Read a
+    // FRESH index so it reflects any `in_cart` advance the intake just performed in this same call.
+    if (req.mark_placed) {
+      const idx = await readGroceryKeyIndex(env, row.tenant);
+      const lines: { name: string }[] = [];
+      for (const id of orderList.itemIds) {
+        const g = idx.get(id);
+        if (g && g.status === "in_cart") lines.push({ name: g.name });
+      }
+      if (lines.length > 0) await advanceOrderedRows(env, row.tenant, lines, today(now));
+    }
+
+    const after = await getOrderList(env, row.id);
+    const response: OrderReceiptResponse = {
+      order_list: { id: row.id, status: after?.status ?? "received" },
+      results: intake.results,
+    };
+    return json(response, 200);
+  } catch (e) {
+    const message = e instanceof ToolError ? e.message : "order-receipt storage failure";
     return json({ error: "storage_error", message }, 503);
   }
 }
