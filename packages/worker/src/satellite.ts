@@ -34,7 +34,7 @@ import { lookupIngestKey, type IngestKeyRow } from "./ingest-db.js";
 import { claimTasks, completeTask, failTask, getTask, type SatelliteTaskRow } from "./satellite-tasks-db.js";
 import { insertOrderList, getOrderList, parseItemIds } from "./order-lists-db.js";
 import { readPreferences } from "./profile-db.js";
-import { readGroceryList, readPantryNames, readGroceryKeyIndex, advanceOrderedRows } from "./session-db.js";
+import { readGroceryList, readPantryNames, readGroceryKeyIndex, advanceOrderedRows, isoDay } from "./session-db.js";
 import { computeToBuy } from "./order.js";
 import { ingredientContext } from "./corpus-db.js";
 import { KROGER_STORE } from "./flyer-warm.js";
@@ -205,11 +205,6 @@ export async function handleSatelliteResults(request: Request, env: Env, now: nu
 // per-tenant working state, so an operator-global (unbound) key is rejected (there is no
 // operator-scope order-fill). Handlers are throw-free and map a D1 failure to `503 storage_error`.
 
-/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the mark-placed advance stamp the grocery helpers take. */
-function today(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
 /**
  * POST /satellite/order/list — mint + serve a satellite-fulfilled tenant's to-buy pull-list.
  *
@@ -249,14 +244,18 @@ export async function handleOrderList(request: Request, env: Env, now: number = 
     // to resolve it), which may be unset → a null location_id on the pull-list.
     const locationId = typeof stores?.preferred_location === "string" ? stores.preferred_location : null;
 
-    // Resolve the to-buy set (active list − pantry on-hand), keyed by canonical id via the same funnel
+    // Resolve the to-buy set (active list − pantry on-hand) via the same food-guarded funnel
     // `place_order` uses. No menu-needs / quantities / include-partials — the standing list is the input.
     const list = await readGroceryList(env, tenant);
     const pantryNames = await readPantryNames(env, tenant);
     const ctx = await ingredientContext(env);
     const { to_buy, partials } = computeToBuy({ list, pantryNames, resolve: (n) => ctx.resolve(n) });
+    // `item_id` is the line's stored `normalized_name` (`computeToBuy`'s food-guarded `key`), NOT a
+    // re-derived `resolve(name)` — the latter diverges for a non-food row (household/other or a
+    // non-grocery domain), which would both leak the row's term into the ingredient graph and cause a
+    // silent non-advance at receipt time (the issued id would miss the stored key).
     const items: OrderLine[] = to_buy.map((t) => ({
-      item_id: ctx.resolve(t.name),
+      item_id: t.key,
       name: t.name,
       quantity: t.quantity,
       for_recipes: t.for_recipes,
@@ -327,7 +326,7 @@ export async function handleOrderReceipt(request: Request, env: Env, now: number
         const g = idx.get(id);
         if (g && g.status === "in_cart") lines.push({ name: g.name });
       }
-      if (lines.length > 0) await advanceOrderedRows(env, row.tenant, lines, today(now));
+      if (lines.length > 0) await advanceOrderedRows(env, row.tenant, lines, isoDay(now));
     }
 
     const after = await getOrderList(env, row.id);

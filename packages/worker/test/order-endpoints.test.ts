@@ -5,6 +5,7 @@ import { enqueueTask, claimTasks } from "../src/satellite-tasks-db.js";
 import { insertOrderList, getOrderList, markOrderListReceived, pruneStaleOrderLists } from "../src/order-lists-db.js";
 import { setProfileFields } from "../src/profile-db.js";
 import { addGroceryRow, readGroceryList, removeGroceryRow } from "../src/session-db.js";
+import { normalizeName } from "../src/grocery.js";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
 import type { OrderListResponse, OrderReceiptResponse } from "@grocery-agent/contract";
@@ -105,6 +106,36 @@ describe("/satellite/order/list (pull-list)", () => {
     expect(ol[0].status).toBe("issued");
     expect(JSON.parse(ol[0].item_ids).sort()).toEqual(["olive oil", "scallions"]);
     expect(body.order_list_id).toBe(ol[0].id);
+  });
+
+  it("keys a NON-FOOD line's item_id to its stored normalized_name (not a divergent resolve), and a receipt advances it", async () => {
+    // A general-store (Target) tenant can have non-food items. computeToBuy stores a non-food row's
+    // key as `normalizeName(name)` (the food guard), NOT `normalizeIngredient`; the pull-list must use
+    // that SAME key so the issued item_id round-trips to the stored row at receipt time (no silent miss),
+    // and the capture-resolver is NOT run on the non-food term (the invariant the guard exists to hold).
+    const { env, rows } = sqliteEnv(["casey"]);
+    const { secret } = await mintIngestKey(env, "casey-box", NOW, "casey");
+    await setStores(env, "casey", { primary: "target", fulfillment: "satellite" });
+    await addGroceryRow(env, "casey", { name: "Olive Oil" }, TODAY); // food
+    await addGroceryRow(env, "casey", { name: "AA Batteries", kind: "household" }, TODAY); // non-food
+
+    const list = await pullList(env, secret);
+    const batteries = list.items.find((i) => i.name === "AA Batteries")!;
+    const nonFoodKey = normalizeName("AA Batteries"); // "aa batteries"
+    // item_id == the stored normalized_name (the household row's PK), not a resolve()-diverged id.
+    expect(batteries.item_id).toBe(nonFoodKey);
+    const stored = rows<{ name: string; normalized_name: string }>("grocery_list").find((r) => r.name === "AA Batteries")!;
+    expect(stored.normalized_name).toBe(nonFoodKey);
+    expect(batteries.item_id).toBe(stored.normalized_name);
+    // The non-food term was never funneled through the capture-resolver (no ingredient-graph leak).
+    expect(rows<{ term: string }>("novel_ingredient_terms").some((t) => t.term === nonFoodKey)).toBe(false);
+
+    // End-to-end: carting the non-food line advances it to in_cart (would silently miss under the bug).
+    const obs = [{ kind: "order", item_id: batteries.item_id, disposition: "carted", product: { productId: "T-9", description: "AA 8-pack" } }];
+    const res = await handleOrderReceipt(receiptReq(secret, { order_list_id: list.order_list_id, observations: obs }), env, NOW + 1);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as OrderReceiptResponse).results[0].disposition).toBe("accepted");
+    expect(await statusOf(env, "casey", "AA Batteries")).toBe("in_cart");
   });
 });
 

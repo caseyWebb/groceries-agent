@@ -30,7 +30,7 @@ import { writeStoreRollup, KROGER_STORE } from "./flyer-warm.js";
 import type { FlyerItem } from "./matching.js";
 import type { KvStore } from "./kroger-user.js";
 import { validateSale } from "./sale-intake.js";
-import { advanceInCartRows, readGroceryKeyIndex } from "./session-db.js";
+import { advanceInCartRows, readGroceryKeyIndex, isoDay } from "./session-db.js";
 import { markOrderListReceived } from "./order-lists-db.js";
 import { ToolError } from "./errors.js";
 
@@ -331,17 +331,12 @@ export async function intakeObservations(
         const row = idx.get(id);
         if (row && row.status === "active") advanceLines.push({ name: row.name });
       }
-      if (advanceLines.length > 0) await advanceInCartRows(env, orderList.tenant, advanceLines, now2day(now));
+      if (advanceLines.length > 0) await advanceInCartRows(env, orderList.tenant, advanceLines, isoDay(now));
     }
     await markOrderListReceived(env, orderList.id, now);
   }
 
   return { received: observations.length, accepted, deduped, rejected, results };
-}
-
-/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the `added_at`/advance stamp the grocery helpers take. */
-function now2day(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
 }
 
 /**

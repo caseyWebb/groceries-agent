@@ -37,6 +37,13 @@ import {
   type UpdateResult,
 } from "./grocery.js";
 
+/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the `added_at`/`ordered_at` stamp the grocery
+ *  advance helpers (below) take. Shared so the order-fill intake (ingest.ts) and endpoints
+ *  (satellite.ts) stamp identically. */
+export function isoDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
 /** Parse a JSON column, tolerating null/empty/garbage as `[]`. */
 function parseJsonArray(value: string | null): string[] {
   if (value == null || value === "") return [];
