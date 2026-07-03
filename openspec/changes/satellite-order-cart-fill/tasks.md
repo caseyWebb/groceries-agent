@@ -1,0 +1,70 @@
+# Tasks — satellite-order-cart-fill
+
+Ordered **Worker-first** (the dormant, no-consumer side lands and can deploy independently) before the satellite side (which carries the Claude Design UI dependency): §1–§4 are the Worker contract/endpoints/intake; §5–§8 are the satellite adapter/UI/CLI; §9 persona; §10 docs; §11 verification. Implementation stays serial across the shared surfaces (`src/satellite.ts`, `ingest.ts`, the contract package). No spike tasks — the open questions are settled in `design.md` against the production spike.
+
+## 1. Shared contract: the `order` observation kind + the order-fill endpoint shapes
+
+- [ ] 1.1 Add the `order` member to `packages/contract/src/ingest.ts`: a `const orderFields = {…} as const` (`item_id`, `disposition: "carted"|"substituted"|"unavailable"`, optional `product`, optional `note`), an `OrderObservationSchema` (`kind: z.literal("order")`), a `parseOrderObservation` helper, and add `OrderObservationSchema` to the `ObservationItemSchema` union. Leave `CAPABILITIES` (the push-batch enum) untouched — `order` is not a batch capability.
+- [ ] 1.2 Add `packages/contract/src/satellite-order.ts`: `OrderLineSchema` / `OrderListResponse` (the pull-list shape), `OrderReceiptRequestSchema` + `parseOrderReceiptRequest` (`{ order_list_id, observations, mark_placed? }`), reusing the `ItemResult`/`ParseResult` idioms.
+- [ ] 1.3 Export the new schemas/types/parsers from `packages/contract/src/index.ts`.
+- [ ] 1.4 Contract unit tests: an `order` observation validates and round-trips; a `recipe`/`sale`-only consumer is unaffected; a malformed receipt is rejected with a structured error.
+
+## 2. D1: the `order_lists` issued-set record
+
+- [ ] 2.1 Add `packages/worker/migrations/d1/0038_satellite_order_lists.sql` (next available number) creating `order_lists` (`id`, `tenant`, `store`, `location_id`, `item_ids` JSON, `status`, `created_at`, `received_at`) + the `order_lists_tenant` index, with a header comment stating the `item_ids` set is the authoritative record a receipt is validated against.
+- [ ] 2.2 Add `packages/worker/src/order-lists-db.ts` (all access via `src/db.ts`, throw-free → `storage_error`): `insertOrderList`, `getOrderList`, `markOrderListReceived`.
+
+## 3. Worker: the two order-fill endpoints
+
+- [ ] 3.1 Route `POST /satellite/order/list` and `POST /satellite/order/receipt` in `packages/worker/src/index.ts` **before** the `/admin` branch (outside the Access gate), dispatched to new handlers in `src/satellite.ts`.
+- [ ] 3.2 `handleOrderList`: reuse `authKey`; **require a tenant-bound key** (reject operator-global). Resolve the tenant's `computeToBuy` (active list − pantry), map each `to_buy` to its canonical id via `ingredientContext.resolve`, look up the tenant's primary store + location from `preferences.stores`, mint an `order_lists` row, return the pull-list. Return a structured error (directing to `place_order`) when the primary is Kroger/Worker-native.
+- [ ] 3.3 `handleOrderReceipt`: reuse `authKey` (tenant-bound); load the `order_lists` row and verify `row.tenant === key.tenant`, masking a foreign/unknown id as `404`. Build the `orderList` authoritative context and hand off to the intake (§4). Return `{ order_list: {id, status}, results }`.
+- [ ] 3.4 Worker tests: operator-global key rejected on both endpoints; a receipt for another tenant's order-list is `404`; the pull-list refuses a Kroger primary; both handlers map a D1 failure to `503 storage_error`.
+
+## 4. Worker: the `order` intake arm + `grocery_list` reconciliation
+
+- [ ] 4.1 Extend `IntakeOptions` in `packages/worker/src/ingest.ts` with `orderList?: { id, tenant, store, locationId, itemIds }` (the task-scoped-authoritative analog of `saleTask`).
+- [ ] 4.2 Add the `order` dispatch arm to `intakeObservations`: reject an `order` item with no `orderList` context (push path + pull-results path); reject per-item when `item_id ∉ itemIds`; collect `carted`/`substituted` for advancement; leave `unavailable` untouched.
+- [ ] 4.3 Advance the collected carted/substituted lines to `in_cart` via the existing `advanceInCartRows` (keyed by canonical id — the same helper `place_order` uses); mark the order-list `received`. Application is idempotent.
+- [ ] 4.4 The optional mark-placed path: when `mark_placed: true` (and no new observations), advance the order-list's issued `in_cart` rows to `ordered` via a small `advanceOrderedRows` helper (sets `status: "ordered"` + `ordered_at`). Default (absent flag) stops at `in_cart`.
+- [ ] 4.5 Worker tests: a receipt advances only issued+active ids; an unissued `item_id` is rejected, never advanced; `unavailable` stays `active`; a re-posted receipt converges (no double-advance); `mark_placed` advances issued `in_cart` rows to `ordered`; an `order` item on `/admin/api/ingest` or `/satellite/results` is rejected.
+
+## 5. Satellite package: the `OrderAdapter` + SDK + `[[order_stores]]` config
+
+- [ ] 5.1 Add `packages/satellite/src/order-adapter.ts`: the `OrderSdk` interface (store, config, session, live Playwright `page`, `log`, `checkpoint`), the `OrderAdapter` interface (`fill(sdk, lines) → OrderObservation[] | {error}`), `OrderAdapterFactory`, and `loadOrderAdapters(config)` — **no built-ins** (browser-only; loaded from the mounted `adapters_dir`), plus a local `validateOrderEmit` mirroring `validateSaleEmit`.
+- [ ] 5.2 Extend `packages/satellite/src/config.ts`: `OrderStoreConfig` (`store`, `adapter`), `parseOrderStore`, `order_stores?: OrderStoreConfig[]` (dedup on slug, set only when non-empty), parallel to `[[scan_stores]]`.
+- [ ] 5.3 Reuse the `storageState` session (`session.ts`) keyed by store slug — no per-tenant keying (the satellite belongs to one tenant).
+- [ ] 5.4 Add an outbound order client (`packages/satellite/src/order.ts`): `fetchOrderList(connectorUrl, key)` → `POST /satellite/order/list`; `postReceipt(connectorUrl, key, receipt)` → `POST /satellite/order/receipt`, reusing the `FetchImpl`/backoff idioms from `push.ts`/`pull.ts`.
+
+## 6. Companion Claude Design: the local-UI design
+
+- [ ] 6.1 Draft (architect) the Claude Design prompt describing the local helper UI's screens and states — refresh/list, fill-with-preview, substitution/ambiguity checkpoint, review, checkout hand-off, optional mark-placed — per Decision 7. Run it in the companion Claude Design project and take the exported bundle as the basis for §7. *(If the project is unreachable from the implementation environment, defer with an explicit `*(Not performed — …)*` note and build the UI in the plainest defensible idiom, flagged for a design pass — mirroring change 2's tenant-selector deferral. This UI is a satellite-package surface, not `/admin/**`, so it is outside the admin Playwright gate.)*
+
+## 7. Satellite package: the local helper UI (first inbound listener)
+
+- [ ] 7.1 Add the localhost-bound helper server (`packages/satellite/src/helper/…`): loopback (`127.0.0.1`) bind by default, LAN only on explicit opt-in; a session token printed at start and required by the UI; CSRF on state-changing POSTs; it holds the store `storageState`.
+- [ ] 7.2 Wire the UI to its responsibilities: Refresh (call the order client's pull-list), Fill (drive the `OrderAdapter` with preview + human checkpoint), Resolve (human decides substitutions/ambiguity — the only resolver backend), Review (drive to the store's review page and **stop**), Checkout hand-off (present the store's own page), Post-receipt, optional Mark-placed.
+- [ ] 7.3 Assemble the receipt from the adapter's per-item `OrderObservation[]` and post it via the order client; surface the Worker's `results` back to the human.
+
+## 8. Satellite CLI: helper-launch verb + login/test
+
+- [ ] 8.1 Add the helper-launch verb to `packages/satellite/src/cli.ts` (e.g. `order [--host 127.0.0.1] [--port]`) — the first verb that opens a port — and add it to the usage block.
+- [ ] 8.2 Confirm `login <store>` captures the order store's session by slug (reuses `cmdLogin`); optionally extend `test` with an order dry-run (fetch a pull-list, preview a fill, report nothing) mirroring the sale-scan `test` extension.
+
+## 9. Persona: the satellite cart-fill flush path
+
+- [ ] 9.1 In `packages/worker/AGENT_INSTRUCTIONS.md` (`grocery-cart` tier — the flush-forms list, and the `shop-groceries` branch table), add the satellite cart-fill branch: a satellite-fulfilled primary store → tell the user to open their local helper and refresh; do **not** call `place_order` or build an in-store walk list. State the fill-cart-never-checkout expectation and the optional "tell me when you've placed it" (→ `ordered`). Rebuild the plugin skills from the source (no hand-edit of a generated bundle). No new MCP tool.
+
+## 10. Docs in lockstep
+
+- [ ] 10.1 `docs/SCHEMAS.md` — the `order` observation kind, the `order_lists` table, and the two `/satellite/order/*` endpoint shapes.
+- [ ] 10.2 `docs/ARCHITECTURE.md` — the satellite cart-fill path (the `computeToBuy`-shared boundary, the direct request/response vs the pull channel, the issued-set-authoritative guard), the determinism boundary (human-in-the-UI resolver, "Model identity: none"), the safety property (fill-cart-never-checkout), and the satellite's first inbound listener.
+- [ ] 10.3 `docs/TOOLS.md` — confirm no MCP tool is added or changed; `place_order` stays Kroger-only.
+- [ ] 10.4 `docs/SELF_HOSTING.md` — provisioning a member's satellite for cart-fill: mint a tenant-scoped ingest key, register the store, mark it satellite-fulfilled, `login <store>`, declare `[[order_stores]]`, run the helper verb.
+
+## 11. Verification
+
+- [ ] 11.1 `aubr typecheck` + `aubr test` (Worker) + `aubr test:tooling` green; the new contract/Worker tests pass.
+- [ ] 11.2 Acceptance fixture: after deploy, seed a `target` store in the `stores` registry, mint a tenant-scoped ingest key, mark a test tenant's primary satellite-fulfilled, and exercise the loop end to end (pull-list → a receipt with carted/substituted/unavailable → the tenant's `grocery_list` advancing carted/substituted to `in_cart`, `unavailable` staying `active`; then a `mark_placed` receipt advancing to `ordered`). Verify against production (the observed rows are the fixture).
+- [ ] 11.3 `npx -y @fission-ai/openspec@1.4.1 validate "satellite-order-cart-fill" --strict` passes.
+- [ ] 11.4 Run `/code-review` on the full PR diff before opening the PR; fill the PR template (every consideration box).
