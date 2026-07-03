@@ -32,10 +32,10 @@ Ordered **Worker-first** (the dormant, no-consumer side lands and can deploy ind
 
 ## 5. Satellite package: the `OrderAdapter` + SDK + `[[order_stores]]` config
 
-- [ ] 5.1 Add `packages/satellite/src/order-adapter.ts`: the `OrderSdk` interface (store, config, session, live Playwright `page`, `log`, `checkpoint`), the `OrderAdapter` interface (`fill(sdk, lines) → OrderObservation[] | {error}`), `OrderAdapterFactory`, and `loadOrderAdapters(config)` — **no built-ins** (browser-only; loaded from the mounted `adapters_dir`), plus a local `validateOrderEmit` mirroring `validateSaleEmit`.
-- [ ] 5.2 Extend `packages/satellite/src/config.ts`: `OrderStoreConfig` (`store`, `adapter`), `parseOrderStore`, `order_stores?: OrderStoreConfig[]` (dedup on slug, set only when non-empty), parallel to `[[scan_stores]]`.
-- [ ] 5.3 Reuse the `storageState` session (`session.ts`) keyed by store slug — no per-tenant keying (the satellite belongs to one tenant).
-- [ ] 5.4 Add an outbound order client (`packages/satellite/src/order.ts`): `fetchOrderList(connectorUrl, key)` → `POST /satellite/order/list`; `postReceipt(connectorUrl, key, receipt)` → `POST /satellite/order/receipt`, reusing the `FetchImpl`/backoff idioms from `push.ts`/`pull.ts`.
+- [x] 5.1 Add `packages/satellite/src/order-adapter.ts`: the `OrderSdk` interface (store, config, session, live Playwright `page`, `log`, `checkpoint`), the `OrderAdapter` interface (`fill(sdk, lines) → OrderObservation[] | {error}`), `OrderAdapterFactory`, and `loadOrderAdapters(config)` — **no built-ins** (browser-only; loaded from the mounted `adapters_dir`), plus a local `validateOrderEmit` mirroring `validateSaleEmit`.
+- [x] 5.2 Extend `packages/satellite/src/config.ts`: `OrderStoreConfig` (`store`, `adapter`), `parseOrderStore`, `order_stores?: OrderStoreConfig[]` (dedup on slug, set only when non-empty), parallel to `[[scan_stores]]`.
+- [x] 5.3 Reuse the `storageState` session (`session.ts`) keyed by store slug — no per-tenant keying (the satellite belongs to one tenant).
+- [x] 5.4 Add an outbound order client (`packages/satellite/src/order.ts`): `fetchOrderList(connectorUrl, key)` → `POST /satellite/order/list`; `postReceipt(connectorUrl, key, receipt)` → `POST /satellite/order/receipt`, reusing the `FetchImpl`/backoff idioms from `push.ts`/`pull.ts`.
 
 ## 6. Companion Claude Design: the local-UI design
 
