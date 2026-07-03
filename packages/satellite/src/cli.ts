@@ -5,6 +5,7 @@
 //   login <source>       headful Playwright → capture + save the source's session
 //   backfill <source>    discover + push the whole archive for one source
 //   cookie-import <source> <storageState.json>   import an exported browser session
+//   order [<store>]      launch the localhost cart-fill helper (the first verb that opens a port)
 //
 // Arg parsing is dependency-free. The daemon wires the real deps (filesystem sessions, the
 // selected fetch tier reusing one browser, the built-in + operator adapters) into runTick;
@@ -19,6 +20,9 @@ import { Cursor } from "./cursor.js";
 import { runTick, type TickDeps } from "./scheduler.js";
 import { runPullTick, buildPullDeps } from "./pull.js";
 import { loadSaleAdapters, runScanAdapter, type ScanSdk } from "./sale-adapter.js";
+import { loadOrderAdapters } from "./order-adapter.js";
+import { createHelper } from "./helper/server.js";
+import type { PageHandle } from "./helper/drive.js";
 import { SATELLITE_VERSION } from "./push.js";
 
 /** A plain console logger — structured extras are appended as JSON for grep-ability. */
@@ -52,9 +56,16 @@ function requireSessionScope(ctx: RuntimeContext, id: string): { id: string; sta
   if (source) return { id, startUrl: source.sitemap_url ?? source.feed_url ?? ctx.config.connector_url };
   const store = ctx.config.scan_stores?.find((s) => s.store === id);
   if (store) return { id, startUrl: ctx.config.connector_url };
+  // An order-store slug (satellite-order-cart-fill) keys its session the same way — so `login <store>`
+  // captures the cart-fill store's storageState the helper drives.
+  const orderStore = ctx.config.order_stores?.find((s) => s.store === id);
+  if (orderStore) return { id, startUrl: ctx.config.connector_url };
   const sources = ctx.config.sources.map((s) => s.id);
   const stores = (ctx.config.scan_stores ?? []).map((s) => s.store);
-  console.error(`unknown session scope "${id}". sources: ${sources.join(", ") || "(none)"}; scan_stores: ${stores.join(", ") || "(none)"}`);
+  const orderStores = (ctx.config.order_stores ?? []).map((s) => s.store);
+  console.error(
+    `unknown session scope "${id}". sources: ${sources.join(", ") || "(none)"}; scan_stores: ${stores.join(", ") || "(none)"}; order_stores: ${orderStores.join(", ") || "(none)"}`,
+  );
   process.exit(1);
 }
 
@@ -269,6 +280,91 @@ function cmdCookieImport(sourceId: string, path: string): void {
   log.info("session imported", { source: sourceId, cookies: state.cookies.length });
 }
 
+/**
+ * Build the real page opener for the helper: a lazily-imported HEADFUL Chromium bound to the store's
+ * captured session, so the human watches the fill and completes checkout in the SAME window. Lazy so
+ * the server module (and its tests) never load Playwright.
+ */
+function realOpenPage(session: StorageState | null): () => Promise<PageHandle> {
+  return async () => {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: false });
+    const context = await browser.newContext(
+      session ? { storageState: { cookies: session.cookies as never, origins: session.origins as never } } : {},
+    );
+    const page = await context.newPage();
+    return { page, close: async () => { await browser.close(); } };
+  };
+}
+
+/**
+ * `order [<store>] [--host 127.0.0.1] [--port 4319]` — launch the localhost cart-fill helper
+ * (satellite-order-cart-fill), the FIRST verb that opens a port. Loads the `[[order_stores]]` entry,
+ * its operator adapter, and its captured session, then binds the helper server. Binds LOOPBACK by
+ * default; a `--host` other than loopback is an explicit LAN opt-in (warned). The helper fills the
+ * cart and stops at review — the human completes checkout in the store's own page.
+ */
+async function cmdOrder(rest: string[]): Promise<void> {
+  const ctx = loadRuntimeContext();
+  const orderStores = ctx.config.order_stores ?? [];
+  if (orderStores.length === 0) {
+    console.error("no [[order_stores]] configured — declare one (store + adapter) to run the cart-fill helper");
+    process.exit(1);
+  }
+
+  let host = "127.0.0.1";
+  let port = 4319;
+  let storeSlug: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--host") host = rest[++i] ?? host;
+    else if (arg === "--port") port = parseInt(rest[++i] ?? "", 10) || port;
+    else if (!arg.startsWith("--")) storeSlug = arg;
+  }
+
+  const store = storeSlug ? orderStores.find((s) => s.store === storeSlug) : orderStores[0];
+  if (!store) {
+    console.error(`unknown order store "${storeSlug}". configured: ${orderStores.map((s) => s.store).join(", ")}`);
+    process.exit(1);
+  }
+
+  const adapters = await loadOrderAdapters(ctx.config);
+  const adapterFactory = adapters[store.adapter];
+  if (!adapterFactory) {
+    log.warn(`no order adapter "${store.adapter}" in adapters_dir — Refresh works, but Fill will fail until you add it`, {
+      store: store.store,
+      adapters_dir: ctx.config.adapters_dir,
+    });
+  }
+  const session = loadSession(ctx.configDir, store.store);
+  if (!session) {
+    log.warn(`no captured session for "${store.store}" — run: grocery-satellite login ${store.store}`);
+  }
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  if (!loopback) {
+    log.warn(`binding to ${host} exposes the helper on your LAN — anyone on the network with the session token can drive a fill`);
+  }
+
+  const helper = createHelper({
+    store,
+    config: ctx.config,
+    connectorUrl: ctx.config.connector_url,
+    ingestKey: ctx.ingestKey,
+    session,
+    adapterFactory,
+    openPage: realOpenPage(session),
+    log,
+  });
+  const { url } = await helper.listen(host, port);
+  console.log("");
+  console.log(`  Order helper for "${store.store}" is running.`);
+  console.log(`  Open:  ${url}`);
+  console.log(`  Token: ${helper.sessionToken}`);
+  console.log("");
+  console.log("  Paste the token in the browser to unlock. The helper fills the cart and STOPS at review —");
+  console.log("  you complete checkout yourself in the store's own page. Press Ctrl-C to stop.");
+}
+
 /** Resolve when the operator presses Enter on stdin (for the interactive login). */
 function waitForEnter(): Promise<void> {
   return new Promise((resolve) => {
@@ -293,6 +389,7 @@ function usage(): never {
       "  login <source>                    headful browser to capture + save the source's session",
       "  cookie-import <source> <file>     import an exported storageState JSON as the source's session",
       "  backfill <source>                 discover + push the whole archive for one source",
+      "  order [<store>] [--host h] [--port n]  launch the localhost cart-fill helper (opens a port)",
     ].join("\n"),
   );
   process.exit(1);
@@ -332,6 +429,9 @@ async function main(): Promise<void> {
       cmdCookieImport(sourceId, path);
       break;
     }
+    case "order":
+      await cmdOrder(rest);
+      break;
     default:
       usage();
   }

@@ -115,3 +115,17 @@ export {
   type OrderListOutcome,
   type ReceiptOutcome,
 } from "./order.js";
+
+// order helper (satellite-order-cart-fill) — the localhost helper server (the first inbound listener)
+export { createHelper, type Helper, type HelperDeps } from "./helper/server.js";
+// the fill orchestration + its event/resolution shapes (the UI + tests build against these)
+export {
+  Drive,
+  toCheckpointResolution,
+  type DriveDeps,
+  type DriveEvent,
+  type ApiResolution,
+  type ItemState,
+  type OrderProduct,
+  type PageHandle,
+} from "./helper/drive.js";
