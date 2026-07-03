@@ -53,7 +53,7 @@ POST /satellite/order/receipt   { order_list_id, observations: OrderObservation[
 
 **Tenant scoping (the tenant-scope analog of `keyCanAccessTask`).** Both endpoints require a **tenant-bound** key. An operator-global key (`tenant IS NULL`) is rejected — an order-list is per-tenant working state, so there is no operator-scope order-fill. The `list` endpoint serves the caller's own tenant; the `receipt` endpoint additionally verifies the referenced `order_lists` row belongs to the caller's tenant, masking a foreign or unknown id as `404` (never revealing another tenant's order-list exists), exactly as `handleSatelliteResults` masks a cross-tenant task.
 
-**`list` behavior.** Resolve the tenant's `computeToBuy` over the current `active` grocery list (`∪` nothing `−` pantry-has), map each `to_buy` item to its canonical id via the injected `ingredientContext.resolve`, look up the tenant's **primary store slug + location id** (from `preferences.stores`), and **mint an `order_lists` row** recording `{ id, tenant, store, location_id, item_ids }`. It is served **only** when the tenant's primary is satellite-fulfilled; a Kroger (Worker-native) primary gets a structured error directing to `place_order`. A POST (not GET) because it mutates state (it records the issued set). The list is *not* resolved against store availability — that is the satellite's browser job.
+**`list` behavior.** Resolve the tenant's `computeToBuy` over the current `active` grocery list (`∪` nothing `−` pantry-has), map each `to_buy` item to its canonical id via the injected `ingredientContext.resolve`, look up the tenant's **primary store slug + location id** (from `preferences.stores`), and **mint an `order_lists` row** recording `{ id, tenant, store, location_id, item_ids }`. It is served **only** when the tenant's primary is satellite-fulfilled — i.e. `preferences.stores.fulfillment === "satellite"` (Decision 10); a Kroger (Worker-native) primary, or a non-Kroger primary without the satellite marker (a plain walk store), gets a structured error directing to `place_order` (Kroger) or the in-store walk. A POST (not GET) because it mutates state (it records the issued set). The list is *not* resolved against store availability — that is the satellite's browser job.
 
 **`receipt` behavior.** Look up the order-list, build the authoritative context, run the observations through the shared intake, and reconcile `grocery_list` (Decisions 4–5).
 
@@ -115,9 +115,11 @@ The receipt handler passes `{ id, tenant, store, locationId, itemIds }` into the
 
 `order_lists` is accessed only through `src/order-lists-db.ts` → `src/db.ts`.
 
+**Pruning stale issued rows.** An `order_lists` row is minted on every Refresh but only reaches `status='received'` if a receipt is posted; a member who Refreshes and abandons the fill leaves an `issued` row forever. To keep the table bounded, a `pruneStaleOrderLists(env, olderThan)` helper (`order-lists-db.ts`) `DELETE`s `status='issued' AND created_at < ?cutoff` — the direct analog of `pruneTerminalTasks` (`satellite-tasks-db.ts`, which reaps terminal `satellite_tasks` rows on the sale-scan-plan tick) and `pruneIngestPushes`/`pruneDiscoveryLog` (the discovery sweep). It is wired into the existing `scheduled()` handler as a small prune step in the same phase as `runSaleScanPlanJob`, with a conservative retention (an issued-but-never-received list is stale after ~7 days). `received` rows are retained as the audit trail; only orphaned `issued` rows are reaped.
+
 ## Decision 5 — grocery_list reconciliation (carted → in_cart; optional mark-placed → ordered)
 
-`grocery_list` and its status machine (`active → in_cart → ordered → received`) are **reused unchanged** — no schema change. The reconciliation mirrors `place_order` exactly:
+`grocery_list` and its lifecycle are **reused unchanged** — no schema change. (The `grocery_list.status` *column* persists only `active | in_cart | ordered`; the lifecycle's terminal `received` **removes** the row and restocks the pantry rather than storing a fourth status — order-placement spec — and is unrelated to `order_lists.status`'s own `issued | received`, Decision 4.) The reconciliation mirrors `place_order` exactly:
 
 - **`carted` and `substituted` → `in_cart`,** via the same `advanceInCartRows(env, tenant, lines, today)` helper `place_order` calls, keyed by canonical id (a substitute still satisfies the canonical ingredient, so it advances). This is the only auto-transition, exactly as today.
 - **`unavailable` → stays `active`,** to retry on the next order — the mirror of `place_order` leaving an unresolved line `active`.
@@ -187,11 +189,11 @@ Product matching and substitution decisions are resolved by the **human in the l
 
 ## Decision 10 — how the agent points the user to the helper (no new tool)
 
-**No new MCP tool.** The agent detects a satellite-fulfilled primary from the profile it already reads at the start of `shop-groceries` (`read_user_profile()`), and tells the user to open their local helper. Justification, weighed against the `kroger_login_url` precedent:
+**No new MCP tool.** The agent detects a satellite-fulfilled primary from the profile it already reads at the start of `shop-groceries` (`read_user_profile()`) — specifically the `preferences.stores.fulfillment === "satellite"` marker — and tells the user to open their local helper. Justification, weighed against the `kroger_login_url` precedent:
 
 - `kroger_login_url` exists because the **Worker mints Worker-side state** — an OAuth consent nonce/URL. There is a real server-side action behind it.
 - The satellite helper has **nothing for the Worker to mint**: the helper URL is a localhost address on the tenant's own machine (the Worker cannot know it), the human↔localhost auth is the local token (satellite-side), and the "instructions" are static prose. A Worker tool would be a static-string wrapper with no Worker-side substance.
-- The one dynamic routing bit — is this primary satellite-fulfilled? — is already in the profile (`preferences.stores`), which the flow reads. So the **persona owns "when → tell the user to open their helper,"** and no tool surface is added.
+- The one dynamic routing bit — is this primary satellite-fulfilled? — is expressed by the tenant's **`preferences.stores.fulfillment` marker**, a *new reserved preference value* set through the **existing** `update_preferences` tool (the `stores` map already accepts arbitrary string entries, so this needs no schema, tool, or migration change), read from the profile the flow already loads. So the **persona owns "when → tell the user to open their helper,"** and no tool surface is added.
 
 Consequences: `place_order` stays Kroger-only (Decision, unchanged), the MCP tool surface is unchanged (`docs/TOOLS.md` confirms "no tool touched"), and the behavior lives in the `in-store-fulfillment` mode requirement (the spec that already mandates "SHALL NOT assume Kroger") plus the persona.
 
@@ -199,7 +201,7 @@ Consequences: `place_order` stays Kroger-only (Decision, unchanged), the MCP too
 
 Provisioning reuses existing surfaces; **no new admin surface** is needed:
 - **The satellite's auth** is a **tenant-scoped ingest key** minted by the operator via change 2's admin **Mint** dialog (which already carries the tenant selector). A tenant-bound key is exactly what the two order endpoints require (Decision 2). Confirmed sufficient.
-- **The store** is registered in the shared `stores` registry (`add_store`), and the tenant sets it primary + marks it satellite-fulfilled (`preferences.stores`).
+- **The store** is registered in the shared `stores` registry (`add_store`), and the tenant sets it primary + marks it satellite-fulfilled via the existing `update_preferences` tool — `update_preferences({ stores: { primary: "<slug>", fulfillment: "satellite" } })`. `fulfillment` is a **new reserved value** in the already-open `stores` string map, so it needs no schema, tool, or migration change; absent it, a non-Kroger primary stays a plain walk store.
 - **The store login** is captured by the member running `grocery-satellite login <store>` (headful, out-of-band), producing the `storageState` the helper drives.
 - The member declares `[[order_stores]]` and runs the helper verb.
 
@@ -226,4 +228,4 @@ The local helper UI's **visual design routes through the companion Claude Design
 - **Operator-authored adapter brittleness.** A store's DOM changes and a no-built-in adapter breaks silently. *Mitigated by:* the browser-side preview + checkpoint surfacing ambiguity to the human before anything is carted, and cart-fill never committing — a broken fill wastes time, never money.
 - **A stale pull-list.** The grocery list changes between Refresh and receipt. *Mitigated by:* the issued-set guard advancing only ids that were issued *and* are still `active`; a dropped/added item simply isn't advanced, and the human re-Refreshes. Idempotent application means a re-post converges.
 - **Speculative surface with zero users today.** Like the pull channel and sale-scan's producer, this ships dormant. *Mitigated by:* the Worker side is small and independently useful/testable, the satellite side mirrors the proven sale-scan adapter template, and the acceptance fixture exercises the full loop after deploy.
-- **Mode-routing ambiguity.** A store-slug primary means "walk" today; satellite-fulfilled reuses a store slug. *Mitigated by:* an explicit per-tenant `preferences.stores` satellite-fulfilled marker (Decision 11) — walk stays the default, so no existing tenant's behavior changes.
+- **Mode-routing ambiguity.** A store-slug primary means "walk" today; satellite-fulfilled reuses a store slug. *Mitigated by:* an explicit per-tenant `preferences.stores.fulfillment = "satellite"` marker (Decision 11) — a *new reserved value* in the already-open `stores` string map (no schema/tool/migration change), written via the existing `update_preferences`. Walk stays the default (absent marker), so no existing tenant's behavior changes.
