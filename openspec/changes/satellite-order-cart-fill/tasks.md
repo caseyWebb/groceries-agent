@@ -55,14 +55,14 @@ Ordered **Worker-first** (the dormant, no-consumer side lands and can deploy ind
 
 ## 9. Persona: the satellite cart-fill flush path
 
-- [ ] 9.1 In `packages/worker/AGENT_INSTRUCTIONS.md` (`grocery-cart` tier — the flush-forms list, and the `shop-groceries` branch table), add the satellite cart-fill branch, keyed off the `preferences.stores.fulfillment === "satellite"` marker (read from the profile the flow already loads): a satellite-fulfilled primary store → tell the user to open their local helper and refresh; do **not** call `place_order` or build an in-store walk list. (A non-Kroger primary *without* the marker stays the existing walk branch — don't reroute it.) State the fill-cart-never-checkout expectation and the optional "tell me when you've placed it" (→ `ordered`). Rebuild the plugin skills from the source (no hand-edit of a generated bundle). No new MCP tool.
+- [x] 9.1 In `packages/worker/AGENT_INSTRUCTIONS.md` (`grocery-cart` tier — the flush-forms list, and the `shop-groceries` branch table), add the satellite cart-fill branch, keyed off the `preferences.stores.fulfillment === "satellite"` marker (read from the profile the flow already loads): a satellite-fulfilled primary store → tell the user to open their local helper and refresh; do **not** call `place_order` or build an in-store walk list. (A non-Kroger primary *without* the marker stays the existing walk branch — don't reroute it.) State the fill-cart-never-checkout expectation and the optional "tell me when you've placed it" (→ `ordered`). Rebuild the plugin skills from the source (no hand-edit of a generated bundle). No new MCP tool.
 
 ## 10. Docs in lockstep
 
 - [x] 10.1 `docs/SCHEMAS.md` — the `order` observation kind, the `order_lists` table, and the two `/satellite/order/*` endpoint shapes.
-- [ ] 10.2 `docs/ARCHITECTURE.md` — the satellite cart-fill path (the `computeToBuy`-shared boundary, the direct request/response vs the pull channel, the issued-set-authoritative guard), the determinism boundary (human-in-the-UI resolver, "Model identity: none"), the safety property (fill-cart-never-checkout), and the satellite's first inbound listener.
+- [x] 10.2 `docs/ARCHITECTURE.md` — the satellite cart-fill path (the `computeToBuy`-shared boundary, the direct request/response vs the pull channel, the issued-set-authoritative guard), the determinism boundary (human-in-the-UI resolver, "Model identity: none"), the safety property (fill-cart-never-checkout), and the satellite's first inbound listener.
 - [x] 10.3 `docs/TOOLS.md` — confirm no MCP tool is added or changed; `place_order` stays Kroger-only.
-- [ ] 10.4 `docs/SELF_HOSTING.md` — provisioning a member's satellite for cart-fill: mint a tenant-scoped ingest key, register the store, mark it satellite-fulfilled via `update_preferences({ stores: { primary: "<slug>", fulfillment: "satellite" } })` (a new reserved value in the existing `stores` map — no schema/tool change), `login <store>`, declare `[[order_stores]]`, run the helper verb.
+- [x] 10.4 `docs/SELF_HOSTING.md` — provisioning a member's satellite for cart-fill: mint a tenant-scoped ingest key, register the store, mark it satellite-fulfilled via `update_preferences({ stores: { primary: "<slug>", fulfillment: "satellite" } })` (a new reserved value in the existing `stores` map — no schema/tool change), `login <store>`, declare `[[order_stores]]`, run the helper verb.
 
 ## 11. Verification
 
