@@ -50,12 +50,12 @@ settled in `design.md` against the production spike.
 
 ## 7. Persona
 
-- [ ] 7.1 In `packages/worker/AGENT_INSTRUCTIONS.md`, add a brief note that `read_satellite_rejections` explains why a member's satellite contributions aren't landing (a per-source defect the agent relays), so the agent reaches for it when a member reports missing recipes/sales. Rebuild the plugin skills from source (no hand-edit of a generated bundle). Validate conversationally.
+- [x] 7.1 In `packages/worker/AGENT_INSTRUCTIONS.md`, add a brief note that `read_satellite_rejections` explains why a member's satellite contributions aren't landing (a per-source defect the agent relays), so the agent reaches for it when a member reports missing recipes/sales. Rebuild the plugin skills from source (no hand-edit of a generated bundle). Validate conversationally.
 
 ## 8. Docs in lockstep
 
 - [x] 8.1 `docs/SCHEMAS.md` — the `satellite_rejections` ledger, the `satellite_source_stats` accept-tally, and the `satellite_quarantine` tables, plus the additive `local_rejects` wire field (its shape, the additive-optional/stays-`"v2"` nature, and the two categories) now that §5 has built it.
-- [ ] 8.2 `docs/ARCHITECTURE.md` — the sensor-audit / source-quarantine surface (the ledger fed by every Worker-side reject + the local-reject summary; the compute-on-read reliability signal; the reversible operator-confirmed per-source quarantine enforced at intake, complementing key revocation); the **fallible-only threat model** (no ground-truth sampling, and why); **Model identity: none**.
+- [x] 8.2 `docs/ARCHITECTURE.md` — the sensor-audit / source-quarantine surface (the ledger fed by every Worker-side reject + the local-reject summary; the compute-on-read reliability signal; the reversible operator-confirmed per-source quarantine enforced at intake, complementing key revocation); the **fallible-only threat model** (no ground-truth sampling, and why); **Model identity: none**.
 - [x] 8.3 `docs/TOOLS.md` — the `read_satellite_rejections` read tool (params/returns, and the guarantee it reflects only rejected observations).
 
 ## 9. Version bump
