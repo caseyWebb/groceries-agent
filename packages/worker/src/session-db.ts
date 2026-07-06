@@ -37,6 +37,13 @@ import {
   type UpdateResult,
 } from "./grocery.js";
 
+/** The ISO date (YYYY-MM-DD) of an epoch-ms `now` — the `added_at`/`ordered_at` stamp the grocery
+ *  advance helpers (below) take. Shared so the order-fill intake (ingest.ts) and endpoints
+ *  (satellite.ts) stamp identically. */
+export function isoDay(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
 /** Parse a JSON column, tolerating null/empty/garbage as `[]`. */
 function parseJsonArray(value: string | null): string[] {
   if (value == null || value === "") return [];
@@ -403,6 +410,49 @@ export async function removeGroceryRow(
     );
   }
   return { found: true };
+}
+
+/**
+ * Read the caller's grocery-list rows keyed by their canonical id (`normalized_name`), each
+ * mapped to its display `name` + current `status`. The order-fill receipt reconciliation
+ * (satellite-order-cart-fill) uses this to advance ONLY issued ids that are STILL on the list:
+ * an `item_id` (=== `normalized_name`) not present, or not `active`, is skipped rather than
+ * resurrected/regressed — the receipt's issued-set guard against a stale pull-list. Read directly
+ * (the id IS the key) so no ingredient-context resolution is needed here.
+ */
+export async function readGroceryKeyIndex(
+  env: Env,
+  tenant: string,
+): Promise<Map<string, { name: string; status: string }>> {
+  const rows = await db(env).all<{ name: string; normalized_name: string; status: string | null }>(
+    "SELECT name, normalized_name, status FROM grocery_list WHERE tenant = ?1",
+    tenant,
+  );
+  return new Map(rows.map((r) => [r.normalized_name, { name: r.name, status: r.status ?? "active" }]));
+}
+
+/**
+ * Advance the given lines to status:ordered (+ `ordered_at`), keyed by canonical id — the
+ * mark-placed advance the satellite cart-fill flush uses after the human checks out. UPDATE-ONLY:
+ * a line with no existing row is skipped (never inserted), unlike `advanceInCartRows` — an order
+ * can only be placed for a line already on the list. Mirrors `advanceInCartRows`' keying.
+ */
+export async function advanceOrderedRows(
+  env: Env,
+  tenant: string,
+  lines: { name: string }[],
+  today: string,
+): Promise<void> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
+  const current = await readGroceryList(env, tenant);
+  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
+  const stmts: D1PreparedStatement[] = [];
+  for (const line of lines) {
+    const existing = byKey.get(ctx.resolve(line.name));
+    if (!existing) continue; // update-only — never mint a row on the ordered advance
+    stmts.push(groceryUpsertStmt(env, tenant, { ...existing, status: "ordered", ordered_at: today }, ctx.resolve));
+  }
+  if (stmts.length > 0) await db(env).batch(stmts);
 }
 
 /**

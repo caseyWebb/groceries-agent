@@ -14,6 +14,7 @@ export {
   type SatelliteConfig,
   type SourceConfig,
   type ScanStoreConfig,
+  type OrderStoreConfig,
   type RuntimeContext,
 } from "./config.js";
 
@@ -95,3 +96,36 @@ export {
   type ClaimOutcome,
   type ReportOutcome,
 } from "./pull.js";
+
+// cart-fill adapters (satellite-order-cart-fill) — operator-authored, browser-only, no built-in
+export {
+  loadOrderAdapters,
+  validateOrderEmit,
+  type OrderAdapter,
+  type OrderAdapterFactory,
+  type OrderSdk,
+  type CheckpointPrompt,
+  type CheckpointResolution,
+} from "./order-adapter.js";
+
+// order-fill client (satellite-order-cart-fill) — outbound-only pull-list fetch + receipt post
+export {
+  fetchOrderList,
+  postReceipt,
+  type OrderListOutcome,
+  type ReceiptOutcome,
+} from "./order.js";
+
+// order helper (satellite-order-cart-fill) — the localhost helper server (the first inbound listener)
+export { createHelper, type Helper, type HelperDeps } from "./helper/server.js";
+// the fill orchestration + its event/resolution shapes (the UI + tests build against these)
+export {
+  Drive,
+  toCheckpointResolution,
+  type DriveDeps,
+  type DriveEvent,
+  type ApiResolution,
+  type ItemState,
+  type OrderProduct,
+  type PageHandle,
+} from "./helper/drive.js";

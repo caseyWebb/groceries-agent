@@ -93,6 +93,38 @@ describe("parseConfig (shape validation)", () => {
     ).toThrow(/fetch_tier/);
   });
 
+  it("accepts a machine that ONLY runs cart-fill (no recipe sources / scan stores)", () => {
+    const cfg = parseConfig({
+      connector_url: "https://x.example",
+      order_stores: [{ store: "target", adapter: "target-order" }],
+    });
+    expect(cfg.sources).toEqual([]);
+    expect(cfg.order_stores).toEqual([{ store: "target", adapter: "target-order" }]);
+  });
+
+  it("omits order_stores entirely when none are declared", () => {
+    const cfg = parseConfig({ connector_url: "https://x.example", sources: [{ id: "a", adapter: "jsonld" }] });
+    expect(cfg.order_stores).toBeUndefined();
+  });
+
+  it("validates order_stores fields and rejects duplicates", () => {
+    expect(() => parseConfig({ connector_url: "https://x.example", order_stores: [{ adapter: "a" }] })).toThrow(
+      /order_stores\[0\]\.store/,
+    );
+    expect(() => parseConfig({ connector_url: "https://x.example", order_stores: [{ store: "s" }] })).toThrow(
+      /order_stores\[0\]\.adapter/,
+    );
+    expect(() =>
+      parseConfig({
+        connector_url: "https://x.example",
+        order_stores: [
+          { store: "dup", adapter: "a" },
+          { store: "dup", adapter: "b" },
+        ],
+      }),
+    ).toThrow(/duplicate order_stores/);
+  });
+
   it("rejects a source missing its id", () => {
     expect(() =>
       parseConfig({ connector_url: "https://x.example", sources: [{ adapter: "jsonld" }] }),

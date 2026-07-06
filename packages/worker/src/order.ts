@@ -25,6 +25,14 @@ export interface ToBuyItem {
   for_recipes: string[];
   /** True when no package count was supplied and the line defaulted to 1. */
   assumed_quantity: boolean;
+  /**
+   * The line's merge/join key — the food-guarded `groceryKey` (canonical id for a food row,
+   * `normalizeName` for a non-food row), i.e. EXACTLY the `grocery_list.normalized_name` this line is
+   * stored under. Consumers that need the stored row key (the satellite order-fill pull-list's
+   * `item_id`) use this rather than re-deriving with `resolve(name)`, which would diverge for a
+   * non-food row (and would run the capture-resolver on a non-food term). `place_order` ignores it.
+   */
+  key: string;
 }
 
 /** An item skipped because the pantry already has it (prompt candidate). */
@@ -119,6 +127,8 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
       quantity,
       for_recipes: entry.for_recipes,
       assumed_quantity: !hasOverride && !hasNeed,
+      // The merge key IS the stored `normalized_name` (food-guarded groceryKey / resolve(need)).
+      key,
     });
   }
 

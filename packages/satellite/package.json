@@ -1,6 +1,6 @@
 {
   "name": "@grocery-agent/satellite",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "description": "The home-network satellite (satellite): runs off-cloud on the operator's own network, authenticates to walled recipe sites with the operator's own session, extracts recipes to the shared wire contract, and POSTs them to the grocery-mcp Worker's /admin/api/ingest under the recipe-scrape capability.",
@@ -14,7 +14,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "tsx src/cli.ts run"
+    "start": "tsx src/cli.ts run",
+    "build:helper-ui": "node scripts/build-helper-ui.mjs",
+    "check:helper-ui": "node scripts/build-helper-ui.mjs --check"
   },
   "dependencies": {
     "@grocery-agent/contract": "workspace:*",
@@ -24,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "esbuild": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

@@ -20,13 +20,14 @@ If the grocery-mcp server errors in a way you can't work around, or you find you
 
 ## The grocery list and the cart
 
-Capture buy-intent onto the **grocery list** continuously, as it comes up; **flush it once**, at order time. The flush has **two forms**, picked by my fulfillment mode (`preferences.stores.primary`) — **don't assume Kroger**:
+Capture buy-intent onto the **grocery list** continuously, as it comes up; **flush it once**, at order time. The flush has **several forms**, picked by my fulfillment mode (`preferences.stores`) — **don't assume Kroger**:
 
 - **Kroger online** (`primary: kroger`) — flush to the Kroger cart with `place_order`.
 - **Kroger in-store** — walk with API-driven aisle ordering.
-- **In-store walk** (`primary` is a store slug from `stores/`) — turn the list into a shopping list grouped for that store and walk it. Naming a store for one trip ("I'm going to the West 7th Tom Thumb") picks the walk for that trip only.
+- **In-store walk** (`primary` is a store slug, *not* marked satellite-fulfilled) — turn the list into a shopping list grouped for that store and walk it. Naming a store for one trip ("I'm going to the West 7th Tom Thumb") picks the walk for that trip only.
+- **Satellite cart-fill** (`primary` is a store slug marked `fulfillment: "satellite"`) — that store has no Worker-side API, so instead of a walk or `place_order`, tell me to open my **local cart-fill helper** and refresh. The helper fills that store's cart and **stops at its review page** — I finish checkout myself in the store's own UI. A store-slug primary *without* the `fulfillment: "satellite"` marker stays the in-store walk above — don't reroute it.
 
-All three flush paths are handled by the `shop-groceries` flow.
+All of these flush paths are handled by the `shop-groceries` flow.
 
 **Capture is identical either way** — the grocery list is SKU-free and store-agnostic; only the flush differs. Flush only when I say to (order / go shopping) — if I just mention I'm out of something, add it to the list for next time, don't flush. When something runs low or out, *ask* before putting it on the list (the prompt is the point — don't auto-add). Household / non-food items belong on the list too.
 
@@ -346,7 +347,8 @@ Read `read_grocery_list` and `read_user_profile()` in parallel (preferences fiel
 |---|---|
 | `primary = "kroger"` and no store named for this trip | **Kroger online** — `place_order` flush |
 | `primary = "kroger"` and I named a specific Kroger store, or I say "in-store" / "walking the Kroger" | **Kroger in-store** — API aisle ordering |
-| `primary` is a store slug, or I named a non-Kroger store | **In-store walk** — layout/notes aisle ordering |
+| `primary` is a store slug marked `fulfillment: "satellite"` (from `read_user_profile()`) | **Satellite cart-fill** — point me at my local cart-fill helper; no `place_order`, no walk list |
+| `primary` is a store slug (not satellite-marked), or I named a non-Kroger store | **In-store walk** — layout/notes aisle ordering |
 | Walking a store we've never mapped and I want to record it | **Map + walk** — concurrent map-and-shop |
 
 <!-- resource: references/kroger-online.md -->
@@ -421,6 +423,20 @@ add_store_note(slug, "Aisle <N>: <item name>", tags: ["location"])
 #### 5. Complete → received
 
 Before wrapping up, sweep the list for anything we never ticked off — "you've still got harissa and flour on the list; did we pass those, or want to double back?" Then, when done, picked items go straight `active → received` — **no `in_cart`/`ordered` stage**. Persist it with the granular tools: remove the picked items with `remove_from_grocery_list` (one per item, awaited — they share the list blob) and — **for `grocery`-kind items only** — restock the pantry in one `update_pantry({ operations: [...] })`; `household`/`other` never touch the pantry. Then offer a couple of storage tips for fresh perishables just received, following the **Putting groceries away** guidance.
+<!-- /resource -->
+
+<!-- resource: references/satellite-cartfill.md -->
+# Satellite cart-fill — the local helper flush
+
+This branch runs when `primary` is a store slug marked `fulfillment: "satellite"` (the `preferences.stores.fulfillment` marker in the profile you already loaded). That store has **no Worker-side API** — the Worker can't price it, match SKUs, or write its cart — so the cart is filled off-cloud by a **local helper** the member runs on their own machine, behind their own store login. Your whole job here is to **point me at that helper**; you do not fill the cart yourself.
+
+**Do NOT `place_order`, and do NOT build a walk list.** `place_order` is Kroger-only, and this isn't a walk store — routing here on the marker is the point. There is **no MCP tool** for this: the helper lives on my machine at a localhost address you can't know, its unlock is a token the helper prints, and there's nothing for the Worker to mint. So this is a plain hand-off in chat.
+
+1. **Send me to the helper.** Tell me to start (or switch to) my **cart-fill helper** for that store and hit **Refresh**. On Refresh the helper pulls the same to-buy list the Worker resolves from my `active` grocery list (list ∪ menu-needs − pantry-have), then drives that store's browser session to add each item — surfacing substitutions and ambiguous picks to **me** to resolve, since I'm the one sitting at it.
+2. **State the expectation: fill-cart-never-checkout.** The helper fills the store's cart and **stops at the store's review page** — it never checks out. I complete the purchase myself in the store's own UI. So don't tell me an order was *placed*; the cart is *filled and waiting for my review*. If the fill ever doubles up (a stale refresh, a retry), I'll see it at review and fix it before checkout — nothing is bought until I click buy.
+3. **The list advances on its own.** When the helper posts its receipt back to the Worker, the carted/substituted items advance to `in_cart` automatically (a substitute still satisfies the ingredient, so it advances; anything `unavailable` stays `active` to retry next time). You don't write `in_cart` yourself — it's already done by the time I'm back in chat. Report honestly: those items are **in the cart**, pending my checkout.
+4. **Optional "I placed it" → `ordered`.** Because checkout happens in the store's own UI, the list rests at `in_cart` — exactly like a Kroger cart I never confirmed. If I later tell you **"I placed the order"**, advance those `in_cart` items to `ordered` via `update_grocery_list` — the same user-asserted transition a confirmed Kroger cart gets. (I can also press the helper's own optional *mark-placed* button, which does the same via the receipt; either way, unused, the line just sits at `in_cart`.) Never claim I checked out on your own.
+5. **Received, later.** When I say I've **picked up / received** the groceries, treat it like any pickup: `received` (terminal) — remove the picked items with `remove_from_grocery_list` (one per item) and, for `grocery`-kind items only, restock the pantry in one `update_pantry({ operations: [...] })`; then offer a couple of storage tips for the fresh perishables, following the **Putting groceries away** guidance.
 <!-- /resource -->
 
 <!-- resource: references/instore-walk.md -->

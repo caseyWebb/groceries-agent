@@ -233,7 +233,7 @@ function makeDeps(
 }
 
 const toBuy = (...names: string[]): ToBuyItem[] =>
-  names.map((name) => ({ name, quantity: 1, for_recipes: [], assumed_quantity: true }));
+  names.map((name) => ({ name, key: name, quantity: 1, for_recipes: [], assumed_quantity: true }));
 
 describe("placeOrder", () => {
   it("resolves, commits the cache, writes the cart, then advances the list", async () => {
@@ -352,8 +352,8 @@ describe("placeOrder", () => {
   it("carries assumed_quantity from the to-buy line onto the resolved line", async () => {
     const { deps } = makeDeps({ peppers: confident("S1"), milk: confident("S2") });
     const lines: ToBuyItem[] = [
-      { name: "peppers", quantity: 1, for_recipes: [], assumed_quantity: true },
-      { name: "milk", quantity: 2, for_recipes: [], assumed_quantity: false },
+      { name: "peppers", key: "peppers", quantity: 1, for_recipes: [], assumed_quantity: true },
+      { name: "milk", key: "milk", quantity: 2, for_recipes: [], assumed_quantity: false },
     ];
     const res = await placeOrder(deps, lines, { preview: true });
     const byName = Object.fromEntries(res.resolved.map((r) => [r.name, r.assumed_quantity]));

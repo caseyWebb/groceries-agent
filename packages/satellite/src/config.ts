@@ -40,6 +40,22 @@ export interface ScanStoreConfig {
   fetch_tier?: "http" | "browser";
 }
 
+/**
+ * One store this machine fills the cart for (satellite-order-cart-fill). The human-run local helper
+ * drives the mapped `adapter` over the store's own cart behind the operator's captured session (keyed
+ * by `store`, the same slug the tenant's primary-store mapping uses). Declaring any `[[order_stores]]`
+ * entry is how a machine declares it runs the cart-fill capability. Cart-fill needs a live
+ * authenticated store session, so it is browser-ONLY — there is NO `fetch_tier` (always the browser).
+ * The adapter is OPERATOR-AUTHORED (loaded from `adapters_dir`) — no named-retailer order adapter
+ * ships built-in.
+ */
+export interface OrderStoreConfig {
+  /** The store slug this fills — matches the tenant's primary-store mapping AND the session id. */
+  store: string;
+  /** The operator adapter module (in `adapters_dir`) that fills this store's cart. */
+  adapter: string;
+}
+
 /** The whole machine's config. */
 export interface SatelliteConfig {
   /** The grocery-mcp connector base URL; `/admin/api/ingest` (push) + `/satellite/*` (pull) are appended. */
@@ -52,6 +68,8 @@ export interface SatelliteConfig {
   sources: SourceConfig[];
   /** Sale-scan stores (satellite-sale-scan). Present ⇒ the machine runs the `sale-scan` capability. */
   scan_stores?: ScanStoreConfig[];
+  /** Cart-fill stores (satellite-order-cart-fill). Present ⇒ the machine runs the cart-fill capability. */
+  order_stores?: OrderStoreConfig[];
 }
 
 /** Runtime context resolved outside the TOML: the secret key + the mounted volume path. */
@@ -121,6 +139,17 @@ function parseScanStore(raw: unknown, index: number): ScanStoreConfig {
   return scan;
 }
 
+/** Validate one raw `[[order_stores]]` table into an OrderStoreConfig (browser-only — no fetch_tier). */
+function parseOrderStore(raw: unknown, index: number): OrderStoreConfig {
+  if (raw === null || typeof raw !== "object") {
+    throw new Error(`satellite config: order_stores[${index}] must be a table`);
+  }
+  const o = raw as Record<string, unknown>;
+  const store = requireString(o.store, `order_stores[${index}].store`);
+  const adapter = requireString(o.adapter, `order_stores[${index}].adapter`);
+  return { store, adapter };
+}
+
 /** Validate a raw parsed TOML object into a SatelliteConfig, throwing on a bad shape. */
 export function parseConfig(raw: unknown): SatelliteConfig {
   if (raw === null || typeof raw !== "object") {
@@ -135,12 +164,14 @@ export function parseConfig(raw: unknown): SatelliteConfig {
     throw new Error(`satellite config: "connector_url" must be a valid http(s) URL (got ${connector_url})`);
   }
 
-  // `sources` (recipe-scrape) and `scan_stores` (sale-scan) are each optional, but the machine must
-  // run at least one capability — so at least one entry across the two is required.
+  // `sources` (recipe-scrape), `scan_stores` (sale-scan), and `order_stores` (cart-fill) are each
+  // optional, but the machine must run at least one capability — so at least one entry across the
+  // three is required.
   const sources = Array.isArray(o.sources) ? o.sources.map(parseSource) : [];
   const scanStores = Array.isArray(o.scan_stores) ? o.scan_stores.map(parseScanStore) : [];
-  if (sources.length === 0 && scanStores.length === 0) {
-    throw new Error("satellite config: at least one [[sources]] or [[scan_stores]] entry is required");
+  const orderStores = Array.isArray(o.order_stores) ? o.order_stores.map(parseOrderStore) : [];
+  if (sources.length === 0 && scanStores.length === 0 && orderStores.length === 0) {
+    throw new Error("satellite config: at least one [[sources]], [[scan_stores]], or [[order_stores]] entry is required");
   }
 
   const ids = new Set<string>();
@@ -153,9 +184,15 @@ export function parseConfig(raw: unknown): SatelliteConfig {
     if (stores.has(s.store)) throw new Error(`satellite config: duplicate scan_stores store "${s.store}"`);
     stores.add(s.store);
   }
+  const orderSlugs = new Set<string>();
+  for (const s of orderStores) {
+    if (orderSlugs.has(s.store)) throw new Error(`satellite config: duplicate order_stores store "${s.store}"`);
+    orderSlugs.add(s.store);
+  }
 
   const config: SatelliteConfig = { connector_url, sources };
   if (scanStores.length > 0) config.scan_stores = scanStores;
+  if (orderStores.length > 0) config.order_stores = orderStores;
   if (o.adapters_dir !== undefined) config.adapters_dir = requireString(o.adapters_dir, "adapters_dir");
   if (o.schedule !== undefined) config.schedule = requireString(o.schedule, "schedule");
   return config;

@@ -931,6 +931,8 @@ All sections optional. With no args it flushes the current grocery list. Package
 
 A **stale-cart reminder** fires when a new order begins while the prior list still has `in_cart` items never confirmed `ordered`: remind the user to clear the Kroger cart manually (the API can't), rather than silently double-adding.
 
+**`place_order` stays Kroger-only.** The parallel **satellite cart-fill flush** for an API-less store (satellite-order-cart-fill) adds **no MCP tool** and does not touch `place_order`: it is served by the two direct `/satellite/order/*` endpoints (see `docs/SCHEMAS.md`), driven by the tenant's local helper, and the agent routes to it from the `preferences.stores.fulfillment === "satellite"` marker it already reads at the start of `shop-groceries` — no `place_order`-shaped tool is minted for it (there is nothing Worker-side to mint; the helper URL/token live on the tenant's machine). Carted/substituted lines advance to `in_cart` exactly as `place_order` does, and the same `active → in_cart → ordered → received` lifecycle + user-asserted transitions apply.
+
 ---
 
 ## Weather tools (menu-generation)
