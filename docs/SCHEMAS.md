@@ -778,6 +778,13 @@ Derived, time-bound state written by the flyer warm (and the satellite sale inta
 - `flyer:plan` → `{ sweep_id, units }` — the Kroger sweep's ordered `(locationId, term)` unit list, built once per sweep so later ticks don't re-enumerate.
 - `sale-scan:cursor` → `{ last_refresh_at }` — the sale-scan producer's refresh marker (mirrors `flyer:cursor`), gating a fresh enqueue cycle to the daily cadence; between cycles the producer is a cheap no-op. (A rollup key always carries a `locationId` segment, so it never collides with these `flyer:cursor`/`flyer:plan`/`sale-scan:cursor` markers.)
 
+## Web sessions (KV, not a repo file)
+
+The member web app's session store (member-session-auth), in the `TENANT_KV` namespace beside the `tenant:*` allowlist and `invite:*` codes — identity-adjacent operational state, never domain data. Written/read by `src/session.ts`; nothing edits it by hand.
+
+- `session:<token>` → `{ tenant, created_at, refreshed_at }` (epoch ms) — one record per live web session. `<token>` is 32 bytes from `crypto.getRandomValues`, base64url (256 bits, never logged); the same value rides the `__Host-session` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age` 90d). Written with `expirationTtl` ≈ 90 days — **the KV TTL is the single expiry authority** (no second clock). The session middleware re-puts the record with a fresh TTL (rolling lifetime) only when `refreshed_at` is >24 h old, so a chatty session costs ≤1 extension write/day. Deleted on logout, and scanned-and-deleted by member revocation (`revoke()` matches the stored `tenant`); the middleware's `resolveTenant` allowlist re-check makes a missed key moot.
+- **Fixed-window rate-limit counters** (`KROGER_KV` — ephemeral infra, self-expiring): the shared limiter (`src/rate-limit.ts`, `underRateLimit(kv, key, max, windowS, now)` — fail-open, `expirationTtl: windowS × 2`) appends a window bucket to its caller's key. Callers: `ingest:rl:<keyId>:<bucket>` (the satellite push/pull surfaces, 120/min per key) and `login:rl:<ip>:<bucket>` (member login, 10/min per client IP from `CF-Connecting-IP`, `"unknown"` fallback).
+
 ## Background-job health (D1 `job_health` table)
 
 Derived operational state for the `/health` endpoint (background-job-health). Each background process upserts one row per run; `/health` aggregates them. Tenant-data-free by construction — counts, timestamps, and error classes only. It lives in D1 (not KV) because persisting per-job liveness on every cron tick is standing write load that belongs in D1's far larger budget (migration `0019_job_health`).
@@ -825,6 +832,8 @@ Same positional-contract rule as `grocery_usage` — slots are referenced by pos
 - `blob1` = tool name · `blob2` = outcome (`"ok"` | `"error"`) · `blob3` = **RESERVED** for a future error code (not written today)
 - `double1` = call duration (ms)
 - `timestamp` = AE-supplied write time
+
+The **member `/api` surface emits into this same dataset** (member-api): the shared `/api` middleware records one point per request with the same slot layout, named `api:<METHOD> <matched route pattern>` (e.g. `api:POST /api/session`) in `index1`/`blob1` — always the matched pattern, never the raw URL, so points stay low-cardinality and tenant-clean. App usage thereby reads beside tool usage with no new AE binding.
 
 Tenant-data-free by construction — the tool name (a fixed, low-cardinality enum), the outcome, and the duration only, never a per-tenant id or any call argument. Read back per tool via the AE **SQL API** (see the Tool usage trends dashboard below).
 

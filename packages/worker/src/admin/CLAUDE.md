@@ -120,13 +120,16 @@ tree for the utility classes you use.
 ## Build & serve
 
 - Source of truth: `src/admin/**`. `scripts/build-admin.mjs` (`aubr build:admin`) esbuild-bundles
-  each `client/*.tsx` island → `admin/dist/admin/islands/*.js` and **Tailwind-compiles** `styles.css`
-  (Basecoat + the panel's utilities) → `admin/dist/admin/styles.css`. SSR pages are NOT pre-built —
+  each `client/*.tsx` island → `assets/admin/islands/*.js` and **Tailwind-compiles** `styles.css`
+  (Basecoat + the panel's utilities) → `assets/admin/styles.css`. SSR pages are NOT pre-built —
   the Worker renders them per request.
-- **`admin/dist/` is a gitignored build artifact — not committed.** CI and the deploy build it
-  fresh (esbuild + Tailwind, both from installed node_modules — no network registry), and local
-  `wrangler dev` needs a build first. (The bundles embed environment-specific module paths, so a
-  committed copy wouldn't be reproducible.)
+- **`assets/` is the Worker's ONE merged static-assets root, gitignored — not committed.** The
+  admin builder owns the `assets/admin/` subtree (served at the unchanged `/admin/*` URLs); the
+  member SPA (`packages/app`) owns everything else under `assets/` (index.html + hashed chunks) —
+  each builder cleans only its own subtree, so `build:admin`/`build:app` run in either order. CI
+  and the deploy build both fresh (esbuild + Tailwind from installed node_modules — no network
+  registry), and local `wrangler dev` needs a build first. (The bundles embed environment-specific
+  module paths, so a committed copy wouldn't be reproducible.)
 - Auth lives in the Worker (Cloudflare Access on `/admin*`, reused as the app's `accessGate`
   middleware). Islands just call same-origin `/admin/api/*` and trust the gate — keep auth logic
   out of the client.

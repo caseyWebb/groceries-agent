@@ -49,11 +49,11 @@
 
 ## 7. Docs (same pass — no drift)
 
-- [ ] 7.1 `docs/ARCHITECTURE.md`: the member web app surface — session auth (invite → KV session, cookie, CSRF, revocation), the `/api` mount + shared middleware, SPA serving (`assets/`, SPA fallback, `run_worker_first` enumeration + discipline rule), the version-skew contract (`APP_BUILD`/`X-App-Build`/`/api/version`).
-- [ ] 7.2 `docs/SCHEMAS.md`: new "Web sessions (KV)" section (`session:<token>` value shape, TTL/rolling semantics, `TENANT_KV`), the `login:rl:*` counter keys beside a note on the extracted limiter, and a note on `TOOL_AE` carrying `api:*` points in the tool-usage section.
-- [ ] 7.3 `docs/SELF_HOSTING.md`: invite codes now also grant web login — member instructions (open `https://<your-worker-host>/`, enter the invite code), the revoke text gains sessions, security-notes mention of the session cookie.
-- [ ] 7.4 `README.md` (the member app in the surfaces overview) and `CLAUDE.md` (packages/app + packages/ui blurb; `aubr dev:app`, `build:app`, `test:app`; the assets root; the `run_worker_first` rule), plus `CONTRIBUTING.md` (new-package toolchain: oxlint/biome, no ESLint; the Worker-owned-path rule).
-- [ ] 7.5 `src/admin/CLAUDE.md`: assets output path (`assets/admin/`) and the shared assets root.
+- [x] 7.1 `docs/ARCHITECTURE.md`: the member web app surface — session auth (invite → KV session, cookie, CSRF, revocation), the `/api` mount + shared middleware, SPA serving (`assets/`, SPA fallback, `run_worker_first` enumeration + discipline rule), the version-skew contract (`APP_BUILD`/`X-App-Build`/`/api/version`).
+- [x] 7.2 `docs/SCHEMAS.md`: new "Web sessions (KV)" section (`session:<token>` value shape, TTL/rolling semantics, `TENANT_KV`), the `login:rl:*` counter keys beside a note on the extracted limiter, and a note on `TOOL_AE` carrying `api:*` points in the tool-usage section.
+- [x] 7.3 `docs/SELF_HOSTING.md`: invite codes now also grant web login — member instructions (open `https://<your-worker-host>/`, enter the invite code), the revoke text gains sessions, security-notes mention of the session cookie.
+- [x] 7.4 `README.md` (the member app in the surfaces overview) and `CLAUDE.md` (packages/app + packages/ui blurb; `aubr dev:app`, `build:app`, `test:app`; the assets root; the `run_worker_first` rule), plus `CONTRIBUTING.md` (new-package toolchain: oxlint/biome, no ESLint; the Worker-owned-path rule).
+- [x] 7.5 `src/admin/CLAUDE.md`: assets output path (`assets/admin/`) and the shared assets root.
 
 ## 8. Ship
 

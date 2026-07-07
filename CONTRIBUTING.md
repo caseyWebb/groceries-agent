@@ -13,6 +13,7 @@ There is **no data in this repo** — the data lives in a separate (public) data
 | Path | What it is |
 | --- | --- |
 | `src/`, `test/`, `wrangler.jsonc` | the repo root **is** the Cloudflare Worker (TypeScript) hosting the `grocery-mcp` MCP server + OAuth provider |
+| `packages/app/`, `packages/ui/` | the member web app (React 19 SPA the Worker serves at `/`) and its shared shadcn/ui components + Tailwind v4 theme tokens (raw-TS `workspace:*` exports) |
 | `scripts/` | build tooling: `build-plugin.mjs` (the plugin bundle), `build-admin.mjs` (the admin panel islands + the Tailwind/Basecoat stylesheet), `build-vault.mjs` (the Obsidian authoring vault, from `vault-template/` + `src/vocab.js`), `merge-wrangler-config.mjs` (the deploy config merge). The recipe index + cookbook are derived by the Worker, not built here; the corpus is copied/edited via `rclone` (see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)). |
 | `vault-template/`, `vault/` | the authoring vault's authored **source** and its **generated** output (the corpus-authoring Obsidian vault; `vault/` is committed like `plugin/`, never hand-edited) |
 | `docs/` | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) (the technical model) · [`SCHEMAS.md`](docs/SCHEMAS.md) (file formats) · [`TOOLS.md`](docs/TOOLS.md) (the tool contract) · [`SELF_HOSTING.md`](docs/SELF_HOSTING.md) (operator setup) |
@@ -41,11 +42,16 @@ The Worker is the root package. One `package.json` carries both the Worker deps 
 aubr dev             # wrangler dev — local Worker; point MCP Inspector at the local URL
 aubr test            # vitest run — Worker unit tests (test/*.test.ts)
 aubr test:tooling    # node --test — build-plugin / merge-config / readme-badge tests (tests/*.test.mjs)
-aubr typecheck       # tsc --noEmit
+aubr typecheck       # tsc --noEmit (recursive: Worker + contract + satellite + app + ui)
+aubr test:app        # Playwright — the member-app browser gate (seeded invite login; app/visual/)
+aubr build:app       # vite build — the member SPA → packages/worker/assets/
+aubr dev:app         # wrangler dev + the app's Vite dev server (HMR; /api proxied to :8787)
 aubr deploy          # wrangler deploy — normally NOT run by hand (see Deployment)
 ```
 
-- **Structured errors, not throws.** Tools return `{ error: "...", message }` shapes the agent can reason over. Follow the existing convention in `src/errors.ts`.
+- **Structured errors, not throws.** Tools return `{ error: "...", message }` shapes the agent can reason over. Follow the existing convention in `src/errors.ts`. The member `/api` surface maps these codes to HTTP status in ONE shared middleware (`src/api/middleware.ts`) — no route implements its own mapping.
+- **A new Worker-owned HTTP route ships with its `run_worker_first` entry, same change.** The member SPA is served from static assets with `not_found_handling: "single-page-application"`, so any path NOT enumerated in `wrangler.jsonc`'s `assets.run_worker_first` is answered with the SPA shell — the enumeration is the routing contract. Forgetting the entry silently swallows the route (the same trap class as the deploy-merge allowlist); the app suite's passthrough specs (`app/visual/specs/passthrough.spec.ts`) guard the representatives.
+- **New frontend packages ride the native toolchain.** `packages/app`/`packages/ui` lint with **oxlint** and format with **Biome** — no ESLint or Prettier in the new packages; typecheck stays `tsc` (each package has a `typecheck` script the recursive root pass picks up).
 - **`docs/TOOLS.md` is the contract.** When a tool's params/returns change, update `docs/TOOLS.md` in the same pass — no drift. Likewise `docs/SCHEMAS.md` when a data file's shape changes.
 - **Local dev/secrets** live in `.dev.vars` (gitignored; see `.dev.vars.example`): Kroger creds. The authored corpus is the local R2 `CORPUS` bucket (`wrangler dev` simulates it — no GitHub App). See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) for the one-time operator setup and the Kroger account-linking flow (mint a consent link from `/admin` → Members → **Kroger link**, or the `kroger_login_url` tool for a connected member).
 - **D1 (domain data) goes through `src/db.ts`, never `env.DB`.** `db(env)` exposes `first` / `all` / `run` / `batch` (+ `prepare` for batch); it maps every D1 failure to a structured `storage_error` `ToolError`, so tools stay throw-free. `wrangler dev` binds a **local** SQLite D1 — seed it with `npx wrangler d1 migrations apply DB --local` (applies `migrations/d1/*.sql`; `wrangler d1 execute DB --local --command "…"` inspects it). The deploy applies the same migrations with `--remote`.
@@ -150,7 +156,7 @@ Use an email verified on your GitHub account. There is no encrypted secrets stor
 
 Every PR is prefilled from [`.github/pull_request_template.md`](.github/pull_request_template.md): a short **What & why** plus a **considerations checklist** drawn from the rules above (docs in lockstep, the tool/skill boundary, D1 via `src/db.ts`, the `merge-wrangler-config.mjs` allowlist, migrations, `plugin/` regen, OpenSpec sync, no-secrets, admin-UI Playwright coverage). Each item is a *consideration* — checking it means "I weighed this," and the not-applicable case is folded into the wording, so every box is honestly checkable on every PR. **Fill the What & why and check every box.** This applies to PRs the repo's own agent opens too — leaving the template unfilled blocks the PR.
 
-The `pr-checklist` workflow ([`.github/workflows/pr-checklist.yml`](.github/workflows/pr-checklist.yml)) re-runs on each PR-body edit (separate from `ci.yml`, so checking a box doesn't re-run the test suites) and fails if the `<!-- pr-checklist:v1 -->` sentinel is missing or any box is unchecked; Dependabot and other bot PRs are exempt. The workflow only *produces* the check — **it blocks merge only once `pr-checklist` is added to `main`'s branch protection as a required status check** (a one-time repo setting, not a file in the tree) — the same applies to the `admin-ui` browser gate (`aubr test:admin`, see `packages/worker/admin/visual/README.md`).
+The `pr-checklist` workflow ([`.github/workflows/pr-checklist.yml`](.github/workflows/pr-checklist.yml)) re-runs on each PR-body edit (separate from `ci.yml`, so checking a box doesn't re-run the test suites) and fails if the `<!-- pr-checklist:v1 -->` sentinel is missing or any box is unchecked; Dependabot and other bot PRs are exempt. The workflow only *produces* the check — **it blocks merge only once `pr-checklist` is added to `main`'s branch protection as a required status check** (a one-time repo setting, not a file in the tree) — the same applies to the `admin-ui` browser gate (`aubr test:admin`, see `packages/worker/admin/visual/README.md`) and the `app-ui` member-app gate (`aubr test:app`, `packages/worker/app/visual/`).
 
 ## OpenSpec change workflow
 
