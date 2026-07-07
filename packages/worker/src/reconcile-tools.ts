@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { normalizeTenantId, directoryFromEnv, type Tenant } from "./tenant.js";
 import { runTool, ToolError } from "./errors.js";
-import { readNightVibes, readVibeLastSatisfied } from "./night-vibe-db.js";
+import { readNightVibes, readVibeSatisfactionDates } from "./night-vibe-db.js";
 import { draftProposals, type ProposalDraft } from "./reconcile-signals.js";
 import { readProposals, getProposal, enqueueProposal, setProposalStatus, applyProposal } from "./reconcile-db.js";
 
@@ -102,8 +102,8 @@ export function registerReconcileTools(server: McpServer, env: Env, tenant: Tena
         const now = new Date();
         const members = [];
         for (const t of tenants) {
-          const [palette, last] = await Promise.all([readNightVibes(env, t), readVibeLastSatisfied(env, t)]);
-          members.push({ tenant: t, palette_size: palette.length, signals: draftProposals(palette, last, now) });
+          const [palette, dates] = await Promise.all([readNightVibes(env, t), readVibeSatisfactionDates(env, t)]);
+          members.push({ tenant: t, palette_size: palette.length, signals: draftProposals(palette, dates, now) });
         }
         return { members };
       }),

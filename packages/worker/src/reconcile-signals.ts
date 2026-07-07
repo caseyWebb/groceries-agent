@@ -11,7 +11,7 @@
 
 import type { Env } from "./env.js";
 import { directoryFromEnv } from "./tenant.js";
-import { readNightVibes, readVibeLastSatisfied, type NightVibe } from "./night-vibe-db.js";
+import { readNightVibes, readVibeSatisfactionDates, type NightVibe } from "./night-vibe-db.js";
 import { writeJobHealth, writeJobRun, recordUsagePoint, notifyFailure } from "./health.js";
 import { enqueueProposal } from "./reconcile-db.js";
 
@@ -19,6 +19,15 @@ import { enqueueProposal } from "./reconcile-db.js";
 const STALE_NEVER_DAYS = 60;
 /** How far past its cadence a vibe must run (× period) before we suggest stretching it. */
 const DEFER_FACTOR = 3;
+/** How far UNDER its cadence the recent satisfaction intervals must land (× period) before we
+ *  suggest tightening — the mirror of DEFER_FACTOR ("well before cadence"). */
+const TIGHTEN_FACTOR = 0.5;
+/** Tighten needs ≥ this many satisfactions (⇒ ≥ 2 completed consecutive intervals). */
+const TIGHTEN_MIN_SATISFACTIONS = 3;
+/** How many of the most recent completed intervals the tighten rule inspects. */
+const TIGHTEN_RECENT_INTERVALS = 2;
+/** The tightest cadence a proposal may suggest (days). */
+const TIGHTEN_FLOOR_DAYS = 3;
 
 /** A drafted profile-edit proposal — producer-agnostic (the queue stamps the producer). */
 export interface ProposalDraft {
@@ -37,19 +46,40 @@ function daysSince(dayOrIso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - t) / 86_400_000));
 }
 
+/** Whole days between two YYYY-MM-DD days (older → newer), floored, never negative. */
+function daysBetween(older: string, newer: string): number {
+  const a = Date.parse(`${older.slice(0, 10)}T00:00:00Z`);
+  const b = Date.parse(`${newer.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.max(0, Math.floor((b - a) / 86_400_000));
+}
+
 /**
- * Draft deterministic reconcile proposals for ONE member's palette. Only high-confidence,
+ * Draft deterministic reconcile proposals for ONE member's palette. `satisfactionDates`
+ * is each vibe's full provenance-stamped history, dates DESC (readVibeSatisfactionDates) —
+ * last-satisfied is index 0, so the whole pass costs one query. Only high-confidence,
  * behavior-backed signals become drafts:
  *   - a cadence vibe added ≥ STALE_NEVER_DAYS ago and NEVER satisfied → propose PRUNE.
  *   - a cadence vibe whose real interval (since last satisfied) runs ≥ DEFER_FACTOR× its
- *     cadence → propose ADJUST the cadence up to the observed interval.
- * A vibe with no cadence, or a recently-satisfied one, produces nothing. Pure.
+ *     cadence → propose ADJUST the cadence up (STRETCH) to the observed interval.
+ *   - a cadence vibe with ≥ TIGHTEN_MIN_SATISFACTIONS satisfactions whose
+ *     TIGHTEN_RECENT_INTERVALS most recent intervals ALL land ≤ TIGHTEN_FACTOR× its
+ *     cadence, while currently ON-TRACK (days since last < cadence — a vibe that later
+ *     went overdue must not get a tighten) → propose ADJUST the cadence down (TIGHTEN)
+ *     to the observed interval (rounded mean, floored at TIGHTEN_FLOOR_DAYS), only when
+ *     that lands strictly below the current cadence. Stretch and tighten are disjoint by
+ *     construction: stretch requires the current interval to run long, tighten requires
+ *     on-track. Both reuse the `adjust_cadence` kind — direction lives in the rationale,
+ *     the observed intervals in the evidence; the queue/confirm/apply path is unchanged.
+ * A vibe with no cadence, or a recently-satisfied one matching neither pattern, produces
+ * nothing. Pure.
  */
-export function draftProposals(palette: NightVibe[], lastSatisfied: Map<string, string>, now: Date): ProposalDraft[] {
+export function draftProposals(palette: NightVibe[], satisfactionDates: Map<string, string[]>, now: Date): ProposalDraft[] {
   const drafts: ProposalDraft[] = [];
   for (const v of palette) {
     if (!v.cadence_days) continue; // no cadence pressure → nothing to reconcile
-    const last = lastSatisfied.get(v.id) ?? null;
+    const dates = satisfactionDates.get(v.id) ?? [];
+    const last = dates[0] ?? null;
     if (last === null) {
       const age = v.created_at ? daysSince(v.created_at, now) : 0;
       if (age >= STALE_NEVER_DAYS) {
@@ -73,7 +103,26 @@ export function draftProposals(palette: NightVibe[], lastSatisfied: Map<string, 
         rationale: `You cook “${v.vibe}” about every ${interval} days, not every ${v.cadence_days} — stretch its cadence to ~${suggested} days?`,
         evidence: { last_satisfied: last, interval_days: interval, cadence_days: v.cadence_days },
       });
+      continue;
     }
+    // TIGHTEN (member-app-propose D6): repeated early satisfaction, and still on-track.
+    const cadence = v.cadence_days;
+    if (dates.length < TIGHTEN_MIN_SATISFACTIONS) continue;
+    if (interval >= cadence) continue; // went overdue since — never tighten
+    const recent: number[] = [];
+    for (let i = 0; i < TIGHTEN_RECENT_INTERVALS; i++) {
+      recent.push(daysBetween(dates[i + 1], dates[i])); // dates are DESC: newer − older
+    }
+    if (!recent.every((d) => d <= cadence * TIGHTEN_FACTOR)) continue;
+    const suggested = Math.max(TIGHTEN_FLOOR_DAYS, Math.round(recent.reduce((s, d) => s + d, 0) / recent.length));
+    if (suggested >= cadence) continue; // not actually tighter — nothing to propose
+    drafts.push({
+      kind: "adjust_cadence",
+      target: v.id,
+      payload: { id: v.id, cadence_days: suggested },
+      rationale: `You keep cooking “${v.vibe}” well before its ${v.cadence_days}-day cadence comes due — tighten it to ~${suggested} days?`,
+      evidence: { intervals_days: recent, cadence_days: v.cadence_days, last_satisfied: last },
+    });
   }
   return drafts;
 }
@@ -95,8 +144,10 @@ export async function runReconcileSignalsJob(env: Env, now: () => number = () =>
     let drafted = 0;
     let enqueued = 0;
     for (const tenant of tenants) {
-      const [palette, lastSatisfied] = await Promise.all([readNightVibes(env, tenant), readVibeLastSatisfied(env, tenant)]);
-      const drafts = draftProposals(palette, lastSatisfied, nowDate);
+      // ONE cooking-log query per member: the full dates map carries last-satisfied
+      // (index 0, for prune/stretch) AND the tighten rule's recent intervals.
+      const [palette, satisfactionDates] = await Promise.all([readNightVibes(env, tenant), readVibeSatisfactionDates(env, tenant)]);
+      const drafts = draftProposals(palette, satisfactionDates, nowDate);
       drafted += drafts.length;
       for (const d of drafts) {
         const { inserted } = await enqueueProposal(env, tenant, d, "signal-cron", nowIso);

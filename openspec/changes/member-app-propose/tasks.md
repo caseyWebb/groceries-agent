@@ -64,14 +64,14 @@ question is settled in design.md (D1–D12) against the code and the production 
 
 ## 3. Worker: the reconcile tighten signal (D6)
 
-- [ ] 3.1 `night-vibe-db.ts`: add `readVibeSatisfactionDates(env, tenant)` (dates DESC per vibe
+- [x] 3.1 `night-vibe-db.ts`: add `readVibeSatisfactionDates(env, tenant)` (dates DESC per vibe
   over `cooking_log.satisfied_vibe`); the signal job derives last-satisfied from it (one query).
-- [ ] 3.2 `reconcile-signals.ts`: the tighten rule in `draftProposals` — ≥ 3 satisfactions, both
+- [x] 3.2 `reconcile-signals.ts`: the tighten rule in `draftProposals` — ≥ 3 satisfactions, both
   of the 2 most recent intervals `≤ cadence_days × 0.5`, currently on-track
   (`days_since(last) < cadence_days`), `suggested = max(3, round(mean(recent)))`, only when
   `suggested < cadence_days`; drafts `kind: "adjust_cadence"` with rationale/evidence per D6,
   producer `signal-cron` unchanged.
-- [ ] 3.3 Unit tests: the rule matrix (fires on tight intervals; on-track guard blocks an
+- [x] 3.3 Unit tests: the rule matrix (fires on tight intervals; on-track guard blocks an
   overdue vibe; < 3 satisfactions blocks; suggested ≥ current blocks; floor 3 applies);
   disjointness with stretch on the same palette; `proposalId` bucket dedupe (a rejected tighten
   at ~the same value is not re-drafted; a materially different value is a new id); the cron
