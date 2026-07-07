@@ -84,9 +84,15 @@ The skill-less test (P3 D1's yardstick) settles the surface:
   (location, search, productById, SKU-cache read) — the tool passes the `buildServer` closures,
   the route builds fresh ones (P2/P3 extraction discipline).
 
-Input: `{ names?: string[], max_lines?: number, min_savings_pct?: number }`. `names` absent =
-the caller's current to-buy set (P3 `computeToBuyView`) in view order; present = resolved
-through the `IngredientContext` funnel like every other name input. Result:
+Input: `{ names?: string[], max_lines?: number }`. `names` absent = the caller's current
+to-buy set (P3 `computeToBuyView`) in view order; present = resolved through the
+`IngredientContext` funnel like every other name input. **No `min_savings_pct` knob**
+(revision on architect review — cut rather than defined): the `cheaper` reason is a strict
+unit-price inequality with no threshold to tune; the flyer-derived `on_sale_hint` applies the
+flyer reads' own default sale floor (D3), and a caller who wants a wider or narrower sale net
+uses `kroger_flyer`/`store_flyer`, which already carry that knob; the mock has no
+savings-threshold control; and weak suggestions are ignorable by the panel/agent without a
+server param. Fewer contract knobs keeps the skill-less description clean. Result:
 
 ```
 {
@@ -187,8 +193,10 @@ narrowing step).
 `on_sale_hint` matches the primary store's flyer rollup by term — a `FlyerItem` whose
 `matched_terms` (or, for satellite rollups whose `matched_terms` is empty by contract, whose
 lowercased `description`) contains the sibling's `base` or `search_term` — carrying
-`{ sku, description, price, savings }`. No live search per sibling — the flyer read is the
-only price signal siblings get (a member can tap a sibling into a fresh
+`{ sku, description, price, savings }`. The rollup is read at the flyer reads' **default 5%
+sale floor** — fixed here, not caller-tunable (D1's no-knob revision; widening the net is
+`kroger_flyer`/`store_flyer`'s job). No live search per sibling — the flyer read is the only
+price signal siblings get (a member can tap a sibling into a fresh
 `suggest_substitutions`/`kroger_prices` call for live prices).
 
 **Sparse-data honesty**: with 252 auto edges, most lines yield zero siblings today — the

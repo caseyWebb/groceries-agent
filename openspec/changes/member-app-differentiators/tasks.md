@@ -50,7 +50,8 @@ and the implementer binds to the landed actuals (e.g. `buildOrderWiring`, `compu
   (P3 `computeToBuyView`) or funnel-resolved `names`; per line ≤ 1 `productById` revalidation
   + 1 `search`; one `compareUnitPrice` pass over current+candidates
   (`price = promo || regular`); the D2 reason vocabulary; pantry join (`in_pantry`); flyer
-  rollup hints (primary store via the `store_flyer` resolution; term match per D3); the
+  rollup hints (primary store via the `store_flyer` resolution; term match per D3; the flyer
+  reads' fixed default sale floor — no `min_savings_pct` input, D1's no-knob revision); the
   12-line budget with `remaining`; the no-location degradation (`location: null`, siblings
   still served). Read-only — the op performs no D1/KV/cart write.
 - [ ] 2.3 `tools.ts`: register `suggest_substitutions` over the same op via the existing

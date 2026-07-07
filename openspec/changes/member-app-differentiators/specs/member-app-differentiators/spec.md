@@ -62,8 +62,9 @@ and capped per line. Every suggestion SHALL carry its relation label (`role`, `k
 for siblings) — the walk proposes and names the relation; fitness judgment stays with the
 member or the LLM. Each sibling SHALL be annotated `in_pantry` (a pantry row exists for its
 resolved id) and, when the caller's primary store has a warmed flyer rollup containing a
-matching item, an `on_sale_hint` with that item's price and savings; sibling annotation SHALL
-issue no per-sibling Kroger search.
+matching item at the flyer reads' default sale floor (not caller-tunable on this surface), an
+`on_sale_hint` with that item's price and savings; sibling annotation SHALL issue no
+per-sibling Kroger search.
 
 #### Scenario: A specialization family surfaces as labeled general-kind siblings
 
