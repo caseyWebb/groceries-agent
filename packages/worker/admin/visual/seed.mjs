@@ -61,6 +61,25 @@ export const SEED = {
     degrading: { source: "Bon Appétit", localCount: 40 },
     quarantined: { source: "Cook's Illustrated" },
   },
+  // Member-app fixtures (member-app-core): the grocery rows the app's category groups +
+  // in-cart flows drive, the EMPTY palette + pending reconciliation proposals (production's
+  // observed state: palettes start empty with a proposal backlog), a community note on the
+  // seeded recipe, and the profile fields the taste/preferences tabs render.
+  app: {
+    grocery: {
+      active: ["chicken thighs", "scallions", "coconut milk"],
+      household: "paper towels",
+      inCart: "olive oil",
+    },
+    proposals: {
+      addA: { id: "viz-prop-add-a", vibe: "cozy weeknight noodles" },
+      addB: { id: "viz-prop-add-b", vibe: "a bright citrusy salad night" },
+      prune: { id: "viz-prop-prune", target: "forgotten-stir-fry" },
+    },
+    note: { body: "Swapped honey for the brown sugar — better glaze.", tag: "tweak" },
+    tasteLead: "Big on bold heat and acid",
+    zip: "45208",
+  },
   // Mirrors src/health.ts HEALTH_JOBS (every registered job gets health + run history so no
   // Status row renders never-run).
   jobs: [
@@ -227,8 +246,11 @@ export function d1Statements(now) {
   );
   stmts.push(`DELETE FROM pantry WHERE tenant = ${q(members.active)};`);
   stmts.push(
-    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at) VALUES` +
-      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grain', ${q(iso(now - 10 * DAY))});`,
+    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at, last_verified_at) VALUES` +
+      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grain', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))}),` +
+      // A perishable past the 7-day staleness threshold — the app pantry page's
+      // needs-verification section (member-app-core) renders + clears from this row.
+      ` (${q(members.active)}, 'Baby spinach', 'baby spinach', '1 bag', 'produce', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))});`,
   );
 
   // --- Normalization: an identity graph corner (two concrete nodes + a concept + edges), an
@@ -356,6 +378,56 @@ export function d1Statements(now) {
   stmts.push(`DELETE FROM satellite_quarantine WHERE kind = 'recipe' AND source = ${q(sat.quarantined.source)};`);
   stmts.push(
     `INSERT INTO satellite_quarantine (tenant, kind, source, quarantined_at, note) VALUES (NULL, 'recipe', ${q(sat.quarantined.source)}, ${now - 2 * DAY}, ${q("adapter flooding contract_invalid after a site redesign")});`,
+  );
+
+  // --- Member app (member-app-core): grocery rows, the EMPTY palette + pending
+  // proposals, a community recipe note, the derived description, and the profile row
+  // the taste/preferences tabs render. All additive — the admin suite reads none of it.
+  const app = SEED.app;
+  stmts.push(`DELETE FROM grocery_list WHERE tenant = ${q(members.active)};`);
+  const g = (name, kind, status, source, extra = {}) =>
+    `(${q(members.active)}, ${q(name)}, ${q(name.toLowerCase())}, ${q(extra.quantity ?? "1")}, ${q(kind)}, 'grocery', ${q(status)}, ${q(source)}, ${q(JSON.stringify(extra.for_recipes ?? []))}, ${extra.note ? q(extra.note) : "NULL"}, ${q(day(now - 2 * DAY))}, NULL)`;
+  stmts.push(
+    "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, source, for_recipes, note, added_at, ordered_at) VALUES " +
+      [
+        g(app.grocery.active[0], "grocery", "active", "menu", { quantity: "2 lb", for_recipes: [recipe.slug] }),
+        g(app.grocery.active[1], "grocery", "active", "ad_hoc", { note: "the thin ones" }),
+        g(app.grocery.active[2], "grocery", "active", "pantry_low"),
+        g(app.grocery.household, "household", "active", "ad_hoc"),
+        g(app.grocery.inCart, "grocery", "in_cart", "stockup"),
+      ].join(", ") +
+      ";",
+  );
+  // The palette starts EMPTY (production's observed first render) with a pending backlog.
+  stmts.push(`DELETE FROM night_vibes WHERE tenant = ${q(members.active)};`);
+  stmts.push(`DELETE FROM pending_proposals WHERE tenant = ${q(members.active)};`);
+  const prop = app.proposals;
+  stmts.push(
+    "INSERT INTO pending_proposals (id, tenant, kind, target, payload, rationale, evidence, status, producer, created_at) VALUES " +
+      `(${q(prop.addA.id)}, ${q(members.active)}, 'add_vibe', 'cozy-noodles', ${q(JSON.stringify({ id: "cozy-noodles", vibe: prop.addA.vibe, cadence_days: 10 }))}, 'You keep cooking dishes like this — set a night aside for it?', '{}', 'pending', 'edge', ${q(iso(now - 3 * DAY))}), ` +
+      `(${q(prop.addB.id)}, ${q(members.active)}, 'add_vibe', 'citrus-salad', ${q(JSON.stringify({ id: "citrus-salad", vibe: prop.addB.vibe, cadence_days: 14 }))}, 'Three bright salads in two weeks — make it a rotation slot?', '{}', 'pending', 'edge', ${q(iso(now - 2 * DAY))}), ` +
+      `(${q(prop.prune.id)}, ${q(members.active)}, 'prune_vibe', ${q(prop.prune.target)}, ${q(JSON.stringify({ id: prop.prune.target }))}, 'Added months ago and never cooked from — retire it?', '{}', 'pending', 'edge', ${q(iso(now - 1 * DAY))});`,
+  );
+  // A shared community note from the pending member (the detail page's group half).
+  stmts.push(`DELETE FROM recipe_notes WHERE recipe = ${q(recipe.slug)};`);
+  stmts.push(
+    "INSERT INTO recipe_notes (id, recipe, author, body, tags, private, created_at) VALUES " +
+      `(${q(`${members.pending} ${recipe.slug} viz-note`)}, ${q(recipe.slug)}, ${q(members.pending)}, ${q(app.note.body)}, ${q(JSON.stringify([app.note.tag]))}, 0, ${q(iso(now - 4 * DAY))});`,
+  );
+  // The derived description (recipe_derived; embedding stays NULL — similar stays empty).
+  stmts.push(`DELETE FROM recipe_derived WHERE slug = ${q(recipe.slug)};`);
+  stmts.push(
+    `INSERT INTO recipe_derived (slug, description) VALUES (${q(recipe.slug)}, 'Miso-lacquered salmon over rice with quick-pickled cucumber.');`,
+  );
+  // The profile row + one ranked brand (taste markdown, planning knobs, stores, dietary).
+  stmts.push(`DELETE FROM profile WHERE tenant = ${q(members.active)};`);
+  stmts.push(
+    "INSERT INTO profile (tenant, taste, diet_principles, default_cooking_nights, lunch_strategy, ready_to_eat_default_action, stores, dietary, rotation) VALUES " +
+      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, 3, NULL, 'opt-in', ${q(JSON.stringify({ primary: "kroger", preferred_location: "Kroger — Hyde Park", location_zip: app.zip }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))});`,
+  );
+  stmts.push(`DELETE FROM brand_prefs WHERE tenant = ${q(members.active)};`);
+  stmts.push(
+    `INSERT INTO brand_prefs (tenant, term, ranks) VALUES (${q(members.active)}, 'butter', '["Kerrygold","store brand"]');`,
   );
 
   return stmts;

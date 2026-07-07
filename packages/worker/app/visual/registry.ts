@@ -5,7 +5,15 @@
 // first (the login page object owns that flow) — the SPA redirects them to /login otherwise.
 import type { AppPage, Page } from "./pages/base.page";
 import { LoginPage } from "./pages/login.page";
-import { HomePage } from "./pages/home.page";
+import { CookbookPage } from "./pages/cookbook.page";
+import { RecipePage } from "./pages/recipe.page";
+import { FavoritesPage } from "./pages/favorites.page";
+import { PlanPage } from "./pages/plan.page";
+import { GroceryPage } from "./pages/grocery.page";
+import { PantryPage } from "./pages/pantry.page";
+import { LogPage } from "./pages/log.page";
+import { ProfilePage } from "./pages/profile.page";
+import { SEED } from "../../admin/visual/seed.mjs";
 
 export interface RegisteredArea {
   /** The area/screenshot name (matches the page object's `area`). */
@@ -17,5 +25,12 @@ export interface RegisteredArea {
 
 export const AREAS: readonly RegisteredArea[] = [
   { area: "login", authed: false, make: (p) => new LoginPage(p) },
-  { area: "home", authed: true, make: (p) => new HomePage(p) },
+  { area: "cookbook", authed: true, make: (p) => new CookbookPage(p) },
+  { area: "recipe-detail", authed: true, make: (p) => new RecipePage(p, SEED.recipe.slug) },
+  { area: "favorites", authed: true, make: (p) => new FavoritesPage(p) },
+  { area: "plan", authed: true, make: (p) => new PlanPage(p) },
+  { area: "grocery", authed: true, make: (p) => new GroceryPage(p) },
+  { area: "pantry", authed: true, make: (p) => new PantryPage(p) },
+  { area: "log", authed: true, make: (p) => new LogPage(p) },
+  { area: "profile", authed: true, make: (p) => new ProfilePage(p) },
 ];

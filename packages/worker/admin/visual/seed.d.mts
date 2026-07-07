@@ -46,6 +46,23 @@ export interface SeedLiterals {
     readonly degrading: { readonly source: string; readonly localCount: number };
     readonly quarantined: { readonly source: string };
   };
+  /** Member-app fixtures (member-app-core): grocery rows, the empty palette's pending
+   *  proposal backlog, the community note, and the profile literals the app suite asserts on. */
+  readonly app: {
+    readonly grocery: {
+      readonly active: readonly string[];
+      readonly household: string;
+      readonly inCart: string;
+    };
+    readonly proposals: {
+      readonly addA: { readonly id: string; readonly vibe: string };
+      readonly addB: { readonly id: string; readonly vibe: string };
+      readonly prune: { readonly id: string; readonly target: string };
+    };
+    readonly note: { readonly body: string; readonly tag: string };
+    readonly tasteLead: string;
+    readonly zip: string;
+  };
   /** The registered background jobs seeded into job_health/job_runs (mirrors HEALTH_JOBS). */
   readonly jobs: readonly string[];
 }

@@ -220,6 +220,9 @@ function AddRow() {
         value={qty}
         onChange={(e) => setQty(e.target.value)}
       />
+      {/* Hidden submit: a form with two text inputs and no submit button gets no
+          implicit Enter submission — this keeps the mock's press-Enter-to-add. */}
+      <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
     </form>
   );
 }

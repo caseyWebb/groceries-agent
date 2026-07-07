@@ -51,8 +51,11 @@ function indexHits(index: RecipeIndex): CookbookHit[] {
 }
 
 export const cookbookArea = new Hono<ApiEnv>()
-  // Browse: the full index as title-sorted compact hits.
-  .get("/cookbook/index", requireSession, async (c) => {
+  // Browse: the full index as title-sorted compact hits. Registered BEFORE the
+  // :slug param route; named /recipes (NOT /index — hono's `hc` reserves the
+  // `index` key for a route at "/", so a literal /index segment is unreachable
+  // through the typed client).
+  .get("/cookbook/recipes", requireSession, async (c) => {
     const index = await loadIndex(c.env);
     return jsonWithEtag(c, { recipes: indexHits(index) });
   })

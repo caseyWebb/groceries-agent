@@ -128,7 +128,8 @@ export function useIndex() {
   return useQuery({
     queryKey: ["cookbook", "index"],
     staleTime: STALE_MS,
-    queryFn: async () => jsonOf<{ recipes: Hit[] }>(await api.api.cookbook.index.$get()),
+    // The collection read is /cookbook/recipes (hc reserves `.index` for a "/" route).
+    queryFn: async () => jsonOf<{ recipes: Hit[] }>(await api.api.cookbook.recipes.$get()),
   });
 }
 

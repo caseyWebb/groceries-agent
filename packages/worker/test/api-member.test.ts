@@ -121,7 +121,7 @@ function send(env: Env, method: string, path: string, cookie: string, body?: unk
 
 // Every member endpoint this change adds (method + a representative concrete path).
 const MEMBER_ENDPOINTS: [string, string][] = [
-  ["GET", "/api/cookbook/index"],
+  ["GET", "/api/cookbook/recipes"],
   ["GET", "/api/cookbook/new-for-me"],
   ["GET", "/api/cookbook/search?q=tacos"],
   ["GET", "/api/cookbook/recipes/tacos"],
@@ -183,7 +183,7 @@ describe("cookbook area", () => {
     const { env } = memberEnv();
     const cookie = await loggedIn(env);
 
-    const index = await get(env, "/api/cookbook/index", cookie);
+    const index = await get(env, "/api/cookbook/recipes", cookie);
     expect(index.status).toBe(200);
     expect(index.headers.get("etag")).toMatch(/^W\//);
     const { recipes } = (await index.json()) as { recipes: { slug: string; title: string }[] };

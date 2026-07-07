@@ -166,13 +166,13 @@ within §7 parallelizes freely. **No spike tasks** — every open question is se
 
 ## 8. Playwright coverage (blocking, per the P0 harness)
 
-- [ ] 8.1 Page objects + specs for every P1 page (browse/search, detail incl. notes + similar,
+- [x] 8.1 Page objects + specs for every P1 page (browse/search, detail incl. notes + similar,
   favorites, plan incl. side-remove + date-clear, grocery incl. in-cart + clear-purchased +
   the status-guard error path, pantry incl. verify, log incl. add + delete, profile tabs incl.
   a 412 rebase flow, palette + queue incl. confirm/dismiss and the throttled suggest state),
   with seeded data covering the production-observed states (empty palette + pending proposals;
   near-empty log).
-- [ ] 8.2 Run the suite (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` in web sessions) and surface
+- [x] 8.2 Run the suite (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` in web sessions) and surface
   the per-area screenshots for review; CI job stays blocking.
 
 ## 9. Docs (lockstep, same pass)
