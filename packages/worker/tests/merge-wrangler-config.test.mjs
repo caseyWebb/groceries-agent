@@ -33,7 +33,32 @@ const code = {
   triggers: { crons: ["*/5 * * * *"] },
   observability: { enabled: true },
   ai: { binding: "AI" },
-  assets: { directory: "./admin/dist", binding: "ASSETS", run_worker_first: ["/admin", "/admin/*"] },
+  // Mirrors the real wrangler.jsonc `assets` block (member-app-shell): the SPA fallback +
+  // the full Worker-owned-path enumeration must survive the merge VERBATIM.
+  assets: {
+    directory: "./assets",
+    binding: "ASSETS",
+    not_found_handling: "single-page-application",
+    run_worker_first: [
+      "/mcp",
+      "/mcp/*",
+      "/token",
+      "/register",
+      "/.well-known/*",
+      "/authorize",
+      "/oauth/*",
+      "/satellite/*",
+      "/api",
+      "/api/*",
+      "/admin",
+      "/admin/*",
+      "/cookbook",
+      "/cookbook/*",
+      "/health",
+      "/health.svg",
+      "/source",
+    ],
+  },
   r2_buckets: [{ binding: "CORPUS", bucket_name: "grocery-corpus" }],
   analytics_engine_datasets: [
     { binding: "USAGE_AE", dataset: "grocery_usage" },
@@ -56,13 +81,34 @@ test("the Workers AI binding propagates verbatim from code (no operator id/secre
   assert.deepEqual(out.ai, { binding: "AI" });
 });
 
-test("the Workers Static Assets binding propagates verbatim from code (operator-admin SPA)", () => {
+test("the Workers Static Assets binding propagates verbatim from code (member SPA + admin)", () => {
+  // Regression pin for the member-app-foundations change: the merge propagates `assets`
+  // as a WHOLE-OBJECT copy, so `not_found_handling` (the SPA fallback) and the complete
+  // `run_worker_first` enumeration reach every operator's deployed config untouched. A
+  // future merge refactor that goes per-sub-key would silently drop them — the SPA shell
+  // would then swallow every Worker-owned route on the next operator deploy.
   const out = mergeWranglerConfig(code, operator); // operator declares no `assets`
-  assert.deepEqual(out.assets, {
-    directory: "./admin/dist",
-    binding: "ASSETS",
-    run_worker_first: ["/admin", "/admin/*"],
-  });
+  assert.deepEqual(out.assets, code.assets);
+  assert.equal(out.assets.not_found_handling, "single-page-application");
+  assert.deepEqual(out.assets.run_worker_first, [
+    "/mcp",
+    "/mcp/*",
+    "/token",
+    "/register",
+    "/.well-known/*",
+    "/authorize",
+    "/oauth/*",
+    "/satellite/*",
+    "/api",
+    "/api/*",
+    "/admin",
+    "/admin/*",
+    "/cookbook",
+    "/cookbook/*",
+    "/health",
+    "/health.svg",
+    "/source",
+  ]);
 });
 
 test("the R2 corpus bucket binding propagates verbatim from code (the silent-drop trap)", () => {

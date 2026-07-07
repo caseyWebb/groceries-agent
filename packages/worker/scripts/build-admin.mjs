@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // build-admin.mjs — compile the operator admin islands (src/admin/client/*.tsx) and compile the
-// stylesheet (Tailwind v4 + Basecoat) into admin/dist, the static bundle the Worker serves via its ASSETS binding
-// (operator-admin). The server pages are server-rendered in the Worker (Hono JSX, built by
-// wrangler's esbuild); only the browser islands + the stylesheet are pre-built static assets.
+// stylesheet (Tailwind v4 + Basecoat) into assets/admin/, the admin subtree of the Worker's
+// MERGED static-assets root (the member SPA build owns everything else under assets/ — each
+// builder cleans only its own subtree, so build order never matters). Served via the ASSETS
+// binding at the unchanged /admin/* URLs (operator-admin). The server pages are server-rendered
+// in the Worker (Hono JSX, built by wrangler's esbuild); only the browser islands + the
+// stylesheet are pre-built static assets.
 //
-// admin/dist/ is a BUILD ARTIFACT — NOT committed (gitignored). CI and the deploy build it
+// assets/ is a BUILD ARTIFACT — NOT committed (gitignored). CI and the deploy build it
 // fresh, and local `wrangler dev` needs a build first. (The esbuild bundles embed
 // environment-specific module paths — the aube virtual-store location — so a committed copy
 // would not be reproducible across machines, which is why we build rather than commit.)
 //
-// Output layout maps URL paths under /admin/ to files (ASSETS `directory` is admin/dist):
+// Output layout maps URL paths under /admin/ to files (ASSETS `directory` is ./assets):
 //   <out>/admin/islands/<name>.js   (esbuild bundle, browser ESM, hono/jsx/dom runtime)
 //   <out>/admin/styles.css          (Tailwind-compiled from src/admin/styles.css: Basecoat + the panel's utilities)
 //
@@ -18,7 +21,7 @@
 // validate-only mode is kept for local "does my tree match a prior build" comparisons (it is
 // NOT a CI gate — there is no committed bundle to compare against).
 //
-// Usage: node scripts/build-admin.mjs [--out admin/dist] [--check]
+// Usage: node scripts/build-admin.mjs [--out assets] [--check]
 
 import esbuild from "esbuild";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync } from "node:fs";
@@ -33,7 +36,7 @@ const STYLES_SRC = path.join(REPO_ROOT, "src", "admin", "styles.css");
 const TAILWIND_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "tailwindcss");
 
 function parseArgs(argv) {
-  const args = { out: path.join("admin", "dist"), check: false };
+  const args = { out: "assets", check: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--check") args.check = true;
     else if (argv[i] === "--out") args.out = argv[++i];
@@ -106,13 +109,17 @@ async function main() {
       }
     }
     if (stale) {
-      console.error("admin bundle is out of date — run `aubr build:admin` and commit admin/dist/.");
+      console.error("admin bundle is out of date — run `aubr build:admin`.");
       process.exit(1);
     }
     console.log("admin bundle up to date.");
     return;
   }
 
+  // Clean ONLY this builder's subtree (assets/admin/) — the member SPA's outputs beside
+  // it (index.html, the hashed assets/ subdir, the SW files) must survive, in either
+  // build order (member-app-shell).
+  rmSync(path.join(outRoot, "admin"), { recursive: true, force: true });
   for (const [rel, content] of Object.entries(files)) {
     const p = path.join(outRoot, rel);
     mkdirSync(path.dirname(p), { recursive: true });

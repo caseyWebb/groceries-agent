@@ -188,15 +188,19 @@ export interface Env {
    */
   AI: Ai;
 
-  // --- Static assets (operator-admin) ---
+  // --- Static assets (member-app-shell + operator-admin) ---
   /**
-   * Workers Static Assets binding serving the admin panel's island bundles + stylesheet
-   * built under `admin/dist/` (a gitignored artifact, built fresh at deploy time). The Hono
-   * app (`src/admin/app.tsx`) SSRs every page and
-   * falls back to `env.ASSETS.fetch()` for `/admin/islands/*` + `/admin/styles.css` — past
-   * the Access gate, so the static surface is gated too. `run_worker_first` on `/admin*`
-   * keeps assets behind the gate. Code-level binding (no operator id); propagated by the
-   * deploy merge (`scripts/merge-wrangler-config.mjs` allowlist).
+   * Workers Static Assets binding over the ONE merged assets root (`assets/`, a
+   * gitignored artifact built fresh at CI/deploy time): the member SPA at `/`
+   * (`index.html` + hashed chunks, built by `packages/app`; SPA fallback via
+   * `not_found_handling`) AND the admin panel's island bundles + stylesheet under
+   * `assets/admin/` (built by `scripts/build-admin.mjs`, served at the unchanged
+   * `/admin/*` URLs). The Hono admin app (`src/admin/app.tsx`) SSRs every page and falls
+   * back to `env.ASSETS.fetch()` for `/admin/islands/*` + `/admin/styles.css` — past the
+   * Access gate, so that static surface is gated too. `run_worker_first` enumerates every
+   * Worker-owned path so the SPA fallback can never shadow one. Code-level binding (no
+   * operator id); propagated by the deploy merge (`scripts/merge-wrangler-config.mjs`
+   * allowlist).
    */
   ASSETS: Fetcher;
 

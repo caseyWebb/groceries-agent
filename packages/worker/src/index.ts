@@ -76,11 +76,9 @@ const apiHandler = {
 const defaultHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/") {
-      return new Response("grocery-mcp ok — connect a Claude.ai MCP client to /mcp\n", {
-        headers: { "content-type": "text/plain" },
-      });
-    }
+    // No `/` branch: the member SPA owns the root via the static-assets binding (the
+    // wrangler.jsonc `assets` block; SPA fallback for client-side routes). `/health`
+    // remains the machine liveness check.
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname.startsWith("/oauth/")) return handleOAuth(env, url);
     // The member web app's JSON API (member-api): cookie-session-authenticated Hono
