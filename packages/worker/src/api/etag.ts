@@ -1,0 +1,33 @@
+// The shared conditional-request helper (member-api): every JSON GET on the `/api`
+// surface goes through `jsonWithEtag` instead of implementing ETag handling ad hoc.
+// Weak ETag (`W/"<sha-256-hex>"`) over the serialized body via `crypto.subtle`; a
+// matching `If-None-Match` costs an empty-body 304. P0 applies it to the whoami read
+// as the living demonstrator; P1's read areas adopt it per the two-writer contract.
+// A later per-endpoint cheaper hash input (a row's `updated_at`) can replace the body
+// hash without changing this contract.
+
+import type { Context, TypedResponse } from "hono";
+
+/** A weak ETag from a SHA-256 over `body` (the serialized JSON). */
+async function weakEtag(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `W/"${hex}"`;
+}
+
+/**
+ * Respond with `value` as JSON + a weak `ETag`, honoring `If-None-Match` with an
+ * empty-body 304. The return is typed as the 200 shape so `hc` clients infer `value`'s
+ * type end-to-end (the 304 arm carries no body by construction — a conditional client
+ * keeps its cached copy).
+ */
+export async function jsonWithEtag<T>(c: Context, value: T): Promise<Response & TypedResponse<T>> {
+  const body = JSON.stringify(value);
+  const etag = await weakEtag(body);
+  const inm = c.req.header("If-None-Match");
+  if (inm && inm.split(",").some((v) => v.trim() === etag)) {
+    return new Response(null, { status: 304, headers: { ETag: etag } }) as Response & TypedResponse<T>;
+  }
+  const res = c.body(body, 200, { "content-type": "application/json", ETag: etag });
+  return res as Response & TypedResponse<T>;
+}

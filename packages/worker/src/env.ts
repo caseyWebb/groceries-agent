@@ -56,6 +56,17 @@ export interface Env {
    */
   OWNER_TENANT_ID?: string;
 
+  // --- Member app version-skew stamp (member-app-shell). OPTIONAL, non-secret. ---
+  /**
+   * The deployed code SHA, injected by the operator deploy (`wrangler deploy --var
+   * APP_BUILD:<sha>`) — the Worker side of the member app's version-skew contract. Echoed
+   * on every `/api` response as `X-App-Build` and returned by `GET /api/version`; the SPA
+   * compares it against its own embedded `VITE_APP_BUILD` (the deploy stamps the same SHA
+   * into both). UNSET (local dev, tests, the Playwright harnesses) both sides read `"dev"`,
+   * so skew detection is inert locally by construction.
+   */
+  APP_BUILD?: string;
+
   // --- AGPL §13 source offer (open-source-license). OPTIONAL, non-secret. ---
   /**
    * The source location `/source` offers, satisfying AGPL section 13 for users interacting over the

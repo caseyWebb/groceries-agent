@@ -30,6 +30,7 @@ import {
 } from "./tenant.js";
 import { buildKrogerConsentUrl } from "./oauth.js";
 import { KROGER_REFRESH_PREFIX, type KvStore } from "./kroger-user.js";
+import { SESSION_PREFIX } from "./session.js";
 
 const TENANT_PREFIX = "tenant:"; // mirrors src/tenant.ts (the allowlist directory)
 const INVITE_PREFIX = "invite:"; // mirrors src/tenant.ts (invite:<code> -> username)
@@ -356,6 +357,33 @@ async function deleteInvitesFor(kv: KVNamespace, id: string): Promise<number> {
   return removed;
 }
 
+/** Delete every `session:*` web session whose record resolves to `id` (member-session-auth) —
+ *  the same scan-by-value pattern `deleteInvitesFor` uses, bounded at friend-group scale
+ *  (expired sessions age out via TTL). A malformed record is left to its TTL. */
+async function deleteSessionsFor(kv: KVNamespace, id: string): Promise<number> {
+  let removed = 0;
+  let cursor: string | undefined;
+  for (;;) {
+    const res = await kv.list({ prefix: SESSION_PREFIX, cursor });
+    for (const k of res.keys) {
+      const value = await kv.get(k.name);
+      if (value === null) continue;
+      try {
+        const record = JSON.parse(value) as { tenant?: unknown };
+        if (typeof record.tenant === "string" && normalizeTenantId(record.tenant) === id) {
+          await kv.delete(k.name);
+          removed++;
+        }
+      } catch {
+        // Not a session record shape — leave it to the KV TTL.
+      }
+    }
+    if (res.list_complete) break;
+    cursor = res.cursor;
+  }
+  return removed;
+}
+
 /**
  * Onboard a member: write the allowlist entry + an invite mapping (canonical
  * lowercase). Generates a code when none is supplied. The caller surfaces the
@@ -396,14 +424,17 @@ export async function rotate(
 
 /**
  * Revoke a member completely: remove the allowlist entry + every invite mapping +
- * the per-tenant Kroger refresh token, and purge the per-tenant D1 rows in one
- * batch. After this the member's previously-issued token no longer resolves (the
- * allowlist re-check fails), even though it may still exist in the OAuth store.
+ * the per-tenant Kroger refresh token + every web session, and purge the per-tenant
+ * D1 rows in one batch. After this the member's previously-issued token no longer
+ * resolves (the allowlist re-check fails), even though it may still exist in the
+ * OAuth store — and their session cookie no longer authenticates (the session
+ * middleware's allowlist re-check locks them out even before this purge runs; the
+ * purge removes the records).
  */
 export async function revoke(
   deps: AdminDeps,
   username: string,
-): Promise<{ username: string; revoked: true; invites_removed: number }> {
+): Promise<{ username: string; revoked: true; invites_removed: number; sessions_removed: number }> {
   const id = normalizeTenantId(username);
   if (!id) throw new ToolError("validation_failed", "A username is required");
   // Purge per-tenant D1 FIRST. `db.batch` maps any D1 failure to a thrown storage_error,
@@ -415,11 +446,14 @@ export async function revoke(
     ...AUTHOR_TABLES.map((t) => deps.db.prepare(`DELETE FROM ${t} WHERE author = ?1`, id)),
   ];
   await deps.db.batch(stmts);
-  // Then the lock-out: drop the allowlist entry, every invite, and the Kroger token.
+  // Then the lock-out: drop the allowlist entry, every invite, the Kroger token, and
+  // every web session. (Even a session key this scan missed is dead: the session
+  // middleware re-checks the allowlist on every request.)
   await deps.tenantKv.delete(`${TENANT_PREFIX}${id}`);
   const invitesRemoved = await deleteInvitesFor(deps.tenantKv, id);
   await deps.krogerKv.delete(`kroger:refresh:${id}`);
-  return { username: id, revoked: true, invites_removed: invitesRemoved };
+  const sessionsRemoved = await deleteSessionsFor(deps.tenantKv, id);
+  return { username: id, revoked: true, invites_removed: invitesRemoved, sessions_removed: sessionsRemoved };
 }
 
 // --- Kroger consent-link bootstrap ------------------------------------------

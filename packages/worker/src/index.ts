@@ -40,6 +40,7 @@ import { handleSatelliteClaim, handleSatelliteResults, handleOrderList, handleOr
 import { pruneStaleOrderLists, ORDER_LIST_RETENTION_MS } from "./order-lists-db.js";
 import { pruneSatelliteRejections, pruneSourceStats } from "./satellite-audit-db.js";
 import adminApp from "./admin/app.js";
+import apiApp from "./api/app.js";
 
 /**
  * The gated MCP API. Only reached for `/mcp` requests the provider has already
@@ -82,6 +83,10 @@ const defaultHandler = {
     }
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname.startsWith("/oauth/")) return handleOAuth(env, url);
+    // The member web app's JSON API (member-api): cookie-session-authenticated Hono
+    // sub-apps under /api (src/api/app.ts) — dispatched BEFORE the /admin dispatch.
+    // (Distinct from /admin/api/*, the operator panel's Access-gated surface.)
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return apiApp.fetch(request, env);
     // Key-authed carve-out from the Access gate: exactly POST /admin/api/ingest is
     // authenticated by an ingest key in handleIngest (a headless satellite has no Access JWT),
     // handled BEFORE the /admin dispatch so it never reaches the admin app's Access
