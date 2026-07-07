@@ -34,9 +34,11 @@ export type SaleValidation = { ok: true; item: FlyerItem } | { ok: false; reason
  *   - reject an implausible re-derived markdown (> `SALE_MAX_MARKDOWN`),
  *   - require `size` to parse via the existing unit-price parser or be null.
  * On success it RE-DERIVES the `FlyerItem` (savings via `deriveSavings`) and retains provenance
- * (`productId` → `sku`, product `url` when present) so a claim is spot-checkable — precisely what
- * change 5's sensor-audit would sample. Returns a per-item reason on failure (never throws), so
- * the caller rejects that item without sinking the batch.
+ * (`productId` → `sku`, product `url` when present) so a claim stays human spot-checkable. The
+ * satellite source-audit tracks operational health through the rejection ledger, not by sampling
+ * accepted claims against ground truth (deliberately not built — the satellite reaches stores the
+ * Worker cannot independently verify). Returns a per-item reason on failure (never throws), so the
+ * caller rejects that item without sinking the batch.
  */
 export function validateSale(obs: SaleObservation): SaleValidation {
   const price = { regular: obs.regular, promo: obs.promo };
