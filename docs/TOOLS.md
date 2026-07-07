@@ -890,16 +890,18 @@ Return the current meal plan — recipes committed to cook next (transient cook 
 
 ### `update_meal_plan(ops)`
 
-Add or remove planned meal entries. D1-backed — no commit, no `commit_sha`.
+Add, remove, or edit planned meal entries. D1-backed — no commit, no `commit_sha`.
 
 **Params:**
-- `ops` (array): `[{ op: "add" | "remove", recipe, planned_for?, sides? }]`
-  - `add` upserts by recipe slug (updating `planned_for`, merging open-world `sides`); `remove` drops all rows for the slug.
+- `ops` (array): `[{ op: "add" | "remove" | "set", recipe, planned_for?, sides?, from_vibe? }]`
+  - `add` upserts by recipe slug: updates `planned_for` (when supplied non-null), **unions** open-world `sides` onto the row, and sets `from_vibe` when supplied.
+  - `remove` drops all rows for the slug.
+  - `set` edits an **existing** row with **replace** semantics (a `set` addressing a recipe with no planned row is a per-op conflict, not an error): a supplied `sides` array replaces the row's sides **wholesale** — an empty array removes them all, the only way to remove a side; a supplied `planned_for` string sets the date and an **explicit `planned_for: null` clears it** (unschedules the night); `from_vibe` is preserved unless supplied (supplied `null` clears it).
 
 **Returns:**
 - `{ applied: [...], conflicts: [...] }` — D1-backed, no `commit_sha`; each applied entry has `{ op, recipe }`; conflicts include the reason.
 
-**Notes:** Called after the user confirms a menu (add rows), and during cook-capture or the stale-planned reconcile (remove rows). `log_cooked` also auto-removes a cooked recipe from the meal plan. A **corpus** side (a `course: side` recipe) gets its own `add` row; open-world sides ride on the main's `sides` field. An **`add`** op also stamps the caller's `profile.last_planned_at` planning watermark (today) — the bound `list_new_for_me` reads, so the next plan surfaces only discoveries imported since this one.
+**Notes:** Called after the user confirms a menu (add rows), during cook-capture or the stale-planned reconcile (remove rows), and for row edits — side removal, rescheduling/unscheduling a night (set rows). `log_cooked` also auto-removes a cooked recipe from the meal plan. A **corpus** side (a `course: side` recipe) gets its own `add` row; open-world sides ride on the main's `sides` field. An **`add`** op that applies also stamps the caller's `profile.last_planned_at` planning watermark (today) — the bound `list_new_for_me` reads, so the next plan surfaces only discoveries imported since this one; `set`/`remove` never move the watermark.
 
 ---
 

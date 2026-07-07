@@ -199,6 +199,20 @@ export function fakeD1(
           ? tables[table].filter((r) => r.tenant === binds[0])
           : tables[table];
       let rows = applyWhere(sql, binds, base);
+      // The derived last_cooked aggregation (readLastCookedMap): MAX(date) per recipe
+      // over the caller's type='recipe' rows.
+      if (/MAX\(date\) AS last_cooked/i.test(sql) && /GROUP BY recipe/i.test(sql)) {
+        const byRecipe = new Map<unknown, unknown>();
+        for (const r of rows) {
+          if (r.type !== "recipe" || r.recipe == null) continue;
+          const prev = byRecipe.get(r.recipe);
+          if (prev === undefined || String(r.date) > String(prev)) byRecipe.set(r.recipe, r.date);
+        }
+        return {
+          rows: [...byRecipe].map(([recipe, last_cooked]) => ({ recipe, last_cooked })),
+          changes: 0,
+        };
+      }
       // COUNT(*) AS <alias> — the admin backlog counts (audit-admin). Applied after WHERE.
       const count = /^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)/i.exec(sql);
       if (count) return { rows: [{ [count[1]]: rows.length }], changes: 0 };

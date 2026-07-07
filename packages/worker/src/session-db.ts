@@ -243,8 +243,10 @@ export function mealPlanDeleteStmt(env: Env, tenant: string, recipe: string): D1
 }
 
 /**
- * Apply meal-plan add/remove ops as row statements (add = upsert by recipe; remove =
- * DELETE). Reads current rows, runs the pure `applyMealPlanOps`, emits per-op rows.
+ * Apply meal-plan add/remove/set ops as row statements (add/set = upsert by recipe;
+ * remove = DELETE). Reads current rows, runs the pure `applyMealPlanOps`, emits
+ * per-op rows — the upsert writes the full row, so `set` (replace-wholesale sides,
+ * explicit planned_for clear, preserved from_vibe) is pure op-plumbing here.
  */
 export async function applyMealPlanRowOps(
   env: Env,

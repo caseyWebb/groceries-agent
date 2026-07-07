@@ -101,6 +101,62 @@ export async function loadRetrospective(
   return retrospective(entries, effective, period, new Date(), retroConfig);
 }
 
+/** One member-facing cooking-log row (the web log page's read, member-app-core D4). */
+export interface CookingLogListRow {
+  id: number;
+  date: string;
+  type: CookingLogEntry["type"];
+  recipe: string | null;
+  name: string | null;
+  /** The recipe's indexed title for recipe rows (null when unindexed / non-recipe). */
+  title: string | null;
+  protein: string | null;
+  cuisine: string | null;
+}
+
+/** The member log read's bound: at most this many rows per call (clamped). */
+export const COOKING_LOG_DEFAULT_LIMIT = 50;
+export const COOKING_LOG_MAX_LIMIT = 200;
+
+/**
+ * A bounded, most-recent-first read of the caller's cooking log (`date DESC, id DESC`
+ * — insertion id breaks same-day ties), recipe rows enriched with the recipe's
+ * title/protein/cuisine via the same `LEFT JOIN recipes` COALESCE idiom
+ * `loadRetrospective` uses. Serves the member web app's log page (D4); each row
+ * carries its `id`, the delete op's address. No MCP tool reads this shape.
+ */
+export async function readCookingLog(
+  env: Env,
+  tenant: string,
+  opts: { limit?: number } = {},
+): Promise<CookingLogListRow[]> {
+  const limit = Math.max(1, Math.min(opts.limit ?? COOKING_LOG_DEFAULT_LIMIT, COOKING_LOG_MAX_LIMIT));
+  return db(env).all<CookingLogListRow>(
+    "SELECT cl.id AS id, cl.date AS date, cl.type AS type, cl.recipe AS recipe, cl.name AS name, " +
+      "r.title AS title, COALESCE(cl.protein, r.protein) AS protein, COALESCE(cl.cuisine, r.cuisine) AS cuisine " +
+      "FROM cooking_log cl LEFT JOIN recipes r ON cl.recipe = r.slug " +
+      "WHERE cl.tenant = ?1 ORDER BY cl.date DESC, cl.id DESC LIMIT ?2",
+    tenant,
+    limit,
+  );
+}
+
+/**
+ * Delete ONE of the caller's own cooking-log rows by its `id` PK — tenant-scoped, so
+ * another member's row is unreachable (reported not-found, nothing deleted).
+ * Everything derived from the log (`last_cooked` MAX(date), the retrospective, vibe
+ * cadence recency) reflects the deletion organically on the next read — none of it is
+ * materialized. Web-only (D4); no MCP tool.
+ */
+export async function deleteCookingLogRow(
+  env: Env,
+  tenant: string,
+  id: number,
+): Promise<{ found: boolean }> {
+  const r = await db(env).run("DELETE FROM cooking_log WHERE tenant = ?1 AND id = ?2", tenant, id);
+  return { found: r.changes > 0 };
+}
+
 /**
  * The `update_meal_plan` composition as a shared operation (member-app-core D2):
  * `applyMealPlanRowOps` + the new-for-me watermark advance (`stampLastPlanned`)
@@ -144,11 +200,11 @@ export function registerCookingTools(
     "update_meal_plan",
     {
       description:
-        "Add or remove planned meal entries. `add` upserts by recipe slug (updating planned_for, merging sides, and setting the optional `from_vibe` slot provenance); `remove` drops every row for the slug. Call this after logging a cooked meal to remove it from the plan. Returns { applied, conflicts } with no commit_sha (D1-backed).",
+        "Add, remove, or edit planned meal entries. `add` upserts by recipe slug (updating planned_for, MERGING sides union-style, and setting the optional `from_vibe` slot provenance). `remove` drops every row for the slug. `set` edits an EXISTING row with replace semantics (a set on a recipe with no planned row is reported as a per-op conflict): a supplied `sides` array replaces the row's sides WHOLESALE (an empty array removes them all — the only way to remove a side); a supplied `planned_for` sets the date and an EXPLICIT `planned_for: null` clears it (unschedules the night); `from_vibe` is preserved unless supplied. Call `remove` after logging a cooked meal to drop it from the plan. Returns { applied, conflicts } with no commit_sha (D1-backed).",
       inputSchema: {
         ops: z.array(
           z.object({
-            op: z.enum(["add", "remove"]),
+            op: z.enum(["add", "remove", "set"]),
             recipe: z.string(),
             planned_for: z.string().nullable().optional(),
             sides: z.array(z.string()).optional(),

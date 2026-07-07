@@ -165,6 +165,22 @@ describe("meal plan → D1 rows", () => {
   });
 });
 
+describe("meal plan set → D1 rows", () => {
+  it("a set persists via the upsert and preserves from_vibe", async () => {
+    const { env, tables } = fakeD1({
+      tables: { meal_plan: [{ tenant: "everett", recipe: "miso-salmon", planned_for: "2026-06-12", sides: '["white rice","roasted broccoli"]', from_vibe: "weeknight-fish" }] },
+    });
+    const res = await applyMealPlanRowOps(env, "everett", [
+      { op: "set", recipe: "miso-salmon", sides: ["white rice"], planned_for: null },
+    ]);
+    expect(res.applied).toEqual([{ op: "set", recipe: "miso-salmon" }]);
+    const row = tables.meal_plan[0];
+    expect(row.planned_for).toBeNull();
+    expect(JSON.parse(row.sides as string)).toEqual(["white rice"]);
+    expect(row.from_vibe).toBe("weeknight-fish"); // preserved through the full-row upsert
+  });
+});
+
 describe("grocery list → D1 rows", () => {
   it("read filters by status as a WHERE clause", async () => {
     const { env } = fakeD1({

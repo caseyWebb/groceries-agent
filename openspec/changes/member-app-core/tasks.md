@@ -64,27 +64,27 @@ within §7 parallelizes freely. **No spike tasks** — every open question is se
 
 ## 3. Worker: `update_meal_plan` `set` op (D3)
 
-- [ ] 3.1 In `packages/worker/src/meal-plan.ts`, add the `set` variant to `MealPlanOp` and
+- [x] 3.1 In `packages/worker/src/meal-plan.ts`, add the `set` variant to `MealPlanOp` and
   `applyMealPlanOps`: targets an existing row by slug (absent → per-op conflict); `sides`
   supplied ⇒ replaced wholesale (empty ⇒ removed); `planned_for: null` ⇒ cleared, string ⇒ set,
   absent ⇒ preserved; `from_vibe` preserved unless supplied. Unit tests: remove one side, clear
   a date, set on absent row conflicts, `add` semantics untouched.
-- [ ] 3.2 Thread `set` through `applyMealPlanRowOps` (`session-db.ts`) — the upsert statement
+- [x] 3.2 Thread `set` through `applyMealPlanRowOps` (`session-db.ts`) — the upsert statement
   already writes the full row, so this is op-plumbing only; test a `set` persists and preserves
   `from_vibe`.
-- [ ] 3.3 Expose `set` on the MCP `update_meal_plan` schema (`cooking-tools.ts`) with a
+- [x] 3.3 Expose `set` on the MCP `update_meal_plan` schema (`cooking-tools.ts`) with a
   description stating replace-wholesale/explicit-clear semantics; update `docs/TOOLS.md` in the
   same pass.
 
 ## 4. Worker: cooking-log list + delete ops (D4)
 
-- [ ] 4.1 Add `readCookingLog(env, tenant, { limit })` (beside `loadRetrospective` in
+- [x] 4.1 Add `readCookingLog(env, tenant, { limit })` (beside `loadRetrospective` in
   `packages/worker/src/cooking-tools.ts`, all D1 via `src/db.ts`): most-recent-first
   (`date DESC, id DESC`), bounded, recipe rows enriched with `title`/`protein`/`cuisine` via the
   existing `LEFT JOIN recipes` COALESCE idiom. Returns `id` per row.
-- [ ] 4.2 Add `deleteCookingLogRow(env, tenant, id)`: tenant-scoped `DELETE … WHERE tenant=? AND
+- [x] 4.2 Add `deleteCookingLogRow(env, tenant, id)`: tenant-scoped `DELETE … WHERE tenant=? AND
   id=?`, returning found/not. No MCP tool (web-only, D4).
-- [ ] 4.3 Tests: list order + enrichment + bound; delete removes only the caller's row; derived
+- [x] 4.3 Tests: list order + enrichment + bound; delete removes only the caller's row; derived
   `last_cooked` (MAX(date)) reflects a deletion on the next read.
 
 ## 5. Worker: the `/api` member route groups
