@@ -1,2 +1,11 @@
 packages:
   - "packages/*"
+
+# Supply-chain trust exception (package-manager hygiene, reviewed 2026-07): workbox-build
+# 7.4.x (vite-plugin-pwa's precache compiler, a devDependency of packages/app) depends on
+# @trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1, a maintained fork whose 3.x
+# pre-release dropped the provenance attestation its 2.x line carried — aube's
+# no-downgrade trustPolicy rejects that by default. Scoped to exactly this package (not a
+# policy change); remove when workbox pins a provenance-attested release.
+trustPolicyExclude:
+  - "@trickfilm400/rollup-plugin-off-main-thread"
