@@ -134,6 +134,12 @@ export const SEED = {
         line: "cabbage::type-napa",
         family: ["cabbage::color-green", "cabbage::color-red"],
         parent: "cabbage",
+        // inline-substitution-hints D1-D3/D8: a pantry row for one sibling (the
+        // enriched to-buy read's `in_pantry` hint) and a warmed flyer rollup matching
+        // the family's shared base term (the `on_sale_hint` hint) — both live, not
+        // intercepted, in the app suite's inline-hint spec.
+        pantryHit: "cabbage::color-red",
+        saleHit: { sku: "0009999012345", price: { regular: 2.5, promo: 2 } },
       },
     },
   },
@@ -602,6 +608,18 @@ export function d1Statements(now) {
       fam.map((id) => `(${q(id)}, ${q(diff.siblings.parent)}, 'general', 'auto', ${now - 9 * DAY}, ${now - 9 * DAY})`).join(", ") +
       ";",
   );
+  // The family's LINE as a real to-buy row (inline-substitution-hints D1-D3): the
+  // enriched read's substitutes[] walks from a live grocery_list row, not a mock.
+  stmts.push(`DELETE FROM grocery_list WHERE tenant = ${q(members.active)} AND normalized_name = ${q(diff.siblings.line)};`);
+  stmts.push(
+    "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, source, for_recipes, note, added_at, ordered_at) VALUES " +
+      `(${q(members.active)}, ${q(diff.siblings.line)}, ${q(diff.siblings.line)}, '1', 'grocery', 'grocery', 'active', 'ad_hoc', '[]', NULL, ${q(day(now - 2 * DAY))}, NULL);`,
+  );
+  // The pantry hint (D1/D3): a pantry row for one sibling lights up its `in_pantry` flag.
+  stmts.push(`DELETE FROM pantry WHERE tenant = ${q(members.active)} AND normalized_name = ${q(diff.siblings.pantryHit)};`);
+  stmts.push(
+    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at, last_verified_at) VALUES (${q(members.active)}, 'Red cabbage', ${q(diff.siblings.pantryHit)}, '1 head', 'produce', ${q(day(now - 3 * DAY))}, ${q(day(now - 3 * DAY))});`,
+  );
 
   return stmts;
 }
@@ -622,5 +640,32 @@ export function kvEntries() {
     // freeform phrase the propose spec types, pointed at the chicken-soup axis — so the
     // freeform path runs as a deterministic cache HIT (no Workers AI in the harness).
     ["KROGER_KV", embedCacheKey(SEED.app.propose.freeform), embedVec([[2, 1]])],
+    // The warmed flyer rollup (inline-substitution-hints D1/D3/D8): a sale item whose
+    // `matched_terms` carries the cabbage family's shared base term, so the enriched
+    // to-buy read's `on_sale_hint` lights up for the family's siblings once the app
+    // suite's inline-hint spec points the profile's preferred_location at this
+    // pre-resolved bare id (no whitespace → no live Kroger Locations call).
+    [
+      "KROGER_KV",
+      `flyer:kroger:${SEED.app.differentiators.location}`,
+      JSON.stringify({
+        sweep_id: "viz-sweep-1",
+        as_of: Date.now(),
+        store: "kroger",
+        location_id: SEED.app.differentiators.location,
+        items: [
+          {
+            sku: SEED.app.differentiators.siblings.saleHit.sku,
+            brand: "Kroger",
+            description: "Green Cabbage",
+            size: "1 head",
+            price: SEED.app.differentiators.siblings.saleHit.price,
+            savings: SEED.app.differentiators.siblings.saleHit.price.regular - SEED.app.differentiators.siblings.saleHit.price.promo,
+            categories: [],
+            matched_terms: [SEED.app.differentiators.siblings.parent],
+          },
+        ],
+      }),
+    ],
   ];
 }
