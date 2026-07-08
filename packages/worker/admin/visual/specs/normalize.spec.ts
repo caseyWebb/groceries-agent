@@ -1,15 +1,15 @@
-// Normalization interactions: the Override and Add-alias native dialogs (hydrated by the
-// Normalize island; the open-retry lives in the dialog component).
+// Normalization interactions: the Override and Add-alias dialogs (Radix — located by role +
+// accessible name via the shared DialogComponent).
 import { test, expect } from "../fixtures";
 import { SEED } from "../seed.mjs";
 
-test("override opens as a native dialog from a decision row", async ({ normalizePage }) => {
+test("override opens as a dialog from a decision row", async ({ normalizePage }) => {
   await normalizePage.gotoTab("decisions");
   const dialog = await normalizePage.openOverrideDialog();
   await expect(dialog.title("Override normalization")).toBeVisible();
 });
 
-test("add-alias opens as a native dialog on the aliases tab", async ({ normalizePage }) => {
+test("add-alias opens as a dialog on the aliases tab", async ({ normalizePage }) => {
   await normalizePage.gotoTab("aliases");
   const dialog = await normalizePage.openAddAliasDialog();
   await expect(dialog.title("Add alias mapping")).toBeVisible();

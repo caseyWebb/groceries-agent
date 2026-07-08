@@ -363,12 +363,11 @@ const RestorationsList = ({ restorations, now }: { restorations: EdgeRestoration
               {r.origin != null ? (
                 <div className="au-rst-origin">
                   revisits{" "}
-                  {/* An intra-Normalize deep-link (Edges stream, drop filter, decision anchor).
-                      TODO: the Normalize agent adds the validated `stream`/`filter` search params. */}
+                  {/* An intra-Normalize deep-link (Edges stream, drop filter, decision anchor). */}
                   <Link
                     className="au-rst-link"
                     to="/normalize"
-                    search={{ stream: "edges", filter: "drop" } as never}
+                    search={{ stream: "edges", filter: "drop" }}
                     hash={`edge-${r.origin}`}
                     title="Open the original decision"
                   >
@@ -505,8 +504,7 @@ export const AuditStatusRow = ({ s, now }: { s: AuditObservability; now: number 
       className={`job-item au-job ${s.state}`}
       media={<span className={`sglyph ${settled ? "ok" : "rk-run"}`}>{settled ? <CheckCircleIcon /> : <ActivityIcon />}</span>}
       title={
-        // TODO: the Normalize agent adds the validated `tab` search param to /normalize.
-        <Link className="rk-job-name" to="/normalize" search={{ tab: "audits" } as never}>
+        <Link className="rk-job-name" to="/normalize" search={{ tab: "audits" }}>
           identity-audit <ArrowRightIcon size={12} />
         </Link>
       }

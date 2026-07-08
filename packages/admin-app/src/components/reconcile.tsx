@@ -201,8 +201,7 @@ export const ReconcileStatusRow = ({ s, now }: { s: ReconcileModel; now: number 
       className={`job-item rk-job ${s.state}`}
       media={<span className={`sglyph ${settled ? "ok" : "rk-run"}`}>{settled ? <CheckCircleIcon /> : <GitMergeIcon />}</span>}
       title={
-        // TODO: the Normalize agent adds the validated `tab` search param to /normalize.
-        <Link className="rk-job-name" to="/normalize" search={{ tab: "reconcile" } as never}>
+        <Link className="rk-job-name" to="/normalize" search={{ tab: "reconcile" }}>
           grocery-reconcile <ArrowRightIcon size={12} />
         </Link>
       }

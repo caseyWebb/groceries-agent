@@ -1,6 +1,17 @@
-// /normalize — placeholder (screen lands with group 3).
+// /normalize — the Normalization area. Every SSR query param (tab/stream/filter/q/src/page/
+// node/facet) is a validated search param with the same name and defaults-omitted convention,
+// so every tab/stream/filter/selection combination deep-links (the Playwright suite's
+// `gotoTab` drives hard `?tab=` URLs).
 import { createFileRoute } from "@tanstack/react-router";
+import { NormalizeScreen } from "../screens/normalize";
+import { validateNormalizeSearch } from "../screens/normalize-shared";
 
 export const Route = createFileRoute("/normalize")({
-  component: () => <p className="screen-loading">Normalize</p>,
+  validateSearch: validateNormalizeSearch,
+  component: NormalizeRoute,
 });
+
+function NormalizeRoute() {
+  const search = Route.useSearch();
+  return <NormalizeScreen search={search} />;
+}

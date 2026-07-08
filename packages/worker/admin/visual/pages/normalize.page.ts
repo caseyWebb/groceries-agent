@@ -1,6 +1,6 @@
 // Normalization (/admin/normalize) — the ingredient-identity audit surface: Decisions / Queue /
-// Aliases / Reconcile / Nodes tabs (tab = query param, every combination deep-linkable), plus
-// the Override and Add-alias native dialogs (hydrated by the Normalize island).
+// Aliases / Reconcile / Nodes tabs (tab = search param, every combination deep-linkable), plus
+// the Override and Add-alias dialogs (Radix — located by role + accessible name).
 // Fixtures: SEED.normalize — an ingredient_identity node + alias row, a normalization-log
 // decision (its row carries the Override button), and a queued novel term — see seed.mjs.
 import { expect, type Locator } from "@playwright/test";
@@ -126,11 +126,11 @@ export class NormalizePage extends AdminPage {
   }
 
   overrideDialog(): DialogComponent {
-    return new DialogComponent(this.page.locator("dialog#nz-override"));
+    return new DialogComponent(this.page.getByRole("dialog", { name: "Override normalization" }));
   }
 
   addAliasDialog(): DialogComponent {
-    return new DialogComponent(this.page.locator("dialog#nz-add"));
+    return new DialogComponent(this.page.getByRole("dialog", { name: "Add alias mapping" }));
   }
 
   async openOverrideDialog(): Promise<DialogComponent> {
