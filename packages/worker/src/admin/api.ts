@@ -59,6 +59,7 @@ import { canonicalizeUrl } from "../url.js";
 import { readNormalizationPage, readNodesPage } from "../normalize-admin.js";
 import { readReconcileObservability } from "../reconcile-admin.js";
 import { readAuditObservability, readAuditSurface } from "../audit-admin.js";
+import { CONTRACT_VERSION } from "@grocery-agent/contract";
 import { getDiscoveryConfig, putDiscoveryConfig, analyzeDiscovery, dryRunDiscovery, testFeed, getOperatorConfig, putOperatorConfig, listCorpus, addCorpus, deleteCorpus } from "./config-api.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */
@@ -297,7 +298,7 @@ export function registerApiRoutes(app: Hono<{ Bindings: Env }, BlankSchema, "/ad
             runsByJob[name] = await readJobRuns(c.env, name, STATUS_SPARKLINE_WINDOW);
           }),
         );
-        return c.json({ payload, counts, runsByJob, reconcile, audit, satellites: liveness.activeSatellites });
+        return c.json({ payload, counts, runsByJob, reconcile, audit, satellites: liveness.activeSatellites, contractVersion: CONTRACT_VERSION });
       })
       // Member detail: the roster row + the member-360 read + recipe-title resolution. A pending
       // member returns `{ row, detail: null }` ONLY — no per-tenant detail read is attempted for

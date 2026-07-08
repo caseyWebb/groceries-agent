@@ -254,7 +254,7 @@ const AdminDependencyRow = ({ posture }: { posture: AdminPosture }) => {
 
 /** One home-network satellite row (satellite ingest): health glyph, source count, last push,
  *  24h count, and a contract-skew warning when behind the Worker's current contract. */
-const SatelliteRow = ({ s, now }: { s: Satellite; now: number }) => {
+const SatelliteRow = ({ s, now, workerContract }: { s: Satellite; now: number; workerContract: string }) => {
   const cls = s.health === "fresh" ? "ok" : s.health === "stale" ? "fail" : "never";
   return (
     <Item
@@ -275,10 +275,9 @@ const SatelliteRow = ({ s, now }: { s: Satellite; now: number }) => {
           {s.skew ? (
             <>
               <span className="job-sep"> · </span>
-              {/* `skew` is computed server-side against the Worker's CONTRACT_VERSION; the
-                  constant itself isn't in the status payload, so the target version is not
-                  named here (the SSR page imported it from @grocery-agent/contract). */}
-              <span className="txt-bad">contract {s.contractVersion} → behind worker</span>
+              <span className="txt-bad">
+                contract {s.contractVersion} → behind {workerContract}
+              </span>
             </>
           ) : null}
         </span>
@@ -290,7 +289,7 @@ const SatelliteRow = ({ s, now }: { s: Satellite; now: number }) => {
 
 const StatusView = ({ data }: { data: StatusData }) => {
   const navigate = useNavigate();
-  const { payload, counts, runsByJob, reconcile, audit, satellites } = data;
+  const { payload, counts, runsByJob, reconcile, audit, satellites, contractVersion } = data;
   const now = payload.generated_at;
   const checkedAt = Date.now(); // captured once per render — the "checked Xs ago" label only
   return (
@@ -380,7 +379,7 @@ const StatusView = ({ data }: { data: StatusData }) => {
           <p className="group-label">Ingest satellites</p>
           <ItemGroup>
             {satellites.map((s) => (
-              <SatelliteRow key={s.id} s={s} now={now} />
+              <SatelliteRow key={s.id} s={s} now={now} workerContract={contractVersion} />
             ))}
           </ItemGroup>
         </>
