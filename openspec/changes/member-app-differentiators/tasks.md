@@ -36,11 +36,11 @@ and the implementer binds to the landed actuals (e.g. `buildOrderWiring`, `compu
 
 ## 2. Worker: the substitution op + the sibling walk (D1–D4)
 
-- [ ] 2.1 `corpus-db.ts`: `readIdentityNeighbors(env, ids)` beside `satisfiesAmong` — loads
+- [x] 2.1 `corpus-db.ts`: `readIdentityNeighbors(env, ids)` beside `satisfiesAmong` — loads
   the identities+edges pair once (memoized like the existing lazy read), returns
   representative-resolved depth-1 neighbor sets per id (in-edges, out-edges with kinds, and
   shared-parent co-children) for the walk to consume.
-- [ ] 2.2 New `packages/worker/src/substitutions.ts`: the **pure walk**
+- [x] 2.2 New `packages/worker/src/substitutions.ts`: the **pure walk**
   (`identitySiblings(x, graph)` implementing D3 exactly — satisfies / generalization
   (concrete, `general`/`containment` only) / same-kind shared-parent siblings; depth 1;
   precedence satisfies → general-siblings → generalizations → containment-siblings →
@@ -54,14 +54,14 @@ and the implementer binds to the landed actuals (e.g. `buildOrderWiring`, `compu
   reads' fixed default sale floor — no `min_savings_pct` input, D1's no-knob revision); the
   12-line budget with `remaining`; the no-location degradation (`location: null`, siblings
   still served). Read-only — the op performs no D1/KV/cart write.
-- [ ] 2.3 `tools.ts`: register `suggest_substitutions` over the same op via the existing
+- [x] 2.3 `tools.ts`: register `suggest_substitutions` over the same op via the existing
   `buildServer` closures (P3's `buildOrderWiring` family). Description carries the D1
   guarantees: read-only (never writes cart/cache/list; acting = `place_order`
   `overrides`/`exclude` or list add/remove), the closed reason vocabulary, the sibling
   relation labels ("proposes and names the relation — fitness is the caller's judgment"),
   the ≤ 2-Kroger-calls-per-line budget + `remaining` pagination, and the no-location
   degradation. `docs/TOOLS.md` entry in the same pass.
-- [ ] 2.4 Unit tests (`packages/worker/test/substitutions.test.ts`): every D3 rule over edge
+- [x] 2.4 Unit tests (`packages/worker/test/substitutions.test.ts`): every D3 rule over edge
   fixtures including the production `cabbage` (`::color-green`/`::type-napa`/`::color-red`,
   kind `general`) and `onion` families, a merged-representative endpoint, a membership-only
   line (labeled, last, capped), and a zero-neighbor line (empty `siblings`, no fabrication);

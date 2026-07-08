@@ -27,6 +27,7 @@ import { registerReconcileTools } from "./reconcile-tools.js";
 import { registerSuggestNightVibesTool } from "./night-vibe-suggest.js";
 import { registerOrderTools, type OrderWiring } from "./order-tools.js";
 import { computeToBuyView } from "./to-buy.js";
+import { suggestSubstitutions, MAX_SUBSTITUTION_LINES } from "./substitutions.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
 import { registerNoteTools, registerStoreNoteTools } from "./notes-tools.js";
 import { registerStoreTools } from "./stores-tools.js";
@@ -1021,6 +1022,24 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
       inputSchema: {},
     },
     () => runTool(() => computeToBuyView(env, tenant.id)),
+  );
+
+  // suggest_substitutions — the deterministic substitution read (member-app-
+  // differentiators D1): one shared op with POST /api/grocery/substitutions, over the
+  // same per-request order wiring (location, revalidation, term search).
+  server.registerTool(
+    "suggest_substitutions",
+    {
+      description:
+        "Deterministic substitution suggestions for to-buy lines — READ-ONLY: it NEVER writes the cart, the SKU cache, or the grocery list; nothing is applied implicitly. Acting on a suggestion is a separate, explicit call: a same-identity swap (different SKU, same ingredient) is a `place_order` `overrides` entry; a cross-ingredient swap is the existing list writes (add the replacement + remove the row, or — for a plan-derived virtual line — add the replacement and pass an order-scoped `exclude` for the original). Input: `names` (optional — omitted means the caller's current derived to-buy set, in view order; supplied names resolve through the ingredient funnel) and `max_lines` (default and cap " +
+        `${MAX_SUBSTITUTION_LINES}` +
+        "). Per line it returns: `current` — the cached SKU pick revalidated live (fresh price/availability/aisle) with `status` ok | current_unavailable | no_cached_pick; `alternatives` — same-ingredient products from ONE term search, fulfillable only, ranked by the unit-price core, each carrying a CLOSED reason vocabulary and nothing else: `cheaper` (strictly lower unit price than the current pick, only when both are comparable in one size dimension — real numbers ride along as `unit_price`/`base_unit`), `on_sale` (a genuine promo discount), `in_stock` (fulfillable while the current pick is not). Qualitative reasons (\"lower fat\", \"better fit\") are NOT produced here — that judgment is yours, grounded in this data. `siblings` — cross-ingredient suggestions from a depth-1 walk over the persisted ingredient identity graph, each LABELED with its relation (`satisfies` = the graph says it can be used where the line's ingredient is requested; `sibling` = co-variant under a shared parent, named in `via`; `generalization` = the base form), annotated `in_pantry` (already on hand — often the best swap) and `on_sale_hint` (the primary store's warmed flyer rollup at the default sale floor; no live price check — verify with kroger_prices before promising a price). The walk proposes and NAMES the relation; whether a sibling fits the dish is the caller's judgment. Budget: at most one revalidation + one search per line, `max_lines` lines per call — unprocessed names return in `remaining`; call again with them to continue. A caller with no resolvable Kroger location still gets the graph half: `location: null`, empty price sections, siblings/pantry/flyer served. Empty `alternatives` AND `siblings` for every line means there is genuinely nothing to suggest — say so rather than inventing swaps.",
+      inputSchema: {
+        names: z.array(z.string()).optional(),
+        max_lines: z.number().int().positive().optional(),
+      },
+    },
+    (input) => runTool(() => suggestSubstitutions(env, tenant.id, input, orderWiring)),
   );
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,

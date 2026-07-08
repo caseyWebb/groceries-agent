@@ -424,6 +424,40 @@ The **derived to-buy view** — what an order placed right now would buy: the `a
 - `underived` — planned recipes whose full ingredient list is **not yet derived**; their items are NOT in `to_buy` (reported, never silently dropped) — compensate explicitly.
 - A derived need whose canonical id matches an **in-flight** (`in_cart`/`ordered`) row is suppressed from `to_buy` — it is already being bought (it shows under `in_cart`); receiving (pantry restock) or re-listing the row resolves it.
 
+### `suggest_substitutions(names?, max_lines?)`
+
+Deterministic substitution suggestions for to-buy lines. **READ-ONLY**: it never writes the cart, the SKU cache, the grocery list, or anything else — nothing is applied implicitly, and acting on a suggestion reuses the existing writes (a same-identity swap is a `place_order` `overrides` entry; a cross-ingredient swap is the list add/remove writes, or — for a plan-derived virtual line — an add plus an order-scoped `exclude`). One shared operation with the member app's `POST /api/grocery/substitutions`. The matcher is not involved: the read composes the SKU cache, one term search per line, the unit-price core, the identity graph, the pantry, and the warmed flyer rollup — the matcher's resolve-only / never-substitutes contracts are untouched.
+
+**Params:**
+- `names` (array, optional) — lines to process, resolved through the ingredient funnel. Omitted = the caller's current derived to-buy set, in view order.
+- `max_lines` (number, optional) — per-call line budget; defaults to and is **capped at 12**.
+
+**Returns:**
+```
+{
+  suggestions: [{
+    for: { name, key, origin? },                    // origin from the to-buy view when derived
+    status: "ok" | "current_unavailable" | "no_cached_pick",
+    current: { sku, brand, description, size, price, on_sale, available,
+               unit_price?, base_unit?, aisleLocation } | null,
+    alternatives: [{ …product fields, reasons: ("cheaper" | "on_sale" | "in_stock")[] }],
+    siblings: [{ id, label,
+                 relation: { role: "satisfies" | "sibling" | "generalization",
+                             kind: "general" | "containment" | "membership", via? },
+                 in_pantry, on_sale_hint? }]
+  }],
+  remaining: [name, ...],          // unprocessed this call — call again to continue
+  location: { id } | null,         // null = no resolvable Kroger location
+  flyer_as_of: ISO | null
+}
+```
+
+- `current` — the line's cached SKU pick, **revalidated live** (fresh price/fulfillment/aisle). `status: "current_unavailable"` when it no longer fulfills; `"no_cached_pick"` when no mapping exists at the caller's location (nor a legacy untagged one).
+- `alternatives` — same-ingredient products from **exactly one term search**, fulfillable only, current SKU excluded, ranked by `compare_unit_price`'s core, capped at 5. `reasons` is a **closed deterministic vocabulary and nothing else**: `cheaper` (strictly lower unit price than the current pick, only when both ranked comparable in one size dimension — `unit_price`/`base_unit` carry the numbers), `on_sale` (a genuine promo discount), `in_stock` (fulfillable while the current pick is unavailable). Qualitative reasons ("lower fat") are never produced here — that judgment stays with the caller, grounded in this data.
+- `siblings` — cross-ingredient suggestions from a **depth-1 walk over the persisted identity graph**, every endpoint representative-resolved, concrete (buyable) targets only, the line itself and anything already on the to-buy set excluded, capped at 4. Emitted in fixed precedence — satisfies → `general`-kind siblings → generalizations → `containment`-kind siblings → `membership`-kind siblings (a broad class family like `vegetables` only surfaces when nothing better exists) — each **labeled with its relation** (`role`, `kind`, and the shared parent `via` for siblings): the walk proposes and names the relation; fitness for the dish is the caller's judgment. `in_pantry` marks a sibling already on hand; `on_sale_hint` matches the primary store's flyer rollup at the flyer reads' default sale floor (not caller-tunable here) — a cached hint, not a live price; **no per-sibling Kroger search is issued**.
+- **Budget:** ≤ 1 product revalidation + 1 term search per processed line, ≤ 12 lines per call; unprocessed names return in `remaining` for an explicit follow-up call.
+- **No Kroger location** (walk-store tenants): degrades instead of erroring — `location: null`, empty price/availability sections, siblings/pantry/flyer hints still served, zero Kroger product calls.
+
 ### `add_to_grocery_list(item)`
 
 Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — re-adding an existing name **merges** (union `for_recipes`, reconcile `quantity`) rather than duplicating. New items start `status: "active"`. A **planned recipe's ingredient needs no add** — the to-buy set derives it from the meal plan automatically; adding one anyway **materializes/pins** it as an explicit row (do this to carry a quantity annotation or note) — it upserts under the same canonical id, so the row and the derived need merge into one line, never a duplicate.
