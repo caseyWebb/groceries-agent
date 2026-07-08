@@ -18,6 +18,7 @@ import { pantryArea } from "./pantry.js";
 import { logArea } from "./log.js";
 import { profileArea } from "./profile.js";
 import { vibesArea } from "./vibes.js";
+import { proposeArea } from "./propose.js";
 import { appBuild, buildHeader, csrfGuard, onApiError, usagePoint } from "./middleware.js";
 
 const app = new Hono<ApiEnv>().basePath("/api");
@@ -45,7 +46,9 @@ const routes = app
   .route("/", pantryArea)
   .route("/", logArea)
   .route("/", profileArea)
-  .route("/", vibesArea);
+  .route("/", vibesArea)
+  // The propose flow (member-app-propose): the stateless propose POST + the weather GET.
+  .route("/", proposeArea);
 
 /** The composed app type the SPA's `hc<MemberApi>("/")` client infers from. */
 export type MemberApi = typeof routes;

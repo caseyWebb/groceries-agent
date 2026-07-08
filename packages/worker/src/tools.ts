@@ -22,7 +22,7 @@ import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
 import { registerNightVibeTools } from "./night-vibe-tools.js";
-import { registerProposeMealPlanTool } from "./meal-plan-proposal-tool.js";
+import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
 import { registerReconcileTools } from "./reconcile-tools.js";
 import { registerSuggestNightVibesTool } from "./night-vibe-suggest.js";
 import { registerOrderTools } from "./order-tools.js";
@@ -45,7 +45,7 @@ import {
 } from "./semantic-search.js";
 import { listGuidance, readGuidance, saveGuidance } from "./guidance.js";
 import { loadOperatorConfig, DEFAULT_OPERATOR_CONFIG } from "./operator-config.js";
-import { fetchWeatherForecast } from "./weather.js";
+import { fetchWeatherForecast, type WeatherForecast, type WeatherError } from "./weather.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
 import { readPantry } from "./session-db.js";
 import {
@@ -123,6 +123,55 @@ export async function readRecipeDetail(
   // overlay/last_cooked; null until the reconcile first generates it (never an error).
   if (description !== null) merged.description = description;
   return { slug, frontmatter: merged, body };
+}
+
+/**
+ * Fresh propose deps for non-MCP callers (member-app-propose D1): the member API's
+ * `POST /api/propose` builds these per request over the SAME underlying reads the MCP
+ * server's per-session closures memoize (`buildServer`, below) — lazily and memoized
+ * within one call, so the op's parallel loads share one read each.
+ */
+export function buildProposeDeps(env: Env, tenant: string): ProposeDeps {
+  let overlayP: Promise<Overlay> | null = null;
+  let lastCookedP: Promise<Map<string, string>> | null = null;
+  let ownedP: Promise<string[]> | null = null;
+  let ctxP: Promise<IngredientContext> | null = null;
+  return {
+    getOverlay: () => (overlayP ??= readOverlay(env, tenant)),
+    getLastCookedMap: () => (lastCookedP ??= readLastCookedMap(env, tenant)),
+    getOwnedEquipment: () => (ownedP ??= readOwnedEquipment(env, tenant)),
+    getIngredientContext: () => (ctxP ??= ingredientContext(env)),
+  };
+}
+
+/**
+ * The `get_weather_forecast` assembly as a shared operation (member-app-propose D1/D9):
+ * resolve the caller's location from preferences (explicit `stores.location_zip`, else a
+ * ZIP parsed from `preferred_location` — it lives under `stores` in the D1 schema), then
+ * fetch the Open-Meteo daily forecast. Throws the structured `no_location` when no ZIP is
+ * resolvable; upstream failures come back as the fetch's VALUE-shaped `WeatherError`
+ * (`forecast_unavailable` / `no_results`), exactly as the MCP tool has always returned
+ * them. Called by the tool and the member API's `GET /api/propose/weather`.
+ */
+export async function resolveTenantForecast(env: Env, tenant: string, days = 7): Promise<WeatherForecast | WeatherError> {
+  const prefs = (await readPreferences(env, tenant)) ?? {};
+  const stores = prefs.stores as Record<string, unknown> | undefined;
+
+  let zip: string | null = null;
+  if (typeof stores?.location_zip === "string" && stores.location_zip.trim()) {
+    zip = stores.location_zip.trim();
+  } else if (typeof stores?.preferred_location === "string") {
+    zip = stores.preferred_location.match(/\d{5}/)?.[0] ?? null;
+  }
+
+  if (!zip) {
+    throw new ToolError(
+      "no_location",
+      "No location found in preferences. Set location_zip or complete store setup with a ZIP code.",
+    );
+  }
+
+  return fetchWeatherForecast(zip, days);
 }
 
 /** The `read_user_profile` payload: the assembled profile + initialization status. */
@@ -939,29 +988,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
           .describe("Number of forecast days to return (default 7, max 16)."),
       },
     },
-    ({ days }) =>
-      runTool(async () => {
-        const prefs = (await readPreferences(env, tenant.id)) ?? {};
-        const stores = prefs.stores as Record<string, unknown> | undefined;
-
-        // Resolve location: explicit stores.location_zip first, then parse from
-        // preferred_location. (location_zip lives under `stores` in the D1 schema.)
-        let zip: string | null = null;
-        if (typeof stores?.location_zip === "string" && stores.location_zip.trim()) {
-          zip = stores.location_zip.trim();
-        } else if (typeof stores?.preferred_location === "string") {
-          zip = stores.preferred_location.match(/\d{5}/)?.[0] ?? null;
-        }
-
-        if (!zip) {
-          throw new ToolError(
-            "no_location",
-            "No location found in preferences. Set location_zip or complete store setup with a ZIP code.",
-          );
-        }
-
-        return fetchWeatherForecast(zip, days ?? 7);
-      }),
+    ({ days }) => runTool(() => resolveTenantForecast(env, tenant.id, days ?? 7)),
   );
 
   // report_bug — record an attributed bug report into the D1 `bug_reports` table the

@@ -114,6 +114,36 @@ function num(v: unknown): number | null {
   return typeof v === "number" ? v : null;
 }
 
+/** The propose input's zod shape — the MCP tool's `inputSchema` AND the `/api/propose`
+ *  body validator (one contract, D7: the tool and the endpoint accept the same request). */
+export const PROPOSE_INPUT_SHAPE = {
+  nights: z.number().int().positive().max(14).optional(),
+  seed: z.number().int().optional(),
+  lock: z.array(z.string()).optional(),
+  exclude: z.array(z.string()).optional(),
+  boost_ingredients: z.array(z.string()).optional(),
+  nudges: z
+    .object({
+      max_time_total: z.number().optional(),
+      variety: z.number().min(0).max(1).optional(),
+      freeform: z.string().optional(),
+      proteins: z.array(z.string()).optional(),
+    })
+    .optional(),
+  slots: z
+    .array(
+      z.object({
+        vibe_id: z.string(),
+        protein: z.string().optional(),
+        cuisine: z.string().optional(),
+        max_time_total: z.number().nullable().optional(),
+        vibe: z.string().optional(),
+        recipe: z.string().optional(),
+      }),
+    )
+    .optional(),
+};
+
 /**
  * Run the whole propose pipeline for one tenant (member-app-propose D1: the shared op both
  * `propose_meal_plan` and `POST /api/propose` call). Throws structured `ToolError`s only —
@@ -352,33 +382,7 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
     {
       description:
         "Propose a week of dinners from the caller's NIGHT-VIBE PALETTE, deterministically and statelessly. Two levels: (1) SHAPE — sample `nights` night-vibe slots weighted by cadence-debt (overdue vibes surface) and weather; (2) FILL — retrieve each slot's vibe by meaning and select a VARIED main (MMR + protein/cuisine caps across the week, not the top-3 lookalikes). Does HOLISTIC use-it-up automatically: derives the caller's at-risk perishables from their PANTRY and spreads them across the week's mains (a multi-serving item can be used across two recipes), subordinate to vibe relevance and the hard gate — no param needed. Composes rung-1 `pairs_with` corpus sides, flags single-use perishable waste + meal-prep + novelty, and returns per-main `why` + `uses_perishables` (what each main actually uses up). Iterate by re-calling with `lock` (keep these recipes anywhere in the week, as vibe-less locked slots — resolved case-insensitively, respecting your rejects; a lock that's unknown, not-yet-embedded, or rejected comes back as an explicit empty locked slot), `exclude` (swap these out — an excluded recipe never appears in a pool, an alternate, or a pin), `boost_ingredients` (OVERRIDE — extra items to definitely use up, unioned with the pantry-derived set), `nudges`, `slots`, and a `seed` (change it for 'give me another week'). `nudges`: max_time_total, variety strength (clamped so it can't collapse relevance), `proteins` (week-level SOFT protein boost — reorders, never gates) and `freeform` (a phrase like 'more soup, lighter dinners' — embedded and applied to every slot's ranking as a bounded additive term, never a gate; a main it materially matches says so in `why`). `slots` = per-vibe-slot constraints keyed by vibe_id (inert if that vibe isn't sampled this week): `protein`/`cuisine` facet pins narrowing that night's gate, `max_time_total` (a number caps that night; EXPLICIT null lifts the vibe's own cap — precedence: slot pin > nudges.max_time_total > vibe facet), `vibe` (a typed phrase replacing that slot's query vector — gate + identity unchanged, slot returns vibe_override: true; also fills a fresh not-yet-embedded vibe), and `recipe` (pin that exact recipe INTO the slot keeping its vibe identity + `from_vibe` provenance — the swap-in-place primitive; slot returns recipe_pinned: true, and an unresolvable pin comes back as an explicit empty slot). Each vibe slot also returns swap material from its already-ranked pool: `alternates` (top remaining candidates, week-deduped), `alt_similar` (nearest to the chosen main), `alt_different` (best different-cuisine) — all gate survivors; empty slots keep their alternates as the escape hatch. A slot placed by a non-mild weather quota carries `weather_category` and a weather-fit `why`. Makes at most ONE batched Workers AI embedding call per request — only for `nudges.freeform`/`slots[].vibe` text not already in the query-embedding cache; a request with no such text makes NO AI call (every other vector is cron-captured). NO writes (persist a chosen plan with update_meal_plan, threading each main's vibe id as `from_vibe`). Returns { plan, variety, uncovered_at_risk, diagnostics }; `uncovered_at_risk` names at-risk items the plan couldn't use, and an unfillable slot is returned as an explicit empty slot, never dropped.",
-      inputSchema: {
-        nights: z.number().int().positive().max(14).optional(),
-        seed: z.number().int().optional(),
-        lock: z.array(z.string()).optional(),
-        exclude: z.array(z.string()).optional(),
-        boost_ingredients: z.array(z.string()).optional(),
-        nudges: z
-          .object({
-            max_time_total: z.number().optional(),
-            variety: z.number().min(0).max(1).optional(),
-            freeform: z.string().optional(),
-            proteins: z.array(z.string()).optional(),
-          })
-          .optional(),
-        slots: z
-          .array(
-            z.object({
-              vibe_id: z.string(),
-              protein: z.string().optional(),
-              cuisine: z.string().optional(),
-              max_time_total: z.number().nullable().optional(),
-              vibe: z.string().optional(),
-              recipe: z.string().optional(),
-            }),
-          )
-          .optional(),
-      },
+      inputSchema: PROPOSE_INPUT_SHAPE,
     },
     (input) => runTool(() => runProposeMealPlan(env, tenant, input, deps)),
   );

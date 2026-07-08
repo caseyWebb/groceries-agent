@@ -4,7 +4,7 @@
 // cross the boundary as structured bodies with the D8-mapped statuses (409 conflict,
 // 412 failed If-Match, 400 boundary rejections), and the D7 suggest gate throttles
 // without touching derivation.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { ToolError } from "../src/errors.js";
 import { fakeD1, type FakeD1 } from "./fake-d1.js";
 import type { Env } from "../src/env.js";
@@ -161,6 +161,8 @@ const MEMBER_ENDPOINTS: [string, string][] = [
   ["GET", "/api/vibes/proposals"],
   ["POST", "/api/vibes/proposals/p1/confirm"],
   ["POST", "/api/vibes/suggest"],
+  ["POST", "/api/propose"],
+  ["GET", "/api/propose/weather"],
 ];
 
 describe("session gating (requireSession is PER-ROUTE — none may be forgotten)", () => {
@@ -523,5 +525,121 @@ describe("shared error table — P1 additions (5.2)", () => {
     expect(dup.status).toBe(409);
     const noMatch = await send(env, "PATCH", "/api/vibes/weeknight", cookie, { cadence_days: 10 });
     expect(noMatch.status).toBe(412); // missing If-Match is a precondition conflict
+  });
+});
+
+describe("propose area (member-app-propose)", () => {
+  // A tiny embedded corpus + palette: two recipes on distinct axes, one embedded vibe.
+  const FISH_ROW = { ...RECIPE_ROW, slug: "salmon-rice", title: "Salmon Rice", protein: "fish", cuisine: "japanese" };
+  function proposeTables() {
+    return {
+      recipes: [RECIPE_ROW, FISH_ROW],
+      recipe_derived: [
+        { slug: "tacos", embedding: JSON.stringify([1, 0, 0]), description: null },
+        { slug: "salmon-rice", embedding: JSON.stringify([0, 1, 0]), description: null },
+      ],
+      night_vibes: [
+        { tenant: "casey", id: "dinner", vibe: "a good dinner", facets: null, cadence_days: null, pinned: 0, base_weight: null, weather_affinity: null, weather_antipathy: null, season: null, created_at: null },
+      ],
+      night_vibe_derived: [{ tenant: "casey", id: "dinner", embedding: JSON.stringify([1, 0.5, 0]) }],
+    };
+  }
+  // The op fetches the weather forecast unconditionally (resolveZip "" without a profile);
+  // pin the upstream DOWN so route results are deterministic and offline.
+  function stubWeatherDown() {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("POST /api/propose returns the shared op's result shape (the tool's contract)", async () => {
+    stubWeatherDown();
+    const { env } = memberEnv(proposeTables());
+    const cookie = await loggedIn(env);
+    const res = await send(env, "POST", "/api/propose", cookie, { nights: 1, seed: 5 });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { plan: { vibe_id: string | null; main: { slug: string } | null; alternates: unknown[] }[]; variety: unknown; diagnostics: { seed: number; filled: number } };
+    expect(body.diagnostics.seed).toBe(5);
+    expect(body.diagnostics.filled).toBe(1);
+    expect(body.plan[0].vibe_id).toBe("dinner");
+    expect(body.plan[0].main).not.toBeNull();
+    expect(Array.isArray(body.plan[0].alternates)).toBe(true);
+  });
+
+  it("identical bodies return identical proposals (D10 at the route level)", async () => {
+    stubWeatherDown();
+    const { env } = memberEnv(proposeTables());
+    const cookie = await loggedIn(env);
+    const request = { nights: 1, seed: 42, slots: [{ vibe_id: "dinner", protein: "fish" }], nudges: { proteins: ["fish"] } };
+    const a = await send(env, "POST", "/api/propose", cookie, request);
+    const b = await send(env, "POST", "/api/propose", cookie, request);
+    expect(a.status).toBe(200);
+    expect(await a.json()).toEqual(await b.json());
+  });
+
+  it("boundary-rejects a malformed body as a structured 400", async () => {
+    stubWeatherDown();
+    const { env } = memberEnv(proposeTables());
+    const cookie = await loggedIn(env);
+    const res = await send(env, "POST", "/api/propose", cookie, { nights: "five" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("validation_failed");
+  });
+
+  it("GET /api/propose/weather returns the forecast shape, ETag'd", async () => {
+    const geocode = { results: [{ latitude: 39.1, longitude: -84.5, name: "Cincinnati", admin1: "Ohio" }] };
+    const forecast = {
+      daily: {
+        time: ["2026-07-06", "2026-07-07"],
+        temperature_2m_max: [90, 88],
+        temperature_2m_min: [70, 69],
+        precipitation_probability_max: [5, 10],
+        weathercode: [0, 1],
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) =>
+        String(url).includes("geocoding-api")
+          ? new Response(JSON.stringify(geocode), { status: 200 })
+          : new Response(JSON.stringify(forecast), { status: 200 }),
+      ),
+    );
+    const { env } = memberEnv({
+      profile: [{ tenant: "casey", stores: JSON.stringify({ location_zip: "45208" }) }],
+    });
+    const cookie = await loggedIn(env);
+    const res = await get(env, "/api/propose/weather?days=2", cookie);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).toMatch(/^W\//);
+    const body = (await res.json()) as { location: string; forecast: { date: string; high_f: number; meal_vibes: string[] }[] };
+    expect(body.location).toBe("Cincinnati, Ohio");
+    expect(body.forecast).toHaveLength(2);
+    expect(body.forecast[0]).toMatchObject({ date: "2026-07-06", high_f: 90 });
+  });
+
+  it("maps no_location to a structured 404 (the quiet set-your-ZIP state, not a failure page)", async () => {
+    const { env } = memberEnv(); // no profile row → no resolvable ZIP
+    const cookie = await loggedIn(env);
+    const res = await get(env, "/api/propose/weather", cookie);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe("no_location");
+  });
+
+  it("maps an upstream weather failure to a structured 503 with its code intact", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+    const { env } = memberEnv({
+      profile: [{ tenant: "casey", stores: JSON.stringify({ location_zip: "45208" }) }],
+    });
+    const cookie = await loggedIn(env);
+    const res = await get(env, "/api/propose/weather", cookie);
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe("forecast_unavailable");
+  });
+
+  it("rejects an out-of-range days query", async () => {
+    const { env } = memberEnv();
+    const cookie = await loggedIn(env);
+    const res = await get(env, "/api/propose/weather?days=99", cookie);
+    expect(res.status).toBe(400);
   });
 });

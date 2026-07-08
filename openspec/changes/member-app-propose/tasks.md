@@ -79,17 +79,17 @@ question is settled in design.md (D1–D12) against the code and the production 
 
 ## 4. Worker: extractions + the `/api/propose` route group (D1, D7, D9)
 
-- [ ] 4.1 Extract `runProposeMealPlan(env, tenant, input, deps)` from the tool closure and
+- [x] 4.1 Extract `runProposeMealPlan(env, tenant, input, deps)` from the tool closure and
   `buildProposeDeps(env, tenant)` for non-MCP callers; re-point the tool (its memoized closures
   still passed). Extract `resolveTenantForecast(env, tenant, days?)` from the
   `get_weather_forecast` closure; re-point the tool. `aubr test` green with no test edits
   beyond imports (behavior-preserving).
-- [ ] 4.2 New `packages/worker/src/api/propose.ts` (P1 route-group idiom, `hc` type export):
+- [x] 4.2 New `packages/worker/src/api/propose.ts` (P1 route-group idiom, `hc` type export):
   `POST /api/propose` (body = full tool input, zod-validated; calls the shared op) and
   `GET /api/propose/weather?days=` (ETag'd by the shared middleware; structured `no_location`
   et al. cross the boundary per the shared error table). Mount under the P0 `/api` app; the
   per-route analytics point is inherited.
-- [ ] 4.3 Route tests (`app.request` idiom): propose happy path returns the op result; identical
+- [x] 4.3 Route tests (`app.request` idiom): propose happy path returns the op result; identical
   bodies return identical proposals (D10 at the route level); weather returns the forecast
   shape and maps `no_location`; both routes 401 without a session.
 

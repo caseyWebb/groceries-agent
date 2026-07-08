@@ -100,14 +100,16 @@ export async function jsonBody<T>(c: Context): Promise<T> {
 function statusForToolError(err: ToolError): 400 | 401 | 403 | 404 | 405 | 409 | 412 | 500 | 503 {
   const code = err.code;
   if (code === "validation_failed") return 400;
-  if (code === "not_found") return 404;
+  // The weather family (member-app-propose D9): a member state the UI renders quietly (a
+  // resolvable location doesn't exist), not a server failure — the code stays in the body.
+  if (code === "not_found" || code === "no_location" || code === "no_results") return 404;
   if (code === "unsupported") return 405;
   // `conflict` is 409 — except when it IS a failed `If-Match` precondition (the class (a)
   // two-writer race, marked by the shared precondition helper's context), which is 412.
   if (code === "conflict") return err.context.precondition ? 412 : 409;
   if (code === "insufficient_permission") return 403;
   if (code === "reauth_required") return 401;
-  if (code === "storage_error" || code === "index_unavailable" || code === "upstream_unavailable") return 503;
+  if (code === "storage_error" || code === "index_unavailable" || code === "upstream_unavailable" || code === "forecast_unavailable") return 503;
   return 500; // unrecognized codes degrade to a structured 500
 }
 
