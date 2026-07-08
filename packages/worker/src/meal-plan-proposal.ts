@@ -312,7 +312,7 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
 
     // Use-it-up: `uses_perishables` was set at fill time to the at-risk items this main actually
     // CLAIMED (decremented from the demand) — not merely any perishable it lists. Explain each.
-    for (const item of slot.uses_perishables) slot.why.push(`uses your ${item} (going bad)`);
+    for (const item of slot.uses_perishables) slot.why.push(`uses your ${item}`);
   }
 
   const mains = chosen.map((s) => s.main).filter((m): m is ProposedMain => m != null);

@@ -58,7 +58,7 @@ describe("assembleProposal", () => {
     expect(s.flags.waste).toEqual(["cilantro"]); // no other main uses cilantro
     expect(s.flags.novel).toBe(true); // not in lastCooked
     expect(s.uses_perishables).toEqual(["cilantro"]);
-    expect(s.why).toContain("uses your cilantro (going bad)");
+    expect(s.why).toContain("uses your cilantro");
 
     const p = r.plan.find((x) => x.vibe_id === "pasta")!;
     expect(p.flags.no_corpus_side).toBe(true); // empty pairs_with
