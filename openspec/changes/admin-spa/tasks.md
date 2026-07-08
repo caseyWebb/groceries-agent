@@ -38,10 +38,10 @@
 
 - [x] 5.1 `admin/visual/setup.mjs`: build via `npx vite build` (cwd `packages/admin-app`) instead of `build-admin.mjs`; boot pipeline otherwise unchanged (migrate → shared seed → `wrangler dev --local --var ADMIN_DEV_BYPASS:1`, readiness `/admin`).
 - [x] 5.2 Harness model updates: `base.page.ts` landmark posture (query-rendered, auto-wait, time-free), `NavComponent` client-side routing, `DialogComponent` → Radix `role="dialog"`; add the `/admin/api` JSON passthrough spec; keep the missing-asset 404 spec and every seeded-fixture assertion (specs 3.1–3.7 ported in place).
-- [ ] 5.3 Full suite green: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers aubr test:admin` — all areas, sub-surfaces, dialogs, and screenshots on the SPA; surface the per-area screenshots for review.
+- [x] 5.3 Full suite green: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers aubr test:admin` — all areas, sub-surfaces, dialogs, and screenshots on the SPA; surface the per-area screenshots for review.
 - [x] 5.4 Root `package.json`: `build:admin` → `aube --filter @grocery-agent/admin-app run build`; add `dev:admin` + `scripts/dev-admin.mjs` (wrangler + Vite:5174, `/admin/api` proxy, signal-forwarding — the `dev-app.mjs` twin).
 - [x] 5.5 `ci.yml`: test job's admin build step → `aubr build:admin`; `admin-ui` job's screenshot path filter gains `packages/admin-app/**` + `packages/ui/**` and drops `scripts/build-admin.mjs`; `trigger-deploy` path filter gains `packages/admin-app/` (and drops the build script). `data-deploy.yml` needs no change (verify `aubr build:admin` resolves in its steps).
-- [ ] 5.6 `aubr test:app` green (member suite untouched — the shared seed and merged assets root still serve both).
+- [x] 5.6 `aubr test:app` green (member suite untouched — the shared seed and merged assets root still serve both).
 
 ## 6. Docs (same pass — no drift)
 
@@ -52,6 +52,6 @@
 
 ## 7. Ship
 
-- [ ] 7.1 `aubr typecheck`, `aubr test`, `aubr test:tooling` green across workspaces; `aubr build:admin` + `aubr build:app` populate `assets/` cleanly in either order.
-- [ ] 7.2 `aubr test:admin` + `aubr test:app` green; `openspec validate admin-spa --strict` green.
+- [x] 7.1 `aubr typecheck`, `aubr test`, `aubr test:tooling` green across workspaces; `aubr build:admin` + `aubr build:app` populate `assets/` cleanly in either order.
+- [x] 7.2 `aubr test:admin` + `aubr test:app` green; `openspec validate admin-spa --strict` green.
 - [ ] 7.3 After merge + deploy: `/admin` serves the SPA behind Access; a deep link (`/admin/normalize?tab=audits`) resolves; `/admin/api/status` returns the aggregate; a missing `/admin/assets/*` file 404s; `/mcp`, `/api`, `/cookbook`, `/health` unchanged.
