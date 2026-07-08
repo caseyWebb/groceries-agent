@@ -199,6 +199,20 @@ describe("readyToEatManager", () => {
     expect(() => mgr.update("ghost", { reject: true })).toThrowError(/not.*found|ghost/i);
   });
 
+  it("an unknown slug is not_found even when the patch also carries protected keys", () => {
+    // The slug lookup runs FIRST: the caller addressed a nonexistent item, and that
+    // is the more actionable error than what the patch happened to contain.
+    const mgr = readyToEatManager([{ name: "Lasagna", slug: "lasagna", meal: "dinner" }]);
+    try {
+      mgr.update("ghost", { slug: "renamed" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as ToolError).code).toBe("not_found");
+    }
+    expect(mgr.touched()).toBe(false);
+  });
+
   it("favorite and reject are mutually exclusive on update", () => {
     const existing = [{ name: "Lasagna", slug: "lasagna", meal: "dinner", reject: true }];
     const mgr = readyToEatManager(existing);

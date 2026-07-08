@@ -144,12 +144,16 @@ export function readyToEatManager(existing: Record<string, unknown>[]) {
       return slug;
     },
     /**
-     * Find an item by slug, apply updates. Throws not_found if absent. Only the
-     * documented mutable fields (READY_TO_EAT_MUTABLE_KEYS) may change — any other
-     * key throws validation_failed listing the offenders, and nothing is committed.
-     * `favorite` and `reject` are mutually exclusive: setting one true clears the other.
+     * Find an item by slug (not_found if absent — checked FIRST, so an unknown slug
+     * is reported as such regardless of what the patch carries), then apply updates.
+     * Only the documented mutable fields (READY_TO_EAT_MUTABLE_KEYS) may change — any
+     * other key throws validation_failed listing the offenders, and nothing is
+     * committed. `favorite` and `reject` are mutually exclusive: setting one true
+     * clears the other.
      */
     update(slug: string, updates: Record<string, unknown>) {
+      const idx = list.findIndex((it) => it.slug === slug);
+      if (idx < 0) throw new ToolError("not_found", `No ready-to-eat item with slug: ${slug}`, { slug });
       const rejected = Object.keys(updates).filter(
         (k) => !(READY_TO_EAT_MUTABLE_KEYS as readonly string[]).includes(k),
       );
@@ -160,8 +164,6 @@ export function readyToEatManager(existing: Record<string, unknown>[]) {
           { fields: rejected },
         );
       }
-      const idx = list.findIndex((it) => it.slug === slug);
-      if (idx < 0) throw new ToolError("not_found", `No ready-to-eat item with slug: ${slug}`, { slug });
       const next = { ...list[idx], ...updates };
       if (updates.favorite) next.reject = false;
       if (updates.reject) next.favorite = false;

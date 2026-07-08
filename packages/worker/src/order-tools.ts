@@ -16,6 +16,7 @@ import { normalizeIngredient, type MatchContext, type MatchResult } from "./matc
 import {
   computeToBuy,
   placeOrder,
+  type InCartAdvance,
   type NewMapping,
   type Override,
   type PlaceOrderDeps,
@@ -153,17 +154,19 @@ function makeCommitSkuCache(env: Env, getLocationId: () => Promise<string>) {
   };
 }
 
-/** Advance the resolved lines to status:in_cart, adding any missing list entries. */
+/** Advance the resolved lines to status:in_cart, adding any missing list entries;
+ *  returns the inserted-keys receipt the rollback compensates with. */
 function makeAdvanceInCart(env: Env, username: string) {
-  return async (lines: ResolvedLine[]): Promise<void> => {
-    await advanceInCartRows(env, username, lines, today());
+  return async (lines: ResolvedLine[]): Promise<InCartAdvance> => {
+    return advanceInCartRows(env, username, lines, today());
   };
 }
 
-/** Roll just-advanced lines back to status:active — the failed-cart-write compensation. */
+/** Undo a failed-cart-write advance: pre-existing rows back to status:active,
+ *  advance-inserted rows deleted (per the receipt). */
 function makeRollbackInCart(env: Env, username: string) {
-  return async (lines: ResolvedLine[]): Promise<void> => {
-    await rollbackInCartRows(env, username, lines);
+  return async (lines: ResolvedLine[], advance: InCartAdvance): Promise<void> => {
+    await rollbackInCartRows(env, username, lines, advance.inserted);
   };
 }
 

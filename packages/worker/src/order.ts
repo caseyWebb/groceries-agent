@@ -194,11 +194,20 @@ export interface PlaceOrderDeps {
   commitSkuCache(mappings: NewMapping[]): Promise<string | null>;
   /** Write the resolved lines to the Kroger cart. Throws on failure. */
   cartAdd(lines: ResolvedLine[]): Promise<void>;
-  /** Advance the resolved lines to status:in_cart in the grocery list (D1-backed). Throws on failure. */
-  advanceInCart(lines: ResolvedLine[]): Promise<void>;
-  /** Inverse of advanceInCart: roll just-advanced lines back to status:active (the
-   *  compensation for a failed cart write). Throws on failure. */
-  rollbackInCart(lines: ResolvedLine[]): Promise<void>;
+  /** Advance the resolved lines to status:in_cart in the grocery list (D1-backed),
+   *  inserting rows for lines not yet listed (menu-plan-derived needs). Returns the
+   *  receipt of what was INSERTED so a rollback can compensate exactly. Throws on failure. */
+  advanceInCart(lines: ResolvedLine[]): Promise<InCartAdvance>;
+  /** Undo an advanceInCart (the compensation for a failed cart write): pre-existing
+   *  rows flip back to status:active; rows the advance INSERTED (per the receipt) are
+   *  deleted rather than stranded as never-listed active items. Throws on failure. */
+  rollbackInCart(lines: ResolvedLine[], advance: InCartAdvance): Promise<void>;
+}
+
+/** The advanceInCart receipt: which canonical keys the advance INSERTED (vs updated) —
+ *  threaded into rollbackInCart so an inserted row is deleted, not flipped to active. */
+export interface InCartAdvance {
+  inserted: string[];
 }
 
 export interface PlaceOrderOptions {
@@ -351,8 +360,9 @@ export async function placeOrder(
   //    a cart write — makes a retried order double-add to the ADDITIVE, unreadable
   //    Kroger cart (silent, costs money). A failed advance skips the cart write
   //    entirely, so nothing was carted and the whole order is safe to retry.
+  let advance: InCartAdvance;
   try {
-    await deps.advanceInCart(resolved);
+    advance = await deps.advanceInCart(resolved);
     result.list = { advanced: true };
   } catch (e) {
     result.list = { advanced: false, error: msg(e) };
@@ -363,19 +373,20 @@ export async function placeOrder(
     return result;
   }
 
-  // 3. Cart write. On failure, roll the just-advanced items back to `active` so
-  //    the next order retries them. If the ROLLBACK itself fails, do NOT throw:
-  //    report { advanced: true, rolled_back: false } — the items are marked
-  //    in_cart with no cart write (a visible under-buy: the stale-cart reminder
-  //    and the human checkout surface it), and critically a retried place_order
-  //    will NOT re-add them (in_cart is filtered out of computeToBuy).
+  // 3. Cart write. On failure, undo the advance (pre-existing rows back to
+  //    `active`, advance-inserted rows deleted — per the receipt) so the next
+  //    order retries them. If the ROLLBACK itself fails, do NOT throw: report
+  //    { advanced: true, rolled_back: false } — the items are marked in_cart
+  //    with no cart write (a visible under-buy: the stale-cart reminder and the
+  //    human checkout surface it), and critically a retried place_order will
+  //    NOT re-add them (in_cart is filtered out of computeToBuy).
   try {
     await deps.cartAdd(resolved);
     result.cart = { written: true, count: resolved.length };
   } catch (e) {
     result.cart = { written: false, error: msg(e), code: codeOf(e) };
     try {
-      await deps.rollbackInCart(resolved);
+      await deps.rollbackInCart(resolved, advance);
       result.list = { advanced: false, rolled_back: true };
     } catch (rollbackErr) {
       result.list = { advanced: true, rolled_back: false, error: msg(rollbackErr) };
