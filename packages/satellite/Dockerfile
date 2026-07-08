@@ -22,15 +22,19 @@ COPY mise.toml ./
 RUN mise install
 
 # --- dependencies -------------------------------------------------------------
-# Copy the workspace manifests + lockfile first for a cached install layer. All three workspace
-# manifests are copied so the frozen `aube ci` matches `aube-lock.yaml` (which records every
-# importer); the satellite image thus also carries the worker's dev deps — a size cost accepted in
-# exchange for a lockfile-faithful, npm-free install. `@grocery-agent/contract` resolves at
-# runtime via tsx, so no build step is needed.
+# Copy the workspace manifests + lockfile first for a cached install layer. EVERY workspace
+# package's manifest is copied so the frozen `aube ci` matches `aube-lock.yaml` (which records
+# every importer — a missing one fails the frozen install); the satellite image thus also carries
+# the other packages' dev deps — a size cost accepted in exchange for a lockfile-faithful,
+# npm-free install. A new `packages/*` workspace must be added here or the release build breaks.
+# `@grocery-agent/contract` resolves at runtime via tsx, so no build step is needed.
 COPY pnpm-workspace.yaml package.json aube-lock.yaml ./
 COPY packages/contract/package.json packages/contract/package.json
 COPY packages/satellite/package.json packages/satellite/package.json
 COPY packages/worker/package.json packages/worker/package.json
+COPY packages/app/package.json packages/app/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY packages/admin-app/package.json packages/admin-app/package.json
 RUN mise exec -- aube ci
 
 # --- source -------------------------------------------------------------------
