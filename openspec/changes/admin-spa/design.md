@@ -394,3 +394,30 @@ None — serving order, route inventory, search-param mapping, harness port mech
 source, and the excluded surfaces are all settled above. (Archive note: this change must
 archive **after** `member-app-foundations` — its spec deltas write the post-P0 final text for
 requirements P0 also touches.)
+
+## Implementation notes
+
+- **Route-module shape:** the chained typed routes live in `src/admin/api.ts` (JSX-free from
+  stage 1, so the SPA could infer `AdminApp` while the SSR pages still existed);
+  `src/admin/app.ts` composes it (gate + dispatch) and re-exports the type — the
+  `"./admin-api"` export points at `app.ts` per D3. Pure structure; the D2 dispatch and the
+  route inventory are as specified.
+- **The status read carries `contractVersion`** (the Worker's `CONTRACT_VERSION`): the SSR
+  satellite row imported the constant directly; the SPA can't, so the aggregate carries it —
+  D4's props-verbatim posture, one field wider.
+- **The admin entry CSS ships no webfont `@import`.** The member app's Google-Fonts import,
+  copied here, render-blocked every navigation in the sandboxed harness browser (~13 s/page,
+  cascading into a wedged workerd) and made the bundle non-self-contained; the shared
+  `--font-*` stacks carry full system fallbacks. (`@source` directives for `packages/ui` are
+  required — Tailwind v4 does not scan workspace-linked packages; the member app already
+  does the same.)
+- **Config `needsConfirm` parsing:** the SSR island read the ToolError's `.detail` where the
+  route emits the fields top-level (`toShape()` spreads detail) — a latent mask the island's
+  client-side floor pre-check hid. The SPA parses the top-level shape, so the server-side
+  rateCap-ceiling confirm now actually surfaces; the knob state machine is unchanged.
+- **Radix dialogs add the standard top-right close control** (absent from the native
+  `<dialog>` markup); titles/fields/flows are otherwise verbatim, and the mint dialog's
+  tenant-binding control stays a native `<select>` (the harness asserts option semantics).
+- **Normalize sub-nav embellishments hydrate progressively:** with per-tab queries (D4), the
+  pill dots/counts fed by another tab's read render once that query has data — the SSR's one
+  composite read showed them on first paint. Assertion-invisible; noted for fidelity review.
