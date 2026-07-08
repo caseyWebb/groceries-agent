@@ -27,9 +27,9 @@ export class DiscoveryPage extends AdminPage {
 
 /** Discovery › Satellites (/admin/discovery/satellites) — the satellite ingest liveness view + the
  *  source-health audit (satellite-source-audit). The landmark is the unconditional Throughput section
- *  label (SSR, time-free). The audit hero SSR-renders the quality dimension for first paint and
- *  hydrates client/satellite-audit.tsx for the drill-down + quarantine toggle; the audit accessors
- *  below scope to a source row and retry the toggle click past hydration (time-free assertions only). */
+ *  label (time-free). The screen renders from the SPA's ["satellites"] query; the audit rows only
+ *  exist once that query resolves, so a plain click + visibility assertion suffices (auto-wait —
+ *  hydration is app-level, no per-island retry needed). */
 export class SatellitesPage extends AdminPage {
   readonly path = "/admin/discovery/satellites";
   readonly area = "discovery-satellites";
@@ -77,23 +77,20 @@ export class SatellitesPage extends AdminPage {
     return this.sourceRow(source).locator(".ig-drill");
   }
 
-  /** Toggle a source's drill-down open (retry the head click past island hydration). */
+  /** Toggle a source's drill-down open (plain click — the row renders after the query resolves). */
   async openDrilldown(source: string): Promise<Locator> {
     const drill = this.drilldown(source);
-    const head = this.sourceRow(source).locator(".ig-srcx-head");
-    await expect(async () => {
-      await head.click();
-      await expect(drill).toBeVisible({ timeout: 1_000 });
-    }).toPass();
+    await this.sourceRow(source).locator(".ig-srcx-head").click();
+    await expect(drill).toBeVisible();
     return drill;
   }
 
-  /** The quarantine confirm modal (native <dialog>, scoped by its labelled title). */
+  /** The quarantine confirm modal (Radix dialog, scoped by its accessible name). */
   quarantineConfirm(): DialogComponent {
-    return new DialogComponent(this.page.locator('dialog.dialog[aria-labelledby="satellite-quarantine-title"]'));
+    return new DialogComponent(this.page.getByRole("dialog", { name: /^Quarantine/ }));
   }
 
-  /** Open the confirm dialog from a source's recommendation chip (hydration-safe retry). */
+  /** Open the confirm dialog from a source's recommendation chip. */
   async openQuarantineConfirm(source: string): Promise<DialogComponent> {
     const dialog = this.quarantineConfirm();
     await dialog.openVia(this.quarantineButton(source));
@@ -105,12 +102,10 @@ export class SatellitesPage extends AdminPage {
     await this.quarantineConfirm().root.getByRole("button", { name: "Quarantine source" }).click();
   }
 
-  /** Un-quarantine a held source, retrying the click past island hydration (asserts it releases). */
+  /** Un-quarantine a held source (the hold clears optimistically — asserts it releases). */
   async unquarantine(source: string): Promise<void> {
     const held = this.quarantinedBlock(source);
-    await expect(async () => {
-      await this.unquarantineButton(source).click();
-      await expect(held).toBeHidden({ timeout: 1_000 });
-    }).toPass();
+    await this.unquarantineButton(source).click();
+    await expect(held).toBeHidden();
   }
 }

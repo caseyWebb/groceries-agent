@@ -1,6 +1,7 @@
-// /discovery/satellites — placeholder (screen lands with group 3).
+// /discovery/satellites — the satellite ingest liveness view + the source-health audit.
 import { createFileRoute } from "@tanstack/react-router";
+import { SatellitesScreen } from "../screens/satellites";
 
 export const Route = createFileRoute("/discovery/satellites")({
-  component: () => <p className="screen-loading">Satellites</p>,
+  component: SatellitesScreen,
 });
