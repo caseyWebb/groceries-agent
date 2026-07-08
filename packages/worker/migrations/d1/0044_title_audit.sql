@@ -1,4 +1,4 @@
--- 0043_title_audit — the one-shot convergence stamp for the corpus title re-audit
+-- 0044_title_audit — the one-shot convergence stamp for the corpus title re-audit
 -- (clean-discovery-import-titles / recipe-title-audit).
 --
 -- The scheduled title-audit pass (src/title-audit.ts) drains projected recipes with no row

@@ -181,7 +181,7 @@ The existing corpus converges through a new scheduled pass, `runTitleAuditJob`
 (`src/title-audit.ts`, logic/deps split like every other job), modeled on the
 normalization-decision-reaudit passes:
 
-- **Stamp table** (migration `0042_title_audit.sql`): `title_audit(slug TEXT PRIMARY KEY,
+- **Stamp table** (migration `0044_title_audit.sql`): `title_audit(slug TEXT PRIMARY KEY,
   audited_at INTEGER NOT NULL, outcome TEXT NOT NULL /* 'kept' | 'cleaned' */, before_title TEXT,
   after_title TEXT)`. A **sibling** table keyed by slug (like `recipe_facets`/`recipe_derived`)
   because the `recipes` table is a replace-all projection and cannot carry a durable stamp.

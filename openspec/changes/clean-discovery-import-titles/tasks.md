@@ -58,7 +58,7 @@ serial track: §1–§5 all touch the discovery/classify/scheduled() surfaces.
 
 ## 4. D1 + the title re-audit pass
 
-- [x] 4.1 Migration `packages/worker/migrations/d1/0042_title_audit.sql` (next available):
+- [x] 4.1 Migration `packages/worker/migrations/d1/0044_title_audit.sql` (next available):
       `title_audit(slug TEXT PRIMARY KEY, audited_at INTEGER NOT NULL, outcome TEXT NOT NULL,
       before_title TEXT, after_title TEXT)`. Header comment: one-shot convergence stamp for the
       corpus title re-audit (`audited_at` pattern; new writes born-stamped); sibling-keyed to the

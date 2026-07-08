@@ -30,7 +30,7 @@ Two convergence problems, per the repo's pipeline-not-surgery rule:
 ## Impact
 
 - **Worker (`packages/worker/src/`)**: `discovery-classify.ts` (prompt + exemplars + guarded title swap in `toFrontmatter`), `discovery.ts` (slug basis = parenthetical-stripped title), `discovery-sweep.ts` (collision suffix in `importRecipe`; born-stamp on import), `discovery-tools.ts` (born-stamp in `create_recipe`), new `title-audit.ts` (the re-audit job, logic/deps split for unit tests), `index.ts` (`scheduled()` phase-1 wiring), `health.ts` (`HEALTH_JOBS` + "title-audit" — the admin Jobs/Health views pick it up generically from the registry; **no admin-app/ui/Playwright surface changes**).
-- **One D1 migration**: `migrations/d1/0042_title_audit.sql` (next available) — the `title_audit` stamp table. All access via `src/db.ts` helpers (throw-free `storage_error` discipline).
+- **One D1 migration**: `migrations/d1/0044_title_audit.sql` (next available) — the `title_audit` stamp table. All access via `src/db.ts` helpers (throw-free `storage_error` discipline).
 - **No tool contract changes**: no new/changed MCP tool params or returns. `create_recipe`'s described behavior gains one nuance (slug derives from the dish name before any parenthetical) — its tool description and `docs/TOOLS.md` note it, same pass.
 - **Docs (lockstep)**: `docs/SCHEMAS.md` (the `title_audit` table), `docs/ARCHITECTURE.md` (the title-audit pass in the cron-job list), `docs/TOOLS.md` (`create_recipe` slug nuance). No persona change (`AGENT_INSTRUCTIONS.md` untouched — the agent-facing import flow already owns conversational title cleaning; nothing new to instruct).
 - **No member/admin app changes**; no `wrangler.jsonc` changes (no new binding, no new route); deploy-merge allowlist untouched.
