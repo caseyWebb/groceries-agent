@@ -4,6 +4,7 @@
 // refetch-on-focus, no persister, no offline layer (D3). An Access-expired error never
 // retries (D7 — the overlay is the answer, not another attempt).
 import { QueryClient, queryOptions, keepPreviousData } from "@tanstack/react-query";
+import type { InferResponseType } from "hono/client";
 import { api, unwrap, AccessExpiredError } from "./api";
 
 export const queryClient = new QueryClient({
@@ -162,3 +163,27 @@ export const ingestKeysQuery = queryOptions({
   queryKey: ["ingest-keys"],
   queryFn: () => unwrap(api.admin.api.ingest.keys.$get()),
 });
+
+// ── Inferred payload types (the routes' c.json shapes, via hc — no hand decoders) ──
+export type StatusData = InferResponseType<typeof api.admin.api.status.$get>;
+export type TenantsData = InferResponseType<typeof api.admin.api.tenants.$get>;
+export type TenantRow = TenantsData["tenants"][number];
+export type MemberData = InferResponseType<(typeof api.admin.api.members)[":id"]["$get"]>;
+export type RecipesData = InferResponseType<typeof api.admin.api.data.recipes.$get>;
+export type RecipeDetailData = InferResponseType<(typeof api.admin.api.data.recipes)[":slug"]["$get"]>;
+export type StoresData = InferResponseType<typeof api.admin.api.data.stores.$get>;
+export type StoreDetailData = InferResponseType<(typeof api.admin.api.data.stores)[":slug"]["$get"]>;
+export type GuidanceData = InferResponseType<typeof api.admin.api.data.guidance.$get>;
+export type InsightsData = InferResponseType<typeof api.admin.api.insights.$get>;
+export type UsageData = InferResponseType<typeof api.admin.api.usage.$get>;
+export type LogsRunsData = InferResponseType<typeof api.admin.api.logs.runs.$get>;
+export type DiscoveryData = InferResponseType<typeof api.admin.api.discovery.candidates.$get>;
+export type SatellitesData = InferResponseType<typeof api.admin.api.satellites.$get>;
+export type NormalizePageData = InferResponseType<typeof api.admin.api.normalization.page.$get>;
+export type NormalizeNodesData = InferResponseType<typeof api.admin.api.normalization.nodes.$get>;
+export type NormalizeAuditData = InferResponseType<typeof api.admin.api.normalization.audit.$get>;
+export type ReconcileData = InferResponseType<typeof api.admin.api.reconcile.$get>;
+export type DiscoveryConfigData = InferResponseType<typeof api.admin.api.discovery.config.$get>;
+export type OperatorConfigData = InferResponseType<(typeof api.admin.api)["operator-config"]["$get"]>;
+export type CorpusData = InferResponseType<(typeof api.admin.api.corpus)[":table"]["$get"]>;
+export type IngestKeysData = InferResponseType<typeof api.admin.api.ingest.keys.$get>;

@@ -1,23 +1,21 @@
-// A native <dialog> (the panel's only modal primitive — Basecoat CSS-only, opened by island
-// state via showModal()). `expectOpen` asserts the `open` JS property, the robust check for a
-// native dialog (its element box can read oddly to visibility heuristics). `openVia` retries the
-// trigger click until the dialog reports open, absorbing island-hydration timing: the click
-// handlers attach on hydration, and a click that lands before them is silently lost.
+// A modal dialog (the shared Radix Dialog/AlertDialog from @grocery-agent/ui — role="dialog"
+// with an accessible name from its title). Construct with the dialog's root locator, e.g.
+// `page.getByRole("dialog", { name: "Invite member" })`. Hydration is one-shot at app boot
+// (not per-island), and triggers only render once their screen's query has resolved, so a
+// plain click + visibility assertion replaces the old native-<dialog> open-retry.
 import { expect, type Locator } from "@playwright/test";
 
 export class DialogComponent {
   constructor(readonly root: Locator) {}
 
   async expectOpen(): Promise<void> {
-    await expect(this.root).toHaveJSProperty("open", true);
+    await expect(this.root).toBeVisible();
   }
 
-  /** Click `trigger` until the dialog opens (retry beats a pre-hydration lost click). */
+  /** Click `trigger` and assert the dialog opened. */
   async openVia(trigger: Locator): Promise<void> {
-    await expect(async () => {
-      await trigger.click();
-      await expect(this.root).toHaveJSProperty("open", true, { timeout: 1_000 });
-    }).toPass();
+    await trigger.click();
+    await this.expectOpen();
   }
 
   title(text: string): Locator {
