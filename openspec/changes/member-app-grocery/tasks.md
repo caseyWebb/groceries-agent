@@ -105,24 +105,24 @@ pieces by role and the implementer binds to the landed actuals.
 
 ## 5. App: grocery page derived view + order flow (D6, D7, D11, D12)
 
-- [ ] 5.1 Grocery page reads `GET /api/grocery/to-buy` (+ the P1 list read for row-level
+- [x] 5.1 Grocery page reads `GET /api/grocery/to-buy` (+ the P1 list read for row-level
   state): render to-buy lines with `origin` attribution ("from your plan" cue on virtual
   rows, `for_recipes` links), the "Already in your pantry" section (verify → P1 pantry-verify;
   stale-perishable flag from `last_verified_at`; "Buy fresh" → materialize add), the
   `underived` quiet notice, and the in-cart group (P1 clear-purchased kept).
-- [ ] 5.2 Materialize-on-edit: editing/pinning a virtual row issues the P1 add upsert
+- [x] 5.2 Materialize-on-edit: editing/pinning a virtual row issues the P1 add upsert
   (`source:"menu"`, carried `for_recipes`, edits) — class (b), replay-safe; explicit rows keep
   P1 behaviors. No remove affordance on virtual rows (design D6's real-action mapping).
-- [ ] 5.3 Order dialog (Kroger-gated by the P1 profile `kroger` state + `preferences.stores`):
+- [x] 5.3 Order dialog (Kroger-gated by the P1 profile `kroger` state + `preferences.stores`):
   stale-cart warning when `in_cart` is non-empty; preview table (resolved lines with fresh
   price/on-sale, checkpoint candidate picker → `overrides`, partials confirm →
   `include_partials`, assumed-quantity counts → `quantities`, per-line exclude → `exclude`);
   commit renders each write's result independently — never "cart populated" on
   `cart.written:false`; `reauth_required` → re-link CTA over the P1 kroger-login-url read.
   The commit mutation is **online-only** (never persisted/replayed).
-- [ ] 5.4 "Mark order placed" on the in-cart group → PATCH `status:"ordered"` per item
+- [x] 5.4 "Mark order placed" on the in-cart group → PATCH `status:"ordered"` per item
   (explicit set, class (b)); transition-error rendering.
-- [ ] 5.5 UI built from the design bundle's existing language (subs-panel section pattern,
+- [x] 5.5 UI built from the design bundle's existing language (subs-panel section pattern,
   Basecoat dialog/list); record the D11 deviations in the PR for the future Claude Design
   pass.
 

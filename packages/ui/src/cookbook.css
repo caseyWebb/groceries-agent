@@ -3,7 +3,9 @@
    truth; visual values match it pixel-for-pixel). Adaptations, not redesigns:
    `html.dark` → `.dark` (the app's theme class), Basecoat's `.btn` → the vendored
    shadcn button's `[data-slot="button"]`. The propose flow's slice (app-propose.css)
-   is ported below; later surfaces (substitutions, store picker, pantry-have panel,
+   is ported below, as is the grocery pantry-have panel; the order panel extends the
+   bundle's subs-panel section pattern (member-app-grocery D11 — flagged for a
+   companion Claude Design pass). Later surfaces (substitutions, store picker,
    quick-login roster) are omitted until their phases land.
    The `.input/.select/.textarea` marker classes ride ALONGSIDE the shadcn primitives
    where the mock sizes a control contextually. */
@@ -294,6 +296,70 @@ ul.recipes > li:last-child { border-bottom: 0; }
 .g-for a:hover { text-decoration: underline; }
 .g-note { font-size: var(--text-xs); color: var(--muted-foreground); }
 .g-cart-group { margin-top: 1.5rem; }
+.g-origin { font-size: var(--text-xs); color: var(--brand); border: 1px solid color-mix(in oklch, var(--primary) 40%, var(--border)); background: color-mix(in oklch, var(--primary) 10%, transparent); border-radius: 2rem; padding: 0.05rem 0.5rem; }
+.g-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-bottom: 1rem; }
+.g-underived { margin: 0 0 1rem; font-size: var(--text-xs); color: var(--muted-foreground); }
+
+/* ── grocery pantry-have panel (ported from app.css) ─────────────────────── */
+.pantry-have { border: 1px solid var(--border); background: color-mix(in oklch, var(--muted) 30%, transparent); border-radius: var(--radius-lg); padding: 0.9rem 1.1rem 1rem; margin-bottom: 1.5rem; }
+.ph-head h2 { display: flex; align-items: center; gap: 0.45rem; font-size: var(--text-base); font-weight: 600; }
+.ph-head h2 svg { width: 1rem; height: 1rem; color: #1f8a5b; }
+.dark .ph-head h2 svg { color: #5bd2a0; }
+.ph-head p { margin-top: 0.2rem; color: var(--muted-foreground); font-size: var(--text-sm); max-width: 34rem; line-height: 1.5; }
+.ph-list { list-style: none; margin: 0.9rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.ph-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.7rem; padding: 0.6rem 0.75rem; border-radius: var(--radius-md); background: var(--card); box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 7%, transparent); }
+.ph-item.stale { box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent); }
+.ph-have { width: 1.55rem; height: 1.55rem; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border-radius: 9999px; background: color-mix(in oklch, #1f8a5b 16%, transparent); color: #1f8a5b; }
+.ph-have svg { width: 0.9rem; height: 0.9rem; }
+.dark .ph-have { color: #5bd2a0; }
+.ph-main { min-width: 0; }
+.ph-top { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.ph-name { font-size: var(--text-sm); font-weight: 500; text-transform: capitalize; }
+.ph-qty { font-size: var(--text-xs); color: var(--muted-foreground); }
+.ph-sub { margin-top: 0.3rem; font-size: var(--text-xs); color: var(--muted-foreground); display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.ph-sep { color: var(--border); }
+.ph-flag { display: inline-flex; align-items: center; gap: 0.25rem; font-size: var(--text-xs); padding: 0.05rem 0.5rem; border-radius: 2rem; border: 1px solid var(--border); color: var(--muted-foreground); }
+.ph-flag svg { width: 0.75rem; height: 0.75rem; }
+.ph-flag.warn { color: #b06a12; border-color: color-mix(in oklch, #d9931f 40%, var(--border)); background: color-mix(in oklch, #d9931f 10%, transparent); }
+.dark .ph-flag.warn { color: #f0b45f; }
+.ph-actions { display: inline-flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; }
+.ph-actions [data-slot="button"] svg { width: 0.85rem; height: 0.85rem; }
+
+/* ── order panel (the subs-panel section pattern, extended — D11) ────────── */
+.order-panel { border: 1px solid color-mix(in oklch, var(--primary) 35%, var(--border)); background: color-mix(in oklch, var(--primary) 6%, transparent); border-radius: var(--radius-lg); padding: 1rem 1.1rem 1.1rem; margin-bottom: 1.5rem; }
+.order-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.order-head h2 { display: flex; align-items: center; gap: 0.45rem; font-size: var(--text-base); font-weight: 600; }
+.order-head h2 svg { width: 1rem; height: 1rem; color: var(--brand); }
+.order-head p { margin-top: 0.2rem; color: var(--muted-foreground); font-size: var(--text-sm); max-width: 30rem; }
+.order-warn { margin-top: 0.9rem; padding: 0.6rem 0.75rem; border-radius: var(--radius-md); border: 1px solid color-mix(in oklch, #d9931f 40%, var(--border)); background: color-mix(in oklch, #d9931f 10%, transparent); color: #b06a12; font-size: var(--text-sm); }
+.dark .order-warn { color: #f0b45f; }
+.order-warn svg { width: 1rem; height: 1rem; flex: 0 0 auto; vertical-align: -0.15rem; margin-right: 0.3rem; }
+.order-warn label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; font-size: var(--text-xs); cursor: pointer; }
+.order-list { list-style: none; margin: 0.9rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.order-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 0.6rem 0.75rem; border-radius: var(--radius-md); background: var(--card); box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 7%, transparent); }
+.order-row.excluded { opacity: 0.5; }
+.order-row.excluded .order-name { text-decoration: line-through; }
+.order-line { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; min-width: 0; }
+.order-name { font-size: var(--text-sm); font-weight: 500; text-transform: capitalize; }
+.order-pick { font-size: var(--text-xs); color: var(--muted-foreground); }
+.order-price { font-size: var(--text-xs); color: var(--muted-foreground); }
+.order-price.sale { color: var(--brand); font-weight: 600; }
+.order-actions { display: flex; align-items: center; gap: 0.4rem; }
+.order-qty { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--text-xs); color: var(--muted-foreground); }
+.order-qty input { width: 3.2rem; }
+.order-sub { margin-top: 0.3rem; font-size: var(--text-xs); color: var(--muted-foreground); display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; width: 100%; }
+.order-cands { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; width: 100%; }
+.order-cands label { display: flex; align-items: center; gap: 0.4rem; font-size: var(--text-xs); cursor: pointer; }
+.order-section-h { margin: 1rem 0 0; font-size: var(--text-sm); font-weight: 600; }
+.order-foot { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.order-result { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.order-result-row { display: flex; align-items: flex-start; gap: 0.5rem; font-size: var(--text-sm); padding: 0.45rem 0.6rem; border-radius: var(--radius-md); background: var(--card); box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 7%, transparent); }
+.order-result-row svg { width: 1rem; height: 1rem; flex: 0 0 auto; margin-top: 0.1rem; }
+.order-result-row.ok svg { color: #1f8a5b; }
+.dark .order-result-row.ok svg { color: #5bd2a0; }
+.order-result-row.fail { color: #b06a12; }
+.dark .order-result-row.fail { color: #f0b45f; }
+.order-empty { margin-top: 0.9rem; color: var(--muted-foreground); font-size: var(--text-sm); }
 
 /* ── pantry ──────────────────────────────────────────────────────────────── */
 .pantry-group { margin-bottom: 0.5rem; }

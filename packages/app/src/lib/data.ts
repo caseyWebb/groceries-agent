@@ -55,6 +55,82 @@ export interface GroceryRow {
   ordered_at: string | null;
 }
 
+// The derived to-buy view (member-app-grocery D1) — the shape GET /api/grocery/to-buy
+// serves (one shared op with the MCP read_to_buy tool).
+export interface ToBuyLine {
+  name: string;
+  quantity: number;
+  assumed_quantity: boolean;
+  for_recipes: string[];
+  origin: "list" | "plan" | "both";
+  key: string;
+  kind: "grocery" | "household" | "other";
+  domain: string;
+  note?: string | null;
+}
+
+export interface PantryCovered {
+  name: string;
+  for_recipes: string[];
+  on_hand: { quantity?: string; category?: string; last_verified_at?: string };
+}
+
+export interface ToBuyView {
+  to_buy: ToBuyLine[];
+  pantry_covered: PantryCovered[];
+  in_cart: { name: string; added_at: string }[];
+  underived: string[];
+}
+
+// The order operation's result (member-app-grocery D7) — POST /api/grocery/order's JSON
+// (the place_order tool's exact shape; the Worker exports it as PlaceOrderOutcome).
+export interface OrderCandidate {
+  sku: string;
+  brand: string;
+  size: string | null;
+  price: { regular: number; promo: number };
+  on_sale: boolean;
+  unit_price?: number;
+}
+
+export interface OrderResolvedLine {
+  name: string;
+  sku: string;
+  brand: string;
+  size: string | null;
+  quantity: number;
+  assumed_quantity: boolean;
+  price?: { regular: number; promo: number };
+  on_sale?: boolean;
+}
+
+export interface OrderCheckpointLine {
+  name: string;
+  kind: "ambiguous" | "unavailable";
+  candidates?: OrderCandidate[];
+  message: string;
+}
+
+export interface OrderOutcome {
+  resolved: OrderResolvedLine[];
+  checkpoint: OrderCheckpointLine[];
+  sku_cache: { committed: boolean; error?: string };
+  cart: { written: boolean; count?: number; error?: string; code?: string };
+  list: { advanced: boolean; error?: string };
+  preview: boolean;
+  partials: { name: string; for_recipes: string[] }[];
+  underived: string[];
+}
+
+export interface OrderRequest {
+  menu_needs?: { name: string; quantity?: number; for_recipes?: string[] }[];
+  quantities?: Record<string, number>;
+  include_partials?: string[];
+  overrides?: { name: string; sku: string; brand?: string; size?: string | null }[];
+  exclude?: string[];
+  preview?: boolean;
+}
+
 export interface PantryRow {
   name: string;
   quantity?: string;
@@ -206,6 +282,14 @@ export function useGrocery() {
     queryKey: ["grocery"],
     staleTime: STALE_MS,
     queryFn: async () => jsonOf<{ items: GroceryRow[] }>(await api.api.grocery.$get()),
+  });
+}
+
+export function useToBuy() {
+  return useQuery({
+    queryKey: ["grocery", "to-buy"],
+    staleTime: STALE_MS,
+    queryFn: async () => jsonOf<ToBuyView>(await api.api.grocery["to-buy"].$get()),
   });
 }
 
