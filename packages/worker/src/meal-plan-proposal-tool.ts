@@ -362,14 +362,16 @@ export async function runProposeMealPlan(env: Env, tenant: Tenant, input: Propos
 
   // Nudge legibility (D4): a planner-picked main materially matched by the freeform phrase
   // or covered by a protein want says so. Locked/pinned mains were the CALLER's choice —
-  // the nudges didn't pick them, so they claim nothing.
+  // the nudges didn't pick them, so they claim nothing. Wants match case-insensitively —
+  // the same fold rankCandidates scores with, so a boosted main always earns its why line.
+  const proteinWantsLower = new Set((proteinWants ?? []).map((p) => p.toLowerCase()));
   for (const slot of result.plan) {
     if (!slot.main || slot.reason === "locked" || slot.recipe_pinned) continue;
     const vec = embeddings.get(slot.main.slug);
     if (freeform && freeformVec && vec && cosineSimilarity(freeformVec, vec) >= FREEFORM_WHY_FLOOR) {
       slot.why.push(`matches your ask “${freeform}”`);
     }
-    if (proteinWants && slot.main.protein && proteinWants.includes(slot.main.protein)) {
+    if (slot.main.protein && proteinWantsLower.has(slot.main.protein.toLowerCase())) {
       slot.why.push(`the ${slot.main.protein} you asked for`);
     }
   }

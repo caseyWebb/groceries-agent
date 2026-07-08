@@ -425,6 +425,14 @@ describe("vibe overrides + nudges (D4/D5)", () => {
     const proteins = new Set(r.plan.flatMap((s) => s.alternates.map((a) => a.protein)));
     expect([...proteins].some((p) => p !== "fish")).toBe(true);
   });
+
+  it("a mixed-case protein want still boosts AND earns its why line (case-insensitive end to end)", async () => {
+    const { env } = proposeEnv([SEAFOOD, COMFORT]);
+    const r = await runProposeMealPlan(env, TENANT, { ...BASE, nudges: { proteins: ["Fish"] } }, stubDeps(env));
+    const fishMain = r.plan.find((s) => s.main?.protein === "fish");
+    expect(fishMain).toBeDefined();
+    expect(fishMain!.why.join(" ")).toContain("the fish you asked for");
+  });
 });
 
 describe("weather-category legibility (D9)", () => {
