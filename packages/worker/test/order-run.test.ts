@@ -173,6 +173,7 @@ describe("runPlaceOrder — unchanged baseline (no plan, no new params)", () => 
       commitSkuCache: async () => null,
       cartAdd: async () => {},
       advanceInCart: async () => {},
+      rollbackInCart: async () => {},
     };
     const expected = await placeOrder(deps, to_buy, { preview: true, resolveKey: (n) => ctx.resolve(n) });
 

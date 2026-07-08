@@ -556,3 +556,27 @@ export async function advanceInCartRows(
   }
   if (stmts.length > 0) await db(env).batch(stmts);
 }
+
+/**
+ * Roll just-advanced lines back from status:in_cart to `active` — the inverse of
+ * `advanceInCartRows`, the compensation `place_order` runs when the cart write fails
+ * after the pre-write advance. UPDATE-ONLY and in_cart-guarded: a line with no row is
+ * skipped (never inserted), and a row in any other status (`active`, `ordered`) is left
+ * alone — only the advance this call compensates is undone. Mirrors the advance's keying.
+ */
+export async function rollbackInCartRows(
+  env: Env,
+  tenant: string,
+  lines: { name: string }[],
+): Promise<void> {
+  const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
+  const current = await readGroceryList(env, tenant);
+  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
+  const stmts: D1PreparedStatement[] = [];
+  for (const line of lines) {
+    const existing = byKey.get(ctx.resolve(line.name));
+    if (!existing || existing.status !== "in_cart") continue;
+    stmts.push(groceryUpsertStmt(env, tenant, { ...existing, status: "active" }, ctx.resolve));
+  }
+  if (stmts.length > 0) await db(env).batch(stmts);
+}

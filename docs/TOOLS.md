@@ -643,9 +643,9 @@ Get current prices for a specific list of ingredients (used for menu pre-pass). 
 - `location_id` (string, optional) — override the store location for this call; defaults to `preferences.stores.preferred_location`. Use when querying a specific store that differs from the primary.
 
 **Returns:**
-- `{ prices: [{ ingredient, products: [{ sku, brand, description, size, price: { regular, promo }, on_sale, available: { curbside, delivery }, fulfillment: { curbside, delivery, inStore }, aisleLocation: { number, description, side? } | null, inStore: boolean }] }] }`
+- `{ prices: [{ ingredient, products: [{ sku, brand, description, size, price: { regular, promo }, on_sale, available: { curbside, delivery, inStore }, aisleLocation: { number, description, side? } | null, inStore: boolean }] }] }`
 
-**Notes:** `products` is every fulfillable match for the term, ordered by Kroger relevance; an ingredient with nothing fulfillable returns `{ ingredient, products: [] }`. `price` is `{ regular, promo }`; `on_sale` is true only on a real discount (`promo > 0` **and** `promo < regular`) — a `promo` equal to `regular` is not a sale; `available` reflects curbside/delivery fulfillment at the preferred location — the public API exposes no live in-store stock. `inStore` (boolean, top-level on each product) is true when the item is carried in-store at the queried location. `aisleLocation` is present when the API returns aisle data for this product at the location — `{ number, description, side? }` — and null otherwise; use it for Kroger in-store aisle ordering (the `kroger-instore` branch of `shop-groceries`).
+**Notes:** `products` is every fulfillable match for the term, ordered by Kroger relevance; an ingredient with nothing fulfillable returns `{ ingredient, products: [] }`. `price` is `{ regular, promo }`; `on_sale` is true only on a real discount (`promo > 0` **and** `promo < regular`) — a `promo` equal to `regular` is not a sale; `available` is the full fulfillment object `{ curbside, delivery, inStore }` at the preferred location (there is no separate `fulfillment` key) — the curbside/delivery flags are order fulfillability; the public API exposes no live in-store stock level. `inStore` (boolean, also surfaced top-level on each product, duplicating `available.inStore`) is true when the item is carried in-store at the queried location. `aisleLocation` is present when the API returns aisle data for this product at the location — `{ number, description, side? }` — and null otherwise; use it for Kroger in-store aisle ordering (the `kroger-instore` branch of `shop-groceries`).
 
 ### `match_ingredient_to_kroger_sku(ingredient, context)`
 
@@ -710,10 +710,10 @@ Deterministic price-per-unit comparison, used by the matching tiebreaker and whe
 
 ### `ready_to_eat_available()`
 
-Cross-reference the **caller's own** personal ready-to-eat catalog against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`fulfillment.curbside || fulfillment.delivery`) — the public Products API exposes no live in-store stock level. Each available item carries the **full list of fulfillable matching products** (relevance-ranked) so the agent can pick the right/cheapest one. An empty or absent catalog returns empty lists.
+Cross-reference the **caller's own** personal ready-to-eat catalog against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`available.curbside || available.delivery`) — the public Products API exposes no live in-store stock level. Each available item carries the **full list of fulfillable matching products** (relevance-ranked) so the agent can pick the right/cheapest one. An empty or absent catalog returns empty lists.
 
 **Returns:**
-- `{ available: { breakfast: [...{ name, slug, meal, products: [{ sku, brand, description, size, price, on_sale, available }] }], lunch: [...], dinner: [...] }, unavailable: [...{ name, slug, meal, catalog_sku }] }`
+- `{ available: { breakfast: [...{ name, slug, meal, products: [{ sku, brand, description, size, price: { regular, promo }, on_sale, available: { curbside, delivery, inStore }, aisleLocation: { number, description, side? } | null, inStore: boolean }] }], lunch: [...], dinner: [...] }, unavailable: [...{ name, slug, meal, catalog_sku }] }` — each product row is the same shape `kroger_prices` returns (`available` is the full fulfillment object; there is no separate `fulfillment` key).
 
 ### `kroger_login_url()`
 
@@ -806,7 +806,7 @@ Disposition or otherwise update a ready-to-eat item in the caller's catalog, add
 
 **Params:**
 - `slug` (string, required) — the item's stable key (from `add_draft_ready_to_eat`'s return or `ready_to_eat_available`)
-- `updates` (object): `{ favorite?, reject?, name?, category?, brand?, notes? }` — `favorite` and `reject` are the booleans of the disposition model, **mutually exclusive** (setting one clears the other); there is no `status` or `rating`. A rejected item is no longer suggested by `ready_to_eat_available`.
+- `updates` (object): `{ favorite?, reject?, name?, category?, brand?, notes? }` — `favorite` and `reject` are the booleans of the disposition model, **mutually exclusive** (setting one clears the other); there is no `status` or `rating`. A rejected item is no longer suggested by `ready_to_eat_available`. Those six are the **only** updatable keys — any other key (`slug`, `meal`, the discovery source, timestamps) is identity/provenance and is **rejected** with a structured `validation_failed` listing the offending keys; nothing is written.
 
 **Returns:**
 - `{ slug, updated_fields }` — D1-backed, no `commit_sha`
@@ -1011,13 +1011,18 @@ All sections optional. With no args it flushes the current to-buy set (list ∪ 
   partials:  [{ name, for_recipes }],
   sku_cache: { committed, error? },
   cart:      { written, count?, error?, code? },   // code carries reauth_required etc.
-  list:      { advanced, error? },        // D1-backed (no commit_sha)
+  list:      { advanced, rolled_back?, error? },   // D1-backed (no commit_sha); see partial-failure honesty below
   preview:   bool,
   underived: ["<slug>", ...]              // planned recipes whose items are NOT in this order
 }
 ```
 
-**Partial-failure honesty:** the SKU-cache commit and the cart write are **independent best-effort** operations (the SKU cache is a pure hint). Order: commit the cache → write the cart → advance the list to `in_cart` *only after a successful cart write*. So a cart failure leaves the list `active` (retryable, no silent drop) and **never** reports a populated cart; a cache-commit failure after a successful cart just re-resolves next time. If the cart write fails because the Kroger refresh token was rejected, `cart.code` is `reauth_required` — call [`kroger_login_url`](#kroger_login_url) and give the member the returned link to re-authorize (see `docs/SELF_HOSTING.md`).
+**Partial-failure honesty (double-add-safe write order):** the SKU-cache commit is **independent best-effort** (a pure hint); the advance/cart pair is ordered so a retry can never double-add. Order: commit the cache → advance the list to `in_cart` *before* the cart write → write the cart. The ordering exists because `PUT /v1/cart/add` is **additive and unreadable**: items left `active` after a successful cart write would be silently re-bought by a retry (costs money), whereas items marked `in_cart` without a cart write are a *visible* under-buy (the stale-cart reminder and the human checkout surface them) that a retry never compounds. The legs report honestly:
+- **Advance fails** → the cart write is **skipped entirely**: `list: { advanced: false, error }`, `cart: { written: false, error }` — nothing was carted, the whole order is safe to retry.
+- **Cart write fails** → the just-advanced items are **rolled back to `active`**: `list: { advanced: false, rolled_back: true }` — retryable, no silent drop, and the cart is **never** reported populated.
+- **The rollback itself fails** → `list: { advanced: true, rolled_back: false, error }` — the items are marked `in_cart` with **no** cart write. A retried `place_order` will **not** re-add them (`in_cart` is excluded from the to-buy set); recover via `update_grocery_list` (set them back to `active`) or let the stale-cart flow surface them.
+
+A cache-commit failure after a successful cart just re-resolves next time. If the cart write fails because the Kroger refresh token was rejected, `cart.code` is `reauth_required` — call [`kroger_login_url`](#kroger_login_url) and give the member the returned link to re-authorize (see `docs/SELF_HOSTING.md`).
 
 **Mapping commit (refresh-on-difference, aisle capture):** the SKU-cache commit covers **every** resolved line — cache-hit lines included, whose revalidation carries fresh data — and each mapping carries the resolved product's **aisle placement** (`aisle_number`/`aisle_description`/`aisle_side`, stamped `aisle_captured_at`) when Kroger reports one. A key already cached is skipped **only when its learned fields (SKU, brand, size, aisle) are identical**; a differing row is refreshed in place (with `last_used`), so mappings and placements **converge organically with each order** instead of freezing at first capture. The captured placements feed [`read_to_buy`](#read_to_buywith_aisles)'s `with_aisles` enrichment and the in-store walk.
 

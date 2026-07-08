@@ -12,6 +12,7 @@ import {
   updateGroceryRow,
   removeGroceryRow,
   advanceInCartRows,
+  rollbackInCartRows,
 } from "../src/session-db.js";
 import { fakeD1 } from "./fake-d1.js";
 
@@ -340,5 +341,22 @@ describe("grocery list → D1 rows", () => {
     const flour = tables.grocery_list.find((r) => r.normalized_name === "flour")!;
     expect(flour.status).toBe("in_cart");
     expect(flour.source).toBe("menu");
+  });
+
+  it("rollbackInCartRows reverts in_cart rows to active; update-only and status-guarded", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        grocery_list: [
+          { tenant: "everett", name: "Milk", normalized_name: "milk", quantity: "1", kind: "grocery", domain: "grocery", status: "in_cart", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: null },
+          { tenant: "everett", name: "Eggs", normalized_name: "eggs", quantity: "1", kind: "grocery", domain: "grocery", status: "ordered", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: "2026-06-02" },
+        ],
+      },
+    });
+    await rollbackInCartRows(env, "everett", [{ name: "Milk" }, { name: "Eggs" }, { name: "Flour" }]);
+    // The compensated in_cart row reverts; the ordered row is left alone (only the
+    // advance being compensated is undone); the unknown line is never inserted.
+    expect(tables.grocery_list.find((r) => r.normalized_name === "milk")!.status).toBe("active");
+    expect(tables.grocery_list.find((r) => r.normalized_name === "eggs")!.status).toBe("ordered");
+    expect(tables.grocery_list.find((r) => r.normalized_name === "flour")).toBeUndefined();
   });
 });
