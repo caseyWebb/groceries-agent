@@ -1,0 +1,11 @@
+-- 0042_reopen_detail_alias_audit — home-derivable-form-collapse.
+-- The purchasable-distinction hardening of the identity confirm (a `::detail` is legitimate
+-- only when it names a purchasable distinction; home-derivable cut/prep forms collapse to the
+-- base) re-opens the DRAINED detail-node alias backlog — 113 stamped rows in production — so
+-- the EXISTING rolling alias re-audit re-decides each mapping organically under the hardened
+-- rule: a home-derivable mapping (lime wedges → lime::form-wedges) re-points to its base and
+-- the stranded node merges away; a purchasable mapping (pickle chips → pickles::form-chips)
+-- re-derives its standing mapping and is kept + re-stamped. Human rows and base-target auto
+-- rows are out of scope. Data-gate change only — no schema shape change, so no docs/SCHEMAS.md
+-- drift; new capture/re-audit writes stay born-stamped and the pass re-quiesces once drained.
+UPDATE ingredient_alias SET audited_at = NULL WHERE source = 'auto' AND id LIKE '%::%';
