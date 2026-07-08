@@ -8,6 +8,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button, IconBook, Input, Label } from "@grocery-agent/ui";
 import { api, apiError } from "../lib/api";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
+import { restoreQueue, suspendQueue } from "../lib/online";
 import { ThemeFab } from "./_app";
 
 export const Route = createFileRoute("/login")({
@@ -42,25 +43,38 @@ function LoginPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setState({ status: "busy" });
-    const res = await api.api.session.$post({ json: { invite_code: code.trim() } }).catch(() => null);
-    if (res?.ok) {
-      const { tenant } = (await res.json()) as { tenant: { id: string } };
-      // A DIFFERENT member than the device's stamp purges first (member-app-offline
-      // D9): no query, queued mutation, or propose state crosses identities. The
-      // same member re-entering (session expiry) keeps the cache — offline
-      // continuity is the point.
-      const stamped = readTenantStamp();
-      if (stamped && stamped !== tenant.id) await purgeLocalMemberData();
-      writeTenantStamp(tenant.id);
-      void navigate({ to: "/" });
-      return;
+    // Close the cross-tenant replay window (member-app-offline D9): the stamp-mismatch
+    // purge below necessarily runs after the session POST resolves (the target tenant
+    // is unknown before that) — so whenever a stamp is already on the device, suspend
+    // the shared class (b) queue for the whole submission first. A fresh device (no
+    // stamp) has nothing queued to leak, so it skips suspension entirely.
+    const stamped = readTenantStamp();
+    if (stamped) suspendQueue();
+    try {
+      const res = await api.api.session.$post({ json: { invite_code: code.trim() } }).catch(() => null);
+      if (res?.ok) {
+        const { tenant } = (await res.json()) as { tenant: { id: string } };
+        // A DIFFERENT member than the device's stamp purges first (member-app-offline
+        // D9): no query, queued mutation, or propose state crosses identities. The
+        // same member re-entering (session expiry) keeps the cache — offline
+        // continuity is the point.
+        if (stamped && stamped !== tenant.id) await purgeLocalMemberData();
+        writeTenantStamp(tenant.id);
+        void navigate({ to: "/" });
+        return;
+      }
+      if (!res) {
+        setState({ status: "failed", error: "network", message: "Couldn't reach the server. Try again." });
+        return;
+      }
+      const err = await apiError(res);
+      setState({ status: "failed", error: err.error, message: messageFor(err.error, err.message) });
+    } finally {
+      // Restore in every branch: after the purge on a mismatch, immediately on a
+      // same-tenant re-entry or a failed attempt (restoreQueue is navigator-truthful —
+      // it never forces the queue back online when the device is really offline).
+      if (stamped) restoreQueue();
     }
-    if (!res) {
-      setState({ status: "failed", error: "network", message: "Couldn't reach the server. Try again." });
-      return;
-    }
-    const err = await apiError(res);
-    setState({ status: "failed", error: err.error, message: messageFor(err.error, err.message) });
   }
 
   return (

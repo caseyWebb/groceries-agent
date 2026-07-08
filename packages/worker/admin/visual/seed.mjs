@@ -18,6 +18,10 @@ export const SEED = {
   // The deterministic invite mapping (member-app-foundations): the code the APP suite's
   // login flow submits, resolving to the active member — one fixture set for both suites.
   invite: "PW-APP-INVITE",
+  // A second deterministic invite, resolving to the PENDING member (member-app-offline
+  // D9): the app suite's different-tenant login spec needs two real, independently
+  // loggable identities to exercise the stamp-mismatch purge for real.
+  inviteAlt: "PW-APP-INVITE-2",
   recipe: {
     slug: "viz-miso-salmon",
     title: "Miso-Glazed Salmon Bowls",
@@ -611,6 +615,7 @@ export function kvEntries() {
     ["TENANT_KV", `tenant:${members.active}`, JSON.stringify({ id: members.active })],
     ["TENANT_KV", `tenant:${members.pending}`, JSON.stringify({ id: members.pending })],
     ["TENANT_KV", `invite:${SEED.invite}`, members.active],
+    ["TENANT_KV", `invite:${SEED.inviteAlt}`, members.pending],
     ["OAUTH_KV", `grant:${members.active}:seed-grant`, JSON.stringify({ id: "seed-grant" })],
     ["KROGER_KV", `kroger:refresh:${members.active}`, "seed-refresh-token"],
     // The pre-warmed query-embedding cache entry (member-app-propose D12): the exact

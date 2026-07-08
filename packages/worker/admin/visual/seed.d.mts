@@ -7,6 +7,9 @@ export interface SeedLiterals {
   readonly members: { readonly active: string; readonly pending: string };
   /** The invite code mapped to the active member — the app suite's seeded login credential. */
   readonly invite: string;
+  /** A second invite code mapped to the PENDING member — the app suite's different-tenant
+   *  login spec (member-app-offline D9). */
+  readonly inviteAlt: string;
   /** The indexed recipe the Data list / Insights boards / cooking log rows reference. */
   readonly recipe: { readonly slug: string; readonly title: string; readonly source: string };
   /** The discovery-log fixture rows (a retryable error + a gated skip + an import). */

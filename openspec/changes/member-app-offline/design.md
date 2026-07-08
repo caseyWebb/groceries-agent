@@ -113,9 +113,10 @@ The `_app` loader must distinguish "the server said no" from "there is no server
   error / offline) → fall back to the stamped tenant and render the shell over the persisted
   cache; no stamp → redirect to `/login` (the SW serves it offline; its POST will fail with
   the existing "Couldn't reach the server" copy). Any other non-OK keeps today's throw.
-- Login as a **different** tenant than the stamp purges before establishing the new session;
-  same-tenant re-entry (the 90 d expiry case) keeps the cache — offline continuity is the
-  point (D9).
+- Login as a **different** tenant than the stamp purges once the session POST resolves and
+  names the new tenant (D9's queue-suspension mechanics close the replay window that gap
+  opens); same-tenant re-entry (the 90 d expiry case) keeps the cache — offline continuity
+  is the point (D9).
 
 ### D4 — The class (b) mutation registry: `mutationKey` + defaults, serializable variables
 
@@ -242,10 +243,12 @@ updates in the same pass.
 never replay into a new session), remove `cookbook:tenant` + `cookbook:propose-session`
 (P2's session is member data too). The theme key survives (device preference, not member
 data). Call sites: **logout** (before navigating to `/login`), **login as a different
-tenant** (stamp mismatch, before the session POST resolves into a redirect), **definitive
-401 at boot** (D3). Not called on transient errors, never on network failure — an offline
-device keeps its member's own data, which *is* the feature; the shared-device guarantee is
-tied to the deliberate identity events.
+tenant** (stamp mismatch — detectable only once the session POST resolves, so the shared
+class (b) queue is suspended across the submission and the purge runs on the response
+before the queue is restored; see the Implementation notes), **definitive 401 at boot**
+(D3). Not called on transient errors, never on network failure — an offline device keeps
+its member's own data, which *is* the feature; the shared-device guarantee is tied to the
+deliberate identity events.
 
 ### D10 — Offline UX affordances (recorded deviations, existing design language)
 
@@ -409,3 +412,15 @@ versions are all settled above against the landed code.
   vibes, proposals) stay interactive offline and queue, with the pill + queued replay as
   feedback — the spec's "optimistic state where the page renders the written row" is read
   through D4's narrower, binding list.
+- **A stamp-mismatch purge needs a suspended queue, not just a fast purge.** D9's purge can
+  only run once the session POST resolves — the target tenant is unknown before that — so a
+  microtask window exists between the response landing and the purge call where the shared
+  `class-b-writes` mutation scope could otherwise dispatch a PRIOR member's queued write
+  under the NEW member's fresh cookie (a cross-tenant replay). `login.tsx` closes this
+  deterministically rather than racing it: `lib/online.ts`'s `suspendQueue()`
+  (`onlineManager.setOnline(false)`) runs before the POST whenever a tenant stamp already
+  exists on the device (a stampless device has nothing queued to leak), and a `finally`
+  block calls `restoreQueue()` in every post-response branch — after the purge on a
+  mismatch, immediately on a same-tenant re-entry or a failed attempt. `restoreQueue()` is
+  navigator-truthful (same posture as `seedOnlineStateFromNavigator`): it never forces the
+  queue back online when the device is actually offline.

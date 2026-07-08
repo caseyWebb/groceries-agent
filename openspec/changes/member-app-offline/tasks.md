@@ -77,7 +77,7 @@ pieces by role and the implementer binds to the landed actuals.
 
 - [x] 4.1 `packages/worker/src/api/etag.ts`: stamp `Cache-Control: private, no-cache` on
   `jsonWithEtag`'s 200 and 304 arms (design D6); extend the existing etag unit coverage
-  (`test/api-member.test.ts` family) to pin the header on both arms.
+  (`test/api.test.ts` family) to pin the header on both arms.
 - [x] 4.2 `packages/app/src/lib/api.ts`: the fetch wrapper grows the `X-App-Build` response
   tap → a subscribable skew store (`useSyncExternalStore`-shaped; signal only when both ids
   are non-`"dev"` and differ) that also fires a throttled SW `registration.update()`.

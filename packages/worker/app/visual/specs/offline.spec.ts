@@ -9,22 +9,10 @@
 // seeded grocery state for the later specs.
 import { test, expect } from "../fixtures";
 import { persistedGroceryNames, waitForPersistedMutations, waitForPersistedQuery } from "../idb";
+import { becomeControlled } from "../sw";
 
 const ITEM_A = "offline croissants";
 const ITEM_B = "offline batteries";
-
-/** Wait for SW activation, then reload once so the page becomes controlled
- *  (registerType "prompt" has no clientsClaim — control needs a navigation). */
-async function becomeControlled(page: import("@playwright/test").Page): Promise<void> {
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    return true;
-  });
-  // domcontentloaded: under SW control page.route can no longer abort the theme's
-  // external font import, so never gate on the full load event.
-  await page.reload({ waitUntil: "domcontentloaded" });
-  expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
-}
 
 test("airplane mode opens the grocery list from the persisted cache; offline check-offs replay on reconnect — including across an offline reload", async ({
   asMember,

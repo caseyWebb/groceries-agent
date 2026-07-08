@@ -295,6 +295,7 @@ function GroceryPage() {
         <SubsPanel
           dismissed={dismissed}
           stagedPicks={stagedPicks}
+          online={online}
           onDismiss={dismiss}
           onSwap={(l, a) => stageSwap(l, a)}
           onSwapSibling={(l, s, k) => void swapSibling(l, s, k)}
@@ -634,6 +635,10 @@ const RELATION_LABEL: Record<SiblingSuggestion["relation"]["role"], string> = {
 function SubsPanel(props: {
   dismissed: ReadonlySet<string>;
   stagedPicks: Record<string, string>;
+  /** The substitutions panel is online-only anyway (D5/D12) — a cross-ingredient swap
+   *  is a real add+remove and must not silently no-op its delete if connectivity drops
+   *  mid-session while the panel is still open (D10's disable-with-hint posture). */
+  online: boolean;
   onDismiss: (rowKeys: string[]) => void;
   onSwap: (line: LineSuggestions, alt: SubstitutionAlternative) => void;
   onSwapSibling: (line: LineSuggestions, sib: SiblingSuggestion, rowKey: string) => void;
@@ -765,7 +770,13 @@ function SubsPanel(props: {
                       </Button>
                     )
                   ) : (
-                    <Button size="sm" data-testid="subs-accept" onClick={() => props.onSwapSibling(r.line, r.sib!, r.key)}>
+                    <Button
+                      size="sm"
+                      data-testid="subs-accept"
+                      disabled={!props.online}
+                      title={props.online ? undefined : "You're offline — substitutions need the store"}
+                      onClick={() => props.onSwapSibling(r.line, r.sib!, r.key)}
+                    >
                       Swap
                     </Button>
                   )}
