@@ -20,9 +20,12 @@ const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: "inherit",
 const now = Date.now();
 
 sh("node", ["scripts/build-admin.mjs"]);
-// The SPA build (packages/app → ../app from this package's cwd). Unstamped: the harness
-// runs the version-skew contract's local posture (both sides read "dev").
-sh("npx", ["vite", "build"], { cwd: "../app" });
+// The SPA build (packages/app → ../app from this package's cwd). BOTH sides are stamped
+// with one non-"dev" harness id (member-app-offline D11): baseline specs see no skew
+// (ids equal), the update spec can fabricate a differing header, and the persister's
+// buster is exercised with a real value.
+const HARNESS_BUILD = "pw-harness";
+sh("npx", ["vite", "build"], { cwd: "../app", env: { ...process.env, VITE_APP_BUILD: HARNESS_BUILD } });
 sh("npx", ["wrangler", "d1", "migrations", "apply", "DB", "--local"]);
 sh("npx", ["wrangler", "d1", "execute", "DB", "--local", "--command", d1Statements(now).join(" ")]);
 for (const [binding, key, value] of kvEntries()) {
@@ -59,4 +62,12 @@ const mdPath = join(tmp, "recipe.md");
 writeFileSync(mdPath, recipeMd);
 sh("npx", ["wrangler", "r2", "object", "put", `grocery-corpus/recipes/${SEED.recipe.slug}.md`, "--file", mdPath, "--local"]);
 
-sh("npx", ["wrangler", "dev", "--local", "--port", process.env.PW_APP_PORT || "8788"]);
+sh("npx", [
+  "wrangler",
+  "dev",
+  "--local",
+  "--port",
+  process.env.PW_APP_PORT || "8788",
+  "--var",
+  `APP_BUILD:${HARNESS_BUILD}`,
+]);

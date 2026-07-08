@@ -104,26 +104,26 @@ pieces by role and the implementer binds to the landed actuals.
 
 ## 5. Playwright (D11)
 
-- [ ] 5.1 `app/visual/setup.mjs`: stamp both sides with one id — `VITE_APP_BUILD=pw-harness`
+- [x] 5.1 `app/visual/setup.mjs`: stamp both sides with one id — `VITE_APP_BUILD=pw-harness`
   in the vite-build env, `--var APP_BUILD:pw-harness` on the `wrangler dev` invocation —
   replacing the unstamped-posture comment. Existing specs stay green (ids equal ⇒ no skew;
   buster now exercises a real value).
-- [ ] 5.2 Page-object/fixture additions: shell offline pill + reload banner + install item
+- [x] 5.2 Page-object/fixture additions: shell offline pill + reload banner + install item
   locators (`shell.page.ts`), grocery check-off state helpers as needed
   (`grocery.page.ts`), an IDB condition-poll helper (raw `indexedDB` via `page.evaluate` —
   persisted-client contents, post-purge absence).
-- [ ] 5.3 New `app/visual/specs/offline.spec.ts` (SW allowed, `/api` never routed): the
+- [x] 5.3 New `app/visual/specs/offline.spec.ts` (SW allowed, `/api` never routed): the
   acceptance sequence per design D11 — login → grocery → SW ready → controlled reload →
   IDB poll → `setOffline(true)` → reload → grocery renders from the persisted cache +
   offline pill (screenshot `grocery-offline`) → check-off (optimistic) →
   `setOffline(false)` → poll the server-visible `in_cart` via the browser's own `fetch`
   (the P1 cookie finding) → the across-reload variant (queued write survives an offline
   reload, replays on reconnect). Condition-polls only, no fixed sleeps.
-- [ ] 5.4 New `app/visual/specs/update.spec.ts` (`test.use({ serviceWorkers: "block" })`):
+- [x] 5.4 New `app/visual/specs/update.spec.ts` (`test.use({ serviceWorkers: "block" })`):
   fulfill an `/api` response with a differing `X-App-Build` → banner renders → Reload
   navigates; equal ids → no banner. Record the honest split in the spec header (the real
   waiting-SW trigger is library-provided and drives the same component — design D11).
-- [ ] 5.5 Extend `passthrough.spec.ts` (SW-controlled passthrough: visit `/` first, then
+- [x] 5.5 Extend `passthrough.spec.ts` (SW-controlled passthrough: visit `/` first, then
   `/cookbook` + `/health` are Worker-rendered) and the login/session spec (logout purge:
   IDB key gone, no `cookbook:tenant`/propose session in localStorage). `aubr test:app`
   green (web sessions: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`).

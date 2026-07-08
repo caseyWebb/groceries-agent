@@ -5,6 +5,20 @@
 import { onlineManager } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 
+/**
+ * Seed onlineManager from `navigator.onLine` — called by main.tsx before render.
+ * v5's manager boots `online = true` and only flips on window online/offline EVENTS;
+ * after an OFFLINE LAUNCH no event ever fires, so without this seed the queue would
+ * not pause and the pill would not show on the airplane-mode boot path.
+ * `navigator.onLine === false` reliably means offline (the true direction is the
+ * unreliable one), so seeding false-only is safe.
+ */
+export function seedOnlineStateFromNavigator(): void {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    onlineManager.setOnline(false);
+  }
+}
+
 export function useOnline(): boolean {
   return useSyncExternalStore(
     (onChange) => onlineManager.subscribe(onChange),

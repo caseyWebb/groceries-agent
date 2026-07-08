@@ -2,7 +2,7 @@
 // Reaching its landmark proves the whoami boot check resolved a session; the nav
 // helpers are how specs move between areas without addressing URLs.
 import { expect } from "@playwright/test";
-import { AppPage } from "./base.page";
+import { AppPage, type Locator } from "./base.page";
 
 export class ShellPage extends AppPage {
   readonly path = "/";
@@ -10,6 +10,27 @@ export class ShellPage extends AppPage {
 
   async landmark(): Promise<void> {
     await expect(this.page.getByTestId("app-shell")).toBeVisible();
+  }
+
+  /** The offline indicator (member-app-offline D10) — driven by onlineManager. */
+  offlinePill(): Locator {
+    return this.page.getByTestId("offline-pill");
+  }
+
+  /** The prompt-to-reload banner (D7) — renders on needRefresh OR detected skew. */
+  reloadBanner(): Locator {
+    return this.page.getByTestId("reload-banner");
+  }
+
+  /** The banner's member-initiated action. */
+  async applyReload(): Promise<void> {
+    await this.page.getByTestId("reload-apply").click();
+  }
+
+  /** The account menu's install affordance (rendered only when the browser offered
+   *  beforeinstallprompt and the app isn't standalone — usually absent in CI). */
+  installItem(): Locator {
+    return this.page.getByTestId("install-app");
   }
 
   /** The sidebar shows the signed-in member in the account button. */

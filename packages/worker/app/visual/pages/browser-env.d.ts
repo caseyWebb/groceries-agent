@@ -12,3 +12,30 @@ declare function fetch(
   input: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string },
 ): Promise<BrowserFetchResponse>;
+
+// member-app-offline additions: just enough service-worker / storage / IDB surface
+// for the offline, update, and purge specs' evaluate bodies.
+declare const navigator: {
+  onLine: boolean;
+  serviceWorker: { ready: Promise<unknown>; controller: object | null };
+};
+declare const window: Record<string, unknown>;
+declare const localStorage: {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+};
+interface BrowserIDBRequest<T> {
+  result: T;
+  onsuccess: (() => void) | null;
+  onerror: (() => void) | null;
+}
+interface BrowserIDBDatabase {
+  objectStoreNames: { contains(name: string): boolean };
+  transaction(
+    store: string,
+    mode: "readonly",
+  ): { objectStore(name: string): { get(key: string): BrowserIDBRequest<unknown> } };
+  close(): void;
+}
+declare const indexedDB: { open(name: string): BrowserIDBRequest<BrowserIDBDatabase> };

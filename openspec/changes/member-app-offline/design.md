@@ -367,3 +367,45 @@ scripts — no `aube.allowBuilds` entry is expected (confirm at `aube install`, 
 None — persistence boundary, purge semantics, mutation serializability, online-only negative
 space, ETag interplay, SW/update/skew mechanics, install posture, harness determinism, and
 versions are all settled above against the landed code.
+
+## Implementation notes (recorded during implementation)
+
+- **Serial replay needed a mutation scope.** v5's `resumePausedMutations()` continues paused
+  mutations with `Promise.all` (concurrent), and the reconnect resume is likewise unordered —
+  D4's "replays serially, in order" is therefore enforced with ONE shared mutation `scope`
+  (`{ id: "class-b-writes" }`) applied to every registry row's defaults. Scope is dehydrated
+  with the mutation (verified in query-core's hydration), so the ordering survives a reload;
+  it also lets dependent fire-and-forget pairs (materialize → set in-cart on a virtual line)
+  queue back-to-back without racing online.
+- **Restore is followed by an invalidate-all (replay first).** The provider's
+  `onSuccess` runs `resumePausedMutations().then(() => queryClient.invalidateQueries())` —
+  the documented persist pattern — because a restored snapshot can be YOUNGER than
+  `staleTime` yet stale against the server (observed in the harness: a raw-API write plus
+  an immediate reload rendered the pre-write snapshot with no refetch). Restored data
+  still renders instantly and an offline boot still makes zero requests (the
+  invalidation's fetches pause); on/at reconnect the refetch always lands AFTER the
+  queued replay, preserving convergence order.
+- **`onlineManager` is seeded from `navigator.onLine` at boot** (`lib/online.ts`, imported
+  for its side effect by `main.tsx`). v5's manager boots `online = true` and flips only on
+  window events — after an offline LAUNCH no event ever fires, so without the seed the queue
+  would not pause and the pill would not show on exactly the airplane-mode boot path this
+  change exists for. Seeding false-only (`!navigator.onLine`) sticks to the reliable
+  direction of that API.
+- **The purge and the persister's empty snapshot.** `purgeLocalMemberData()` deletes the IDB
+  key and clears the client per D9, but the still-running persister lawfully re-writes an
+  EMPTY snapshot when `clear()`'s cache events flush through its ~1 s throttle. The at-rest
+  guarantee is therefore "no member data" (key absent OR zero queries/mutations), which is
+  what the purge spec asserts — both states are stable on the login screen.
+- **The aisles-enriched to-buy read did NOT ride the shared wrapper** (it was a bare
+  `fetch`), contrary to the change brief's recollection — it now uses the exported `appFetch`
+  so the skew tap sees it.
+- **`ensureFavorite` (named in the implementation brief as a P4 actual) does not exist at
+  HEAD** — the landed favorite write is the plain optimistic explicit-set helper; its
+  semantics (explicit target state + optimistic overlay flip + settle-time invalidation of
+  overlay and picked-for-you) are preserved verbatim in the `["overlay","favorite"]` registry
+  row. Rapid double-clicks converge because both queued mutations carry explicit states.
+- **D4-scoped optimism only.** Optimistic `onMutate` edits cover grocery add/set/remove and
+  the favorite flip exactly as D4 lists; other class (b) surfaces (plan, pantry, log, notes,
+  vibes, proposals) stay interactive offline and queue, with the pill + queued replay as
+  feedback — the spec's "optimistic state where the page renders the written row" is read
+  through D4's narrower, binding list.

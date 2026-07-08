@@ -1,8 +1,9 @@
 // The login flow (member-session-auth + member-app-core D13): the restyled single
 // invite-code card logs into the app shell inside a real browser against a seeded
 // local `wrangler dev`; the uniform error and the logout gate hold.
-import { test } from "../fixtures";
+import { test, expect } from "../fixtures";
 import { SEED } from "../../../admin/visual/seed.mjs";
+import { expectNoPersistedMemberData, waitForPersistedQuery } from "../idb";
 
 test("an invalid code shows the uniform error", async ({ loginPage }) => {
   await loginPage.goto();
@@ -45,4 +46,25 @@ test("logout returns to login, and the gate holds afterward", async ({ loginPage
 test("an unauthenticated visit to / presents the login screen", async ({ loginPage, shellPage }) => {
   await shellPage.goto();
   await loginPage.landmark();
+});
+
+test("logout leaves no member data at rest (member-app-offline D9)", async ({ loginPage, shellPage, page }) => {
+  await loginPage.goto();
+  await loginPage.login(SEED.invite);
+  await shellPage.landmark();
+  // The shell's own subscriptions warm the allowlisted reads; wait until they are
+  // AT REST in IndexedDB (the persister throttles ~1 s) so the purge has real work.
+  await waitForPersistedQuery(page, "grocery");
+  // Plant a propose session + a theme preference: the purge removes member data
+  // (session) but keeps the device preference (theme).
+  await page.evaluate(() => {
+    localStorage.setItem("cookbook:propose-session", JSON.stringify({ seed: 1, nights: 3 }));
+    localStorage.setItem("cookbook:theme", "dark");
+  });
+  await shellPage.logout();
+  await loginPage.landmark();
+  await expectNoPersistedMemberData(page);
+  expect(await page.evaluate(() => localStorage.getItem("cookbook:tenant"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("cookbook:propose-session"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("cookbook:theme"))).toBe("dark");
 });

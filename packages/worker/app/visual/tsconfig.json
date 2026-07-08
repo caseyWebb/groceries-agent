@@ -17,5 +17,5 @@
     "esModuleInterop": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["pages", "specs", "fixtures.ts", "registry.ts", "../../admin/visual/seed.d.mts"]
+  "include": ["pages", "specs", "fixtures.ts", "registry.ts", "idb.ts", "../../admin/visual/seed.d.mts"]
 }

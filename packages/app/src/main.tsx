@@ -12,11 +12,14 @@ import {
   shouldDehydrateMutation,
 } from "./lib/persist";
 import { registerMutationDefaults } from "./lib/mutations";
+import { seedOnlineStateFromNavigator } from "./lib/online";
 import "./styles.css";
 
 // The class (b) registry's defaults must exist BEFORE restore: resumed paused
 // mutations re-bind their persisted variables to these functions by mutationKey.
 registerMutationDefaults(queryClient);
+// An offline LAUNCH fires no offline event — the queue must pause from frame one.
+seedOnlineStateFromNavigator();
 
 const router = createRouter({ routeTree });
 
@@ -43,7 +46,13 @@ createRoot(document.getElementById("root")!).render(
       client={queryClient}
       persistOptions={persistOptions}
       onSuccess={() => {
-        void queryClient.resumePausedMutations();
+        // Replay queued class (b) writes FIRST, then refetch everything: restored
+        // data renders instantly but is never trusted as fresh (a restored snapshot
+        // can be younger than staleTime yet stale against the server — two-writer
+        // posture). Offline, the invalidation's fetches pause and the restored data
+        // keeps rendering; resumePausedMutations itself stays pending until
+        // reconnect, so the refetch always lands AFTER the replay converges.
+        void queryClient.resumePausedMutations().then(() => queryClient.invalidateQueries());
       }}
     >
       <RouterProvider router={router} />

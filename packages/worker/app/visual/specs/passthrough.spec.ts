@@ -20,6 +20,29 @@ test("/cookbook answers with the Worker's SSR HTML, not the shell", async ({ req
   expect(html).not.toContain('<div id="root">'); // never the SPA shell
 });
 
+test("Worker routes stay Worker-rendered while service-worker-CONTROLLED", async ({ page }) => {
+  // The browser-level half of the denylist gate (member-app-offline D8; the static
+  // config drift test is tests/navigate-denylist.test.mjs): once the SW controls the
+  // page, its navigation fallback must still let Worker-owned paths through to the
+  // network, never answer them with the precached shell.
+  await page.goto("/");
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    return true;
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+
+  const cookbook = await page.goto("/cookbook");
+  expect(cookbook!.ok()).toBe(true);
+  const html = await cookbook!.text();
+  expect(html).toContain("<h1>Cookbook</h1>"); // the Worker's SSR page
+  expect(html).not.toContain('<div id="root">'); // never the SPA shell
+
+  const health = await page.goto("/health");
+  expect(health!.headers()["content-type"]).toContain("application/json"); // Worker JSON, not the shell
+});
+
 test("a client-side deep link falls back to the shell", async ({ request }) => {
   // /login is no static file and no Worker route — the single-page-application fallback
   // serves index.html and the client router resolves it (the login spec drives the UI).
