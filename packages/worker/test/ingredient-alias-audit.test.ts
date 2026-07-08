@@ -378,7 +378,7 @@ describe("auditAliases — calibration guards (normalization-audit-calibration)"
 
 describe("auditAliases — home-derivable form collapse (home-derivable-form-collapse)", () => {
   it("re-points a home-derivable cut form to its base and merges the stranded detail node (the lime fixture)", async () => {
-    // Issue #215: 'lime wedges' → lime::form-wedges was re-opened by the 0042 migration; the
+    // Issue #215: 'lime wedges' → lime::form-wedges was re-opened by the 0043 migration; the
     // hardened confirm answers SAME on the base. The alias re-points to `lime` (a re-commit,
     // fresh auto decided_at, born-stamped) and the detail node — its ONLY alias just moved —
     // is merged into `lime` via the representative pointer. The edge-audit pre-pass then
