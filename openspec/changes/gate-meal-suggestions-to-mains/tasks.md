@@ -9,25 +9,25 @@ Playwright surface change.
 
 ## 1. The shared meal-candidate predicate (D2, D3)
 
-- [ ] 1.1 Add an exported `isMealCourse(course: unknown): boolean` to
+- [x] 1.1 Add an exported `isMealCourse(course: unknown): boolean` to
   `packages/worker/src/recipes.ts` (beside `filterRecipes`, whose course normalization it
   mirrors): normalize scalar/array/missing to a lowercased trimmed string array; return true
   when the array is **empty** (fail-open — not yet classified) or **includes `"main"`**.
   Do NOT change `filterRecipes`' explicit `course` filter (its exact fail-closed containment is
   the `data-read-tools` contract).
-- [ ] 1.2 Unit tests (`test/recipes.test.ts` or the module's existing suite): the matrix —
+- [x] 1.2 Unit tests (`test/recipes.test.ts` or the module's existing suite): the matrix —
   `["main"]` true, `["main","side"]` true, `["side"]` false, `["component"]` false,
   `["baked_good"]` false, `[]` true, missing/null true, scalar `"main"` true, scalar `"side"`
   false, case/whitespace tolerated.
 
 ## 2. propose_meal_plan pool gate (D1, D4, D5)
 
-- [ ] 2.1 `packages/worker/src/meal-plan-proposal-tool.ts` `buildPool`: after computing the
+- [x] 2.1 `packages/worker/src/meal-plan-proposal-tool.ts` `buildPool`: after computing the
   effective facet set (vibe facets + slot pins), when it carries **no explicit `course`**,
   filter the `filterRecipes` survivors through `isMealCourse`. An explicit `facets.course`
   (from the vibe) suppresses the default entirely (that slot gates by containment as today).
   Locks and `slots[].recipe` pins are untouched (they resolve outside `buildPool`).
-- [ ] 2.2 Unit tests (`test/meal-plan-proposal*.test.ts`): a non-main (course `["side"]` /
+- [x] 2.2 Unit tests (`test/meal-plan-proposal*.test.ts`): a non-main (course `["side"]` /
   `["component"]`) never appears in any slot's main or `alternates`/`alt_similar`/
   `alt_different`; an empty-course recipe still pools (fail-open); a vibe with
   `facets: { course: "breakfast" }` pools breakfast recipes and applies no main-gate; a `lock`
@@ -38,11 +38,11 @@ Playwright surface change.
 
 ## 3. Cookbook rows gate (D1)
 
-- [ ] 3.1 `packages/worker/src/cookbook-rows.ts` `readPickedForYou`: skip candidates failing
+- [x] 3.1 `packages/worker/src/cookbook-rows.ts` `readPickedForYou`: skip candidates failing
   `isMealCourse(entry.course)` in the assembly loop (beside the favorite/reject/avoid skips).
-- [ ] 3.2 `readTrending`: skip qualified rows failing `isMealCourse` (beside the min-signal and
+- [x] 3.2 `readTrending`: skip qualified rows failing `isMealCourse` (beside the min-signal and
   reject guards).
-- [ ] 3.3 Unit tests (`test/cookbook-rows.test.ts`): a non-main near the favorites centroid is
+- [x] 3.3 Unit tests (`test/cookbook-rows.test.ts`): a non-main near the favorites centroid is
   absent from picked-for-you; an empty-course recipe remains eligible; a twice-cooked non-main
   is absent from trending while a twice-cooked main still trends; ordering/count semantics
   otherwise unchanged.

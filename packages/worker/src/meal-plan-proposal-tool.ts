@@ -17,7 +17,7 @@ import type { Env } from "./env.js";
 import type { Tenant } from "./tenant.js";
 import { runTool, ToolError } from "./errors.js";
 import { loadRecipeIndex, loadRecipeEmbeddings } from "./recipe-index.js";
-import { filterRecipes, type RecipeIndex } from "./recipes.js";
+import { filterRecipes, isMealCourse, type RecipeIndex } from "./recipes.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
 import { rankCandidates, resolveRankParams, type RankNudge, type SearchCandidate } from "./semantic-search.js";
 import { cosineSimilarity, embedTextsCached } from "./embedding.js";
@@ -395,7 +395,10 @@ export function registerProposeMealPlanTool(server: McpServer, env: Env, tenant:
  *  cron-captured vector — or the slot's override-phrase vector (D4). `pins` narrows the
  *  facet gate with precedence slot pin > global `maxTime` nudge > vibe facet (a `null`
  *  per-slot time cap LIFTS the vibe's own); `nudge`/`proteinWants` are the bounded
- *  additive rank terms (they reorder gate survivors, never admit past the gate). */
+ *  additive rank terms (they reorder gate survivors, never admit past the gate). The
+ *  survivors are additionally course-gated to MEAL candidates (`isMealCourse`) unless the
+ *  effective facet set carries an explicit `course`, so a component/side never fills a
+ *  dinner slot by default — and, by construction, never appears among the alternates. */
 function buildPool(
   effective: RecipeIndex,
   vibe: NightVibe,
@@ -423,7 +426,16 @@ function buildPool(
     if (pins.max_time_total === null) delete (facets as Record<string, unknown>).max_time_total;
     else if (typeof pins.max_time_total === "number") (facets as Record<string, unknown>).max_time_total = pins.max_time_total;
   }
-  const survivors = filterRecipes(effective, facets, now, owned).filter((s) => !excludeSet.has(s.slug.toLowerCase()));
+  let survivors = filterRecipes(effective, facets, now, owned).filter((s) => !excludeSet.has(s.slug.toLowerCase()));
+  // The default MEAL gate: the pool volunteers only meal candidates — course includes
+  // `main`, or is empty (fail-open: not-yet-classified is unknown, never hidden). An
+  // explicit `course` on the effective facet set (the vibe's escape hatch, e.g. a
+  // breakfast-for-dinner vibe) suppresses the default — that slot gates by containment
+  // alone, exactly as above. Locks and `slots[].recipe` pins resolve OUTSIDE this pool
+  // (resolveCandidate), so an explicit caller choice is never vetoed by course.
+  if ((facets as Record<string, unknown>).course === undefined) {
+    survivors = survivors.filter((s) => isMealCourse(s.frontmatter.course));
+  }
   const cands: SearchCandidate[] = [];
   for (const s of survivors) {
     const vec = embeddings.get(s.slug);
