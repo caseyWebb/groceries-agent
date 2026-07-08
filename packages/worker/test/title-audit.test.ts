@@ -10,6 +10,7 @@ import {
   type TitleAuditStamp,
 } from "../src/title-audit.js";
 import { parseMarkdown } from "../src/parse.js";
+import { serializeMarkdown } from "../src/serialize.js";
 import { contentHash, facetsFromFrontmatter } from "../src/description.js";
 import { facetGateHash } from "../src/recipe-classify.js";
 import { sqliteEnv } from "./sqlite-d1.js";
@@ -223,7 +224,7 @@ describe("groundingExcerpt", () => {
   });
 });
 
-describe("title_audit D1 accessors (real SQLite, migration 0043)", () => {
+describe("title_audit D1 accessors (real SQLite, migration 0044)", () => {
   function seedRecipes(raw: ReturnType<typeof sqliteEnv>["raw"], rows: Array<[string, string]>) {
     for (const [slug, title] of rows) {
       raw.prepare("INSERT INTO recipes (slug, title) VALUES (?, ?)").run(slug, title);
@@ -283,12 +284,18 @@ describe("downstream propagation (task 5.1)", () => {
   });
 
   it("the facet gate hash does NOT cover the title (no spurious reclassification)", () => {
-    const body = "## Ingredients\n- chicken\n\n## Instructions\n1. Roast.\n";
-    // The gate hashes the body + the authored Tier-B overrides — the title is not an input,
-    // so a title-only rewrite cannot flip it (same body, same overrides → same hash).
-    expect(facetGateHash(body, {})).toBe(facetGateHash(body, {}));
-    const withOverride = facetGateHash(body, { course: ["main"] });
-    expect(withOverride).not.toBe(facetGateHash(body, {}));
+    // The gate hashes the body + the authored Tier-B overrides — the title is not an input.
+    // Prove it end to end: run a title-only rewrite through the same parse → serialize
+    // funnel the audit uses and show the body (the gate's actual input) is byte-identical,
+    // so the gate hash cannot flip. Overrides still flip it (the gate's other input).
+    const file = serializeMarkdown({ ...baseFm(), title: "A Better Beer Can Chicken" }, "## Ingredients\n- chicken\n\n## Instructions\n1. Roast.\n");
+    const before = parseMarkdown(file);
+    const rewritten = serializeMarkdown({ ...before.frontmatter, title: "Beer Can Chicken" }, before.body);
+    const after = parseMarkdown(rewritten);
+    expect(after.body).toBe(before.body);
+    expect(facetGateHash(after.body, {})).toBe(facetGateHash(before.body, {}));
+    const withOverride = facetGateHash(before.body, { course: ["main"] });
+    expect(withOverride).not.toBe(facetGateHash(before.body, {}));
   });
 
   function baseFm(): Record<string, unknown> {
