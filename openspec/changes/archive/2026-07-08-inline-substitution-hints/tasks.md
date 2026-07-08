@@ -117,6 +117,10 @@ the landed actuals (`suggestSubstitutions`, `identitySiblings`, `computeToBuyVie
 
 ## 7. Verification
 
-- [ ] 7.1 `aubr typecheck && aubr test && aubr test:app` green; the enriched read exercised
+- [x] 7.1 `aubr typecheck && aubr test && aubr test:app` green; the enriched read exercised
   end-to-end against the seeded `wrangler dev` (inline hints + order-dialog pills) with no network
   egress; `openspec validate "inline-substitution-hints"` passes.
+  (This session: `aubr typecheck` clean, `aubr test` green — 2020 Worker unit tests passed,
+  `aubr test:app` green — 73 app specs passed. `openspec validate` could not run — the
+  `openspec` CLI is unavailable in this environment; the change structure (proposal/design/
+  tasks/spec delta) was instead hand-verified for internal consistency ahead of archival.)
