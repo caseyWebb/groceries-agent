@@ -96,17 +96,17 @@ jobs:
         if: steps.guard.outputs.already == 'false'
         # Registers the arm64 emulation handlers so the amd64 runner can cross-build the
         # linux/arm64 variant. version-tagged to match the docker/* actions below.
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: steps.guard.outputs.already == 'false'
         # A Buildx builder that can emit a multi-arch manifest list in one push.
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         if: steps.guard.outputs.already == 'false'
         # version-tagged (not SHA-pinned) — pin to a SHA to match the repo convention when convenient.
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -121,7 +121,7 @@ jobs:
         # arch-agnostic, so this just cross-builds the arm64 variant under QEMU and pushes one
         # manifest list per tag. The image "embeds" its build + contract version by carrying the
         # copied package.json + contract source it reads at runtime — no build-args needed.
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: packages/satellite/Dockerfile
@@ -136,7 +136,7 @@ jobs:
         # tag_name is the DERIVED satellite-v<version> (NOT github.ref_name, which on workflow_call /
         # workflow_dispatch is the branch, e.g. main). softprops creates this tag as part of cutting
         # the Release — inline, in this same run — so there is no cross-workflow retrigger and no loop.
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.v.outputs.tag }}
           name: satellite v${{ steps.v.outputs.version }}

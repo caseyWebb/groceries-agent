@@ -152,6 +152,7 @@ The complete walkthrough is [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 - [`docs/TOOLS.md`](docs/TOOLS.md) — the MCP tool contract (params, returns, guarantees).
 - [`docs/SCHEMAS.md`](docs/SCHEMAS.md) — recipe-file and D1 formats.
 - [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) — operator setup, end to end.
+- [`docs/authoring-store-adapters.md`](docs/authoring-store-adapters.md) — writing the per-store satellite adapters (sale-scan + cart-fill) for a store the Worker has no API for.
 - [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md) — the persona and the conversational flows.
 
 ## What this is — and isn't
