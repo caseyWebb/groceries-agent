@@ -16,8 +16,12 @@ import { computeToBuy, type MenuNeed } from "./order.js";
 import { normalizeName, groceryKey, type GroceryItem } from "./grocery.js";
 import { readGroceryList, readMealPlan, readPantryByKey } from "./session-db.js";
 import { recipeIngredientsFull } from "./recipe-index.js";
-import { ingredientContext, emptyIngredientContext } from "./corpus-db.js";
-import type { ToBuyViewLine, PantryCoveredLine, InCartLine, ToBuyView } from "./order-shapes.js";
+import { ingredientContext, emptyIngredientContext, readIdentityNeighbors, readSkuCache } from "./corpus-db.js";
+import { readPreferences } from "./profile-db.js";
+import { createKrogerClient } from "./kroger.js";
+import { KROGER_STORE } from "./flyer-warm.js";
+import type { CachedMapping } from "./matching.js";
+import type { ToBuyViewLine, PantryCoveredLine, InCartLine, LinePlacement, ToBuyView } from "./order-shapes.js";
 
 // The view's line shapes live in the leaf order-shapes.ts (member-app-grocery D9 — the
 // app imports them directly instead of hand-mirroring); re-exported so every existing
@@ -96,8 +100,21 @@ export function dropInFlightNeeds(
  * `origin: list | plan | both`; `computeToBuy`'s `partials` become `pantry_covered`
  * (joined with the pantry rows' verify metadata — the same set `place_order` prompts on);
  * the stored `in_cart` rows ride along as the stale-cart signal. Writes nothing.
+ *
+ * `opts.withAisles` (member-app-differentiators D6) is OPT-IN aisle enrichment: absent,
+ * the read is byte-identical to the plain view and keeps its zero-Kroger guarantee
+ * absolute. Set, each line gains a `placement` — captured aisle fields from the
+ * `sku_cache` row at (key, caller's location) with the legacy `''` fallback, plus a
+ * `department` derived from the identity graph's parents — and the result carries the
+ * resolved `location`. Cost: at most ONE Kroger Locations resolve (label → locationId,
+ * exactly `kroger_flyer`'s posture) and ZERO product searches; no resolvable location
+ * (non-Kroger primary, unresolvable label) means placements carry `department` only.
  */
-export async function computeToBuyView(env: Env, tenant: string): Promise<ToBuyView> {
+export async function computeToBuyView(
+  env: Env,
+  tenant: string,
+  opts: { withAisles?: boolean } = {},
+): Promise<ToBuyView> {
   // Resolve-only context (capture OFF) — a read never enqueues; degrade to the empty
   // context (cleaned passthrough) rather than failing the view on a resolver-read blip.
   const [list, pantryByKey, ctx, derived] = await Promise.all([
@@ -165,5 +182,76 @@ export async function computeToBuyView(env: Env, tenant: string): Promise<ToBuyV
     .filter((it) => it.status === "in_cart")
     .map((it) => ({ name: it.name, added_at: it.added_at }));
 
-  return { to_buy: lines, pantry_covered, in_cart, underived: derived.underived };
+  const view: ToBuyView = { to_buy: lines, pantry_covered, in_cart, underived: derived.underived };
+  if (!opts.withAisles) return view; // the default read: byte-identical, zero Kroger
+  return enrichWithAisles(env, tenant, view);
+}
+
+/** Precedence for the graph-derived department fallback (D6): membership parents are
+ *  exactly department-shaped class labels (`vegetables`, `flour`), then general, then
+ *  containment; lexicographic within a kind for determinism. */
+const DEPARTMENT_KIND_ORDER = ["membership", "general", "containment"] as const;
+
+/** The line's `sku_cache` row at the caller's location: exact tag first, `''` legacy next. */
+function placementRow(cache: CachedMapping[], key: string, locationId: string | null): CachedMapping | null {
+  if (locationId === null) return null;
+  const rank = (m: CachedMapping): number => (m.locationId === locationId ? 0 : !m.locationId ? 1 : 2);
+  const hits = cache.filter((m) => m.ingredient === key && rank(m) < 2).sort((a, b) => rank(a) - rank(b));
+  return hits[0] ?? null;
+}
+
+/**
+ * The D6 aisle enrichment over an already-computed view: one Locations resolve at
+ * most, one `sku_cache` read, one identity-graph read — zero product searches, no
+ * writes. Lines gain `placement` ({} fields optional; null when nothing is known),
+ * the view gains the resolved `location` (null when none is resolvable).
+ */
+async function enrichWithAisles(env: Env, tenant: string, view: ToBuyView): Promise<ToBuyView> {
+  // Resolve the caller's Kroger location — the ONE Locations call. Only a Kroger
+  // primary has a deterministic placement source; anything else degrades to the
+  // graph department (non-Kroger layout stays agent territory — store notes).
+  let locationId: string | null = null;
+  try {
+    const prefs = await readPreferences(env, tenant);
+    const stores = prefs?.stores as Record<string, unknown> | undefined;
+    const primary =
+      typeof stores?.primary === "string" && stores.primary.trim() ? stores.primary.trim().toLowerCase() : KROGER_STORE;
+    const label = typeof stores?.preferred_location === "string" ? stores.preferred_location : null;
+    if (primary === KROGER_STORE && label) {
+      locationId = await createKrogerClient(env).resolveLocationId(label);
+    }
+  } catch {
+    locationId = null; // unresolvable → placements carry department only
+  }
+
+  const keys = view.to_buy.map((l) => l.key);
+  const [cache, neighborsByKey] = await Promise.all([
+    locationId !== null ? readSkuCache(env) : Promise.resolve([] as CachedMapping[]),
+    readIdentityNeighbors(env, keys),
+  ]);
+
+  const to_buy = view.to_buy.map((line) => {
+    const placement: LinePlacement = {};
+    const row = placementRow(cache, line.key, locationId);
+    if (row?.aisle) {
+      if (row.aisle.number) placement.aisle_number = row.aisle.number;
+      if (row.aisle.description) placement.aisle_description = row.aisle.description;
+      if (row.aisle.side !== undefined) placement.aisle_side = row.aisle.side;
+    }
+    // Graph-derived department fallback: the key's parents via out-edges,
+    // representative-resolved, kind precedence then lexicographic tiebreak.
+    const parents = neighborsByKey.get(line.key)?.satisfies ?? [];
+    for (const kind of DEPARTMENT_KIND_ORDER) {
+      const ofKind = parents
+        .filter((p) => p.kind === kind)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      if (ofKind.length > 0) {
+        placement.department = ofKind[0].id;
+        break;
+      }
+    }
+    return { ...line, placement: Object.keys(placement).length > 0 ? placement : null };
+  });
+
+  return { ...view, to_buy, location: locationId !== null ? { id: locationId } : null };
 }

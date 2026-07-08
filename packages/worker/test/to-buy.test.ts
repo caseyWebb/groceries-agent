@@ -236,3 +236,106 @@ describe("computeToBuyView", () => {
     expect(view.to_buy.map((l) => l.name)).toEqual(["chicken"]);
   });
 });
+
+describe("computeToBuyView — with_aisles enrichment (member-app-differentiators D6)", () => {
+  function seedProfile(h: SqliteEnv, stores: Record<string, unknown>): void {
+    h.raw.prepare("INSERT INTO profile (tenant, stores) VALUES (?, ?)").run(T, JSON.stringify(stores));
+  }
+  function seedSkuAisle(
+    h: SqliteEnv,
+    ingredient: string,
+    locationId: string,
+    aisle: { number?: string; description?: string; side?: string } | null,
+  ): void {
+    h.raw
+      .prepare(
+        "INSERT INTO sku_cache (ingredient, location_id, sku, brand, size, last_used, aisle_number, aisle_description, aisle_side, aisle_captured_at) VALUES (?, ?, 'S1', 'B', NULL, '2026-07-01', ?, ?, ?, ?)",
+      )
+      .run(ingredient, locationId, aisle?.number ?? null, aisle?.description ?? null, aisle?.side ?? null, aisle ? "2026-07-01" : null);
+  }
+  function seedDeptGraph(h: SqliteEnv): void {
+    // flour --membership--> baking (concept): the department-shaped parent.
+    h.raw.prepare("INSERT INTO ingredient_identity (id, base, concrete, source) VALUES ('flour', 'flour', 1, 'auto')").run();
+    h.raw.prepare("INSERT INTO ingredient_identity (id, base, concrete, source) VALUES ('baking', 'baking', 0, 'auto')").run();
+    h.raw.prepare("INSERT INTO ingredient_identity (id, base, concrete, source) VALUES ('powders', 'powders', 0, 'auto')").run();
+    h.raw
+      .prepare("INSERT INTO ingredient_edge (from_id, to_id, kind, source, decided_at) VALUES ('flour', 'baking', 'membership', 'auto', 1)")
+      .run();
+    // A general parent too — membership must win the precedence.
+    h.raw
+      .prepare("INSERT INTO ingredient_edge (from_id, to_id, kind, source, decided_at) VALUES ('flour', 'powders', 'general', 'auto', 1)")
+      .run();
+  }
+
+  it("the DEFAULT read is byte-identical — no placement, no location key, no Kroger read", async () => {
+    const h = sqliteEnv([T]);
+    seedProfile(h, { primary: "kroger", preferred_location: "03500520" });
+    await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
+    seedSkuAisle(h, "flour", "03500520", { number: "12", description: "Baking" });
+    const view = await computeToBuyView(h.env, T);
+    expect(JSON.stringify(view)).toBe(
+      JSON.stringify({
+        to_buy: [
+          {
+            name: "flour",
+            quantity: 1,
+            assumed_quantity: true,
+            for_recipes: [],
+            origin: "list",
+            key: "flour",
+            kind: "grocery",
+            domain: "grocery",
+          },
+        ],
+        pantry_covered: [],
+        in_cart: [],
+        underived: [],
+      }),
+    );
+  });
+
+  it("a cached line carries its captured aisle; an uncaptured one falls back to the graph department", async () => {
+    const h = sqliteEnv([T]);
+    // A whitespace-free preferred_location is a pre-resolved locationId (the client
+    // short-circuit) — the one Locations resolve costs zero network here.
+    seedProfile(h, { primary: "kroger", preferred_location: "03500520" });
+    seedDeptGraph(h);
+    await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
+    await addGroceryRow(h.env, T, { name: "saffron" }, TODAY);
+    seedSkuAisle(h, "flour", "03500520", { number: "12", description: "Baking", side: "L" });
+    const view = await computeToBuyView(h.env, T, { withAisles: true });
+    expect(view.location).toEqual({ id: "03500520" });
+    const byKey = new Map(view.to_buy.map((l) => [l.key, l]));
+    // Captured aisle + the membership department (precedence over the general parent).
+    expect(byKey.get("flour")!.placement).toEqual({
+      aisle_number: "12",
+      aisle_description: "Baking",
+      aisle_side: "L",
+      department: "baking",
+    });
+    // No sku row, no graph parent → an honest null placement (never a fake aisle).
+    expect(byKey.get("saffron")!.placement).toBeNull();
+  });
+
+  it("the legacy untagged '' row is the fallback when no location-tagged row exists", async () => {
+    const h = sqliteEnv([T]);
+    seedProfile(h, { primary: "kroger", preferred_location: "03500520" });
+    await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
+    seedSkuAisle(h, "flour", "", { number: "9", description: "Legacy" });
+    // A row tagged with ANOTHER location never contributes a placement.
+    seedSkuAisle(h, "flour", "99999999", { number: "1", description: "Elsewhere" });
+    const view = await computeToBuyView(h.env, T, { withAisles: true });
+    expect(view.to_buy[0].placement).toMatchObject({ aisle_number: "9", aisle_description: "Legacy" });
+  });
+
+  it("no resolvable Kroger location: location null, placements carry department only", async () => {
+    const h = sqliteEnv([T]);
+    seedProfile(h, { primary: "aldi", preferred_location: "aldi east" });
+    seedDeptGraph(h);
+    await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
+    seedSkuAisle(h, "flour", "03500520", { number: "12", description: "Baking" });
+    const view = await computeToBuyView(h.env, T, { withAisles: true });
+    expect(view.location).toBeNull();
+    expect(view.to_buy[0].placement).toEqual({ department: "baking" });
+  });
+});

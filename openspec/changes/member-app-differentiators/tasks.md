@@ -71,21 +71,21 @@ and the implementer binds to the landed actuals (e.g. `buildOrderWiring`, `compu
 
 ## 3. Worker: aisle-enriched to-buy read + the browse-row ops (D6–D8)
 
-- [ ] 3.1 `to-buy.ts` (P3): `with_aisles` enrichment on the view op — batched `sku_cache`
+- [x] 3.1 `to-buy.ts` (P3): `with_aisles` enrichment on the view op — batched `sku_cache`
   read at `(key, locationId)` with `''` fallback; `department` from `readIdentityNeighbors`
   out-edges (precedence `membership` → `general` → `containment`, representative-resolved,
   lexicographic tiebreak); per-line `placement` + top-level `location`; at most one Locations
   resolve, zero product searches; **default read byte-identical** (assert in test).
-- [ ] 3.2 `tools.ts`: `read_to_buy` gains `with_aisles?: boolean`; description addendum states
+- [x] 3.2 `tools.ts`: `read_to_buy` gains `with_aisles?: boolean`; description addendum states
   the default's zero-Kroger guarantee is unchanged and the variant's exact cost. `docs/TOOLS.md`
   same pass.
-- [ ] 3.3 New `packages/worker/src/cookbook-rows.ts`: `readTrending(env, tenant, { windowDays:
+- [x] 3.3 New `packages/worker/src/cookbook-rows.ts`: `readTrending(env, tenant, { windowDays:
   60, k: 8 })` — the D7 SQL (min-signal HAVING, deterministic ORDER BY), joined to the index,
   caller's rejects filtered; `readPickedForYou(env, tenant, { k: 6 })` — favorites-centroid
   query vector over stored `recipe_derived` vectors, candidates minus
   favorites/rejects/dietary-avoids (reuse the existing pool dietary gate predicate), one
   `rankCandidates` call with P2's optional params absent; empty favorites → `[]`.
-- [ ] 3.4 Unit tests: trending guard over the **production-shaped** log (2 rows, 1 cook each →
+- [x] 3.4 Unit tests: trending guard over the **production-shaped** log (2 rows, 1 cook each →
   empty) and a threshold-crossing log (ordering, window floor, reject filter, unprojected slug
   dropped); picked-for-you determinism (same inputs → same order), exclusions, empty-favorites
   → empty, and an `env.AI`-never-touched assertion (P1's mock pattern).

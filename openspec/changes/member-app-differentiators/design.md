@@ -309,6 +309,25 @@ HAVING COUNT(*) >= 2 OR COUNT(DISTINCT tenant) >= 2
   group trending, and the tool surface stays lean (the plan's §4 table scopes these rows to
   the app's cookbook area).
 
+> **Implementation note (D7):** the GROUP BY/HAVING shown above is computed in JS over
+> the windowed `cooking_log` rows (`readTrending`, `cookbook-rows.ts`) — the module
+> idiom (fake-D1-compatible full-read + JS re-validation, the `countUnreplayedEdgeDrops`
+> posture), since the route tests run over the regex-routed fake D1. The guard,
+> ordering, join, and reject-filter semantics are exactly the SQL's; the unit tests pin
+> them against real SQLite.
+
+> **Implementation note (D8):** the design says the dietary-avoid gate is "the same
+> gate predicate the propose pool applies — reused, not re-derived", but grounding
+> against the code found **no profile-wide dietary gate in the propose pool** (its
+> `filterRecipes` dietary facet is a caller-supplied filter, and the only existing
+> profile-derived predicate — `dietaryOk` in the discovery sweep — models restrictions
+> as required dietary *labels*, the wrong shape for `avoid` terms). The closest
+> faithful deterministic gate is implemented as `conflictsWithAvoids`
+> (`cookbook-rows.ts`, exported + unit-tested): an avoided term conflicts when it
+> equals the recipe's coarse `protein` facet or appears as an exact entry in its
+> normalized `ingredients_key`/`ingredients_full` arrays — conservative exact matches
+> only; subtler conflicts stay LLM territory.
+
 ### D8 — Picked-for-you: a deterministic favorites-centroid wrap of `rankCandidates`
 
 `readPickedForYou(env, tenant, { k = 6 })` in `cookbook-rows.ts`:
