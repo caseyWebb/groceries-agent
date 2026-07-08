@@ -1,9 +1,9 @@
-// Members interactions: the invite dialog (the roster island's native <dialog>) and the
-// pending-member detail state.
+// Members interactions: the invite dialog (the shared Radix Dialog, located by its
+// accessible name) and the pending-member detail state.
 import { test, expect } from "../fixtures";
 import { SEED } from "../seed.mjs";
 
-test("invite opens as a native dialog", async ({ membersPage }) => {
+test("invite opens as a dialog", async ({ membersPage }) => {
   await membersPage.goto();
   const dialog = await membersPage.openInviteDialog();
   await expect(dialog.title("Invite member")).toBeVisible();

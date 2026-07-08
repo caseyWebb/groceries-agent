@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// webServer entrypoint for the admin Playwright harness (admin-ui-testing). Builds the islands +
-// Tailwind/Basecoat stylesheet, applies the D1 migrations to the LOCAL SQLite, applies the
+// webServer entrypoint for the admin Playwright harness (admin-ui-testing). Builds the admin
+// SPA (Vite, packages/admin-app → assets/admin/), applies the D1 migrations to the LOCAL SQLite, applies the
 // deterministic seed (seed.mjs: D1 rows + the tenant/OAuth/Kroger KV entries, timestamps
 // relative to this run's clock), then runs `wrangler dev --local` with the Access dev-bypass.
 // `--local` disables remote bindings, so the `AI` binding renders as "not supported" instead of
@@ -11,11 +11,11 @@
 import { execFileSync } from "node:child_process";
 import { d1Statements, kvEntries } from "./seed.mjs";
 
-const sh = (cmd, args) => execFileSync(cmd, args, { stdio: "inherit" });
+const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: "inherit", ...opts });
 
 const now = Date.now();
 
-sh("node", ["scripts/build-admin.mjs"]);
+sh("npx", ["vite", "build"], { cwd: "../admin-app" });
 sh("npx", ["wrangler", "d1", "migrations", "apply", "DB", "--local"]);
 sh("npx", ["wrangler", "d1", "execute", "DB", "--local", "--command", d1Statements(now).join(" ")]);
 for (const [binding, key, value] of kvEntries()) {

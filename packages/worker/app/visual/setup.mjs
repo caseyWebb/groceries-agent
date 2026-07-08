@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // webServer entrypoint for the MEMBER APP Playwright harness (app-ui-testing), the
-// sibling and mirror of admin/visual/setup.mjs. Builds the admin bundle (assets/admin/)
+// sibling and mirror of admin/visual/setup.mjs. Builds the admin SPA (Vite → assets/admin/)
 // AND the member SPA (index.html + hashed chunks into the same merged assets/ root),
 // applies the D1 migrations to the LOCAL SQLite, applies the SHARED deterministic seed
 // (admin/visual/seed.mjs — one fixture set for both suites, extended with the app's
@@ -19,7 +19,7 @@ const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: "inherit",
 
 const now = Date.now();
 
-sh("node", ["scripts/build-admin.mjs"]);
+sh("npx", ["vite", "build"], { cwd: "../admin-app" });
 // The SPA build (packages/app → ../app from this package's cwd). BOTH sides are stamped
 // with one non-"dev" harness id (member-app-offline D11): baseline specs see no skew
 // (ids equal), the update spec can fabricate a differing header, and the persister's

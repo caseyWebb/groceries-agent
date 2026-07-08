@@ -1,6 +1,13 @@
-// /members/$id/$section — placeholder (screen lands with group 3).
+// /members/$id/$section — member detail deep-linked to a section pill (an unknown segment
+// falls back to Profile, the SSR route's behavior).
 import { createFileRoute } from "@tanstack/react-router";
+import { MemberDetailScreen, sectionOfSlug } from "../screens/member-detail";
 
 export const Route = createFileRoute("/members/$id/$section")({
-  component: () => <p className="screen-loading">MemberDetailSection</p>,
+  component: MemberDetailSection,
 });
+
+function MemberDetailSection() {
+  const { id, section } = Route.useParams();
+  return <MemberDetailScreen id={id} section={sectionOfSlug(section)} />;
+}

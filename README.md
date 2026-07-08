@@ -97,7 +97,7 @@ background crons — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | Path | What it is |
 | --- | --- |
 | `src/`, `test/`, `wrangler.jsonc` | the Cloudflare Worker — the `grocery-mcp` MCP server + OAuth provider |
-| `packages/app`, `packages/ui` | the member web app — a React SPA served by the Worker at `/`, and the shared shadcn/ui components + theme tokens it builds on |
+| `packages/app`, `packages/admin-app`, `packages/ui` | the member web app (a React SPA served by the Worker at `/`), the operator admin panel (a React SPA served at `/admin`), and the shared shadcn/ui components + theme tokens both build on |
 | `scripts/` | build tooling — recipe indexes, the static cookbook, the plugin bundle |
 | `AGENT_INSTRUCTIONS.md` | the agent persona + conversational flows; the source the plugin bundle is generated from (the bundle is published to the operator's data-repo marketplace, not committed here) |
 | `docs/` | the deep docs (see [Documentation](#documentation)) |
