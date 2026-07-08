@@ -41,7 +41,7 @@ The Worker is the root package. One `package.json` carries both the Worker deps 
 ```bash
 aubr dev             # wrangler dev — local Worker; point MCP Inspector at the local URL
 aubr test            # vitest run — Worker unit tests (test/*.test.ts)
-aubr test:tooling    # node --test — build-plugin / merge-config / readme-badge tests (tests/*.test.mjs)
+aubr test:tooling    # node --test — build-plugin / merge-config / SW-denylist / readme-badge tests (tests/*.test.mjs)
 aubr typecheck       # tsc --noEmit (recursive: Worker + contract + satellite + app + ui)
 aubr test:app        # Playwright — the member-app browser gate (seeded invite login; app/visual/)
 aubr build:app       # vite build — the member SPA → packages/worker/assets/

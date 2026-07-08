@@ -130,10 +130,10 @@ pieces by role and the implementer binds to the landed actuals.
 
 ## 6. Docs (same pass)
 
-- [ ] 6.1 `docs/ARCHITECTURE.md` member-app section: the offline posture — the three layers,
+- [x] 6.1 `docs/ARCHITECTURE.md` member-app section: the offline posture — the three layers,
   the persist allowlist + purge lifecycle, the class (b) queue/replay + the online-only
   negative space, prompt-to-reload + skew UX, the no-API-runtime-cache guarantee; update the
   `jsonWithEtag` sentence for the `Cache-Control` stamp. Current-state prose (no "is now").
-- [ ] 6.2 Verify no other doc owes an update: `docs/TOOLS.md`/`docs/SCHEMAS.md` untouched
+- [x] 6.2 Verify no other doc owes an update: `docs/TOOLS.md`/`docs/SCHEMAS.md` untouched
   (no tool/shape change — client-device state is not operator data); `CLAUDE.md` build
   commands unchanged; PR template checklist filled at PR time.
