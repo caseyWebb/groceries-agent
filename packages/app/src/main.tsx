@@ -1,9 +1,17 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { registerSW } from "virtual:pwa-register";
 import { routeTree } from "./routeTree.gen";
+import { APP_BUILD } from "./lib/api";
+import {
+  MAX_AGE_MS,
+  createIdbPersister,
+  queryClient,
+  shouldDehydrateQuery,
+  shouldDehydrateMutation,
+} from "./lib/persist";
 import "./styles.css";
 
 // Prompt-posture service worker (registerType: "prompt"): registration only in P0 —
@@ -18,12 +26,27 @@ declare module "@tanstack/react-router" {
   }
 }
 
-const queryClient = new QueryClient();
+// Offline layer 2 (member-app-offline D1): the query cache persists to IndexedDB
+// through the allowlist predicates; `buster` discards a prior build's state wholesale;
+// restore gates queries (no empty-cache flash), then queued class (b) writes from a
+// previous launch resume (layer 3's across-reload replay).
+const persistOptions = {
+  persister: createIdbPersister(),
+  buster: APP_BUILD,
+  maxAge: MAX_AGE_MS,
+  dehydrateOptions: { shouldDehydrateQuery, shouldDehydrateMutation },
+};
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={persistOptions}
+      onSuccess={() => {
+        void queryClient.resumePausedMutations();
+      }}
+    >
       <RouterProvider router={router} />
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   </StrictMode>,
 );

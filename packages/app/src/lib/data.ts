@@ -7,6 +7,7 @@
 // helpers with the rebase-on-412 loop.
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { api, apiError } from "./api";
+import { GC_TIME_MS } from "./persist";
 import type {
   ToBuyViewLine as ToBuyLine,
   PantryCoveredLine as PantryCovered,
@@ -43,6 +44,11 @@ export type {
 
 /** Plan §6 posture: near-live reads, no long client cache. */
 const STALE_MS = 15_000;
+
+/** The PERSISTED reads' gcTime (member-app-offline D1): an allowlisted entry must
+ *  outlive memory gc or it silently drops from the next dehydration. staleTime is
+ *  untouched — persistence changes what survives a relaunch, not read freshness. */
+const PERSIST_GC_MS = GC_TIME_MS;
 
 // --- payload shapes (the API's JSON, spelled out for the pages) ---------------
 
@@ -167,6 +173,7 @@ export function useIndex() {
   return useQuery({
     queryKey: ["cookbook", "index"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     // The collection read is /cookbook/recipes (hc reserves `.index` for a "/" route).
     queryFn: async () => jsonOf<{ recipes: Hit[] }>(await api.api.cookbook.recipes.$get()),
   });
@@ -197,6 +204,7 @@ export function useRecipe(slug: string) {
   return useQuery({
     queryKey: ["cookbook", "recipe", slug],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () =>
       jsonOf<RecipeDetail>(await api.api.cookbook.recipes[":slug"].$get({ param: { slug } })),
   });
@@ -228,6 +236,7 @@ export function useOverlay() {
   return useQuery({
     queryKey: ["overlay"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () => jsonOf<{ overlay: Overlay }>(await api.api.overlay.$get()),
   });
 }
@@ -236,6 +245,7 @@ export function usePlan() {
   return useQuery({
     queryKey: ["plan"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () => jsonOf<{ planned: PlannedRow[] }>(await api.api.plan.$get()),
   });
 }
@@ -244,6 +254,7 @@ export function useGrocery() {
   return useQuery({
     queryKey: ["grocery"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () => jsonOf<{ items: GroceryRow[] }>(await api.api.grocery.$get()),
   });
 }
@@ -254,6 +265,7 @@ export function useToBuy(withAisles = false) {
     // still under the "grocery" prefix so the shared invalidation refreshes both.
     queryKey: ["grocery", "to-buy", withAisles ? "aisles" : "plain"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () =>
       withAisles
         ? // The enriched variant (?aisles=1) — the query string isn't in the typed
@@ -306,6 +318,7 @@ export function usePantry() {
   return useQuery({
     queryKey: ["pantry"],
     staleTime: STALE_MS,
+    gcTime: PERSIST_GC_MS,
     queryFn: async () => jsonOf<{ items: PantryRow[] }>(await api.api.pantry.$get()),
   });
 }

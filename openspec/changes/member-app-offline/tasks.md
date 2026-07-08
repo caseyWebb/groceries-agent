@@ -12,11 +12,11 @@ pieces by role and the implementer binds to the landed actuals.
 
 ## 1. Persistence layer (D1, D2, D12)
 
-- [ ] 1.1 `packages/app/package.json`: add `@tanstack/react-query-persist-client@^5.101.2` +
+- [x] 1.1 `packages/app/package.json`: add `@tanstack/react-query-persist-client@^5.101.2` +
   `idb-keyval@^6.2.6`; `aube install` (lockfile in place). Both are pure JS with no build
   scripts — confirm no `aube.allowBuilds` entry is demanded; if the install surfaces one,
   record the decision in the root `package.json` per the `package-manager` rule.
-- [ ] 1.2 New `packages/app/src/lib/persist.ts`: the `idb-keyval` structured-clone persister
+- [x] 1.2 New `packages/app/src/lib/persist.ts`: the `idb-keyval` structured-clone persister
   (`persistClient`/`restoreClient`/`removeClient` over one `cookbook-query-cache` key,
   errors swallowed — private-mode degradation); exported `PERSIST_PREFIXES` (D2's allowlist:
   `["grocery"]`, `["pantry"]`, `["plan"]`, `["overlay"]`, `["cookbook","index"]`,
@@ -26,10 +26,10 @@ pieces by role and the implementer binds to the landed actuals.
   the identity-stamp helpers (`cookbook:tenant`, try/catch like the theme key); and
   `purgeLocalMemberData()` per design D9 (IDB key, `queryClient.clear()`, stamp, propose
   session; theme survives).
-- [ ] 1.3 `packages/app/src/main.tsx`: `PersistQueryClientProvider` replaces
+- [x] 1.3 `packages/app/src/main.tsx`: `PersistQueryClientProvider` replaces
   `QueryClientProvider` (`persistOptions`: persister, `buster: APP_BUILD`, `maxAge`,
   dehydrate predicates from 1.2), `onSuccess` → `queryClient.resumePausedMutations()`.
-- [ ] 1.4 `packages/app/src/lib/data.ts`: allowlisted query hooks (`useGrocery`, `useToBuy`,
+- [x] 1.4 `packages/app/src/lib/data.ts`: allowlisted query hooks (`useGrocery`, `useToBuy`,
   `usePantry`, `usePlan`, `useOverlay`, `useIndex`, `useRecipe`) set `gcTime` = 14 d
   (persisted entries must outlive memory gc — D1); `staleTime` posture unchanged.
 

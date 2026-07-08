@@ -18,8 +18,10 @@
   "dependencies": {
     "@grocery-agent/ui": "workspace:*",
     "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-query-persist-client": "^5.101.2",
     "@tanstack/react-router": "^1.170.17",
     "hono": "^4.12.27",
+    "idb-keyval": "^6.2.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
