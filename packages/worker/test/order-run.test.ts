@@ -290,4 +290,66 @@ describe("runPlaceOrder — SKU-cache aisle capture (member-app-differentiators 
       }),
     ]);
   });
+
+  it("keep-on-null: a same-SKU/brand/size revalidation with no aisle leaves a captured placement untouched", async () => {
+    const h = sqliteEnv([T]);
+    await addGroceryRow(h.env, T, { name: "olive oil" }, TODAY);
+    seedSkuRow(h, {
+      aisle_number: AISLE.number,
+      aisle_description: AISLE.description,
+      aisle_side: AISLE.side,
+      aisle_captured_at: "2026-01-01",
+    });
+    // Same SKU/brand/size as the seeded row, but the fresh resolution's Kroger response
+    // omitted aisleLocation entirely — must not clear the stored placement.
+    const result = await run(h, {}, fakeWiring());
+    expect(result.sku_cache.committed).toBe(true);
+    expect(h.rows("sku_cache")).toEqual([
+      expect.objectContaining({
+        ingredient: "olive oil",
+        sku: "SKU-olive oil",
+        aisle_number: AISLE.number,
+        aisle_description: AISLE.description,
+        aisle_side: AISLE.side,
+        aisle_captured_at: "2026-01-01",
+        last_used: "2026-01-01", // untouched — no write happened
+      }),
+    ]);
+  });
+
+  it("keep-on-null: a genuine SKU change with no fresh aisle carries the prior placement forward", async () => {
+    const h = sqliteEnv([T]);
+    await addGroceryRow(h.env, T, { name: "olive oil" }, TODAY);
+    seedSkuRow(h, {
+      aisle_number: AISLE.number,
+      aisle_description: AISLE.description,
+      aisle_side: AISLE.side,
+      aisle_captured_at: "2026-01-01",
+    });
+    const wiring = fakeWiring({
+      resolve: async (): Promise<MatchResult> => ({
+        resolved: true,
+        sku: "SKU-new-brand", // the SKU genuinely changed
+        brand: "New Brand",
+        size: null,
+        price: { regular: 3.5, promo: 0 },
+        on_sale: false,
+        reason: "test",
+        // no aisleLocation — the fresh response carried no placement
+      }),
+    });
+    const result = await run(h, {}, wiring);
+    expect(result.sku_cache.committed).toBe(true);
+    expect(h.rows("sku_cache")).toEqual([
+      expect.objectContaining({
+        ingredient: "olive oil",
+        sku: "SKU-new-brand",
+        aisle_number: AISLE.number,
+        aisle_description: AISLE.description,
+        aisle_side: AISLE.side,
+        aisle_captured_at: "2026-01-01", // carried forward, not re-stamped
+        last_used: isoToday(),
+      }),
+    ]);
+  });
 });

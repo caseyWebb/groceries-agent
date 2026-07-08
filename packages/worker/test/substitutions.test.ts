@@ -15,6 +15,9 @@ import { sqliteEnv, type SqliteEnv } from "./sqlite-d1.js";
 
 const T = "casey";
 const TODAY = "2026-07-08";
+/** A recent `as_of` for fixtures that must read as fresh under the default
+ *  `scanStalenessDays` ceiling (member-app-differentiators D1 follow-up). */
+const FRESH_AS_OF = Date.now() - 60_000;
 
 // --- fixtures ---------------------------------------------------------------------
 
@@ -270,6 +273,28 @@ describe("identitySiblings — the D3 walk over the persisted graph", () => {
     ]);
   });
 
+  it("a sibling reachable through two same-kind parents gets a STABLE via, independent of edge scan order", async () => {
+    const h = sqliteEnv([T]);
+    // "x" and "sib" both satisfy TWO shared general-kind parents. The edges are
+    // inserted with the "p2" relation before "p1" for BOTH nodes, so a scan-order-
+    // dependent walk would attach `via: "p2"` — but "p1" sorts first lexicographically
+    // and must win regardless of insertion order.
+    seedGraph(
+      h,
+      [{ id: "x" }, { id: "sib" }, { id: "p1" }, { id: "p2" }],
+      [
+        ["x", "p2", "general"],
+        ["x", "p1", "general"],
+        ["sib", "p2", "general"],
+        ["sib", "p1", "general"],
+      ],
+    );
+    const neighbors = await readIdentityNeighbors(h.env, ["x"]);
+    const out = identitySiblings(neighbors.get("x")!);
+    const sib = out.find((s) => s.id === "sib")!;
+    expect(sib.relation).toEqual({ role: "sibling", kind: "general", via: "p1" });
+  });
+
   it("excludes the caller's to-buy set and the line itself", async () => {
     const h = sqliteEnv([T]);
     seedGraph(h, CABBAGE_NODES, CABBAGE_EDGES);
@@ -399,7 +424,7 @@ describe("suggestSubstitutions — budget, degradation, annotations, read-only (
     // lowercased-description match; at the fixed default 5% sale floor.
     await kvPutRollup(h, "flyer:aldi:aldi east", {
       sweep_id: "scan-1",
-      as_of: 1751932800000,
+      as_of: FRESH_AS_OF,
       store: "aldi",
       location_id: "aldi east",
       items: [
@@ -409,7 +434,7 @@ describe("suggestSubstitutions — budget, degradation, annotations, read-only (
     const { wiring, calls } = fakeWiring({ locationId: null });
     const res = await suggestSubstitutions(h.env, T, {}, wiring);
     expect(res.location).toBeNull();
-    expect(res.flyer_as_of).toBe(new Date(1751932800000).toISOString());
+    expect(res.flyer_as_of).toBe(new Date(FRESH_AS_OF).toISOString());
     const line = res.suggestions[0];
     expect(line.status).toBe("no_cached_pick");
     expect(line.current).toBeNull();
@@ -420,6 +445,39 @@ describe("suggestSubstitutions — budget, degradation, annotations, read-only (
     expect(green.on_sale_hint).toEqual({ sku: "F1", description: "Green Cabbage", price: { regular: 2, promo: 1.5 }, savings: 0.5 });
     expect(line.siblings.find((s) => s.id === "cabbage::color-red")!.in_pantry).toBe(true);
     expect(calls).toEqual({ search: 0, productById: 0 }); // no Kroger product call issued
+  });
+
+  it("a satellite rollup past the staleness ceiling is suppressed — no hints, flyer_as_of null", async () => {
+    const h = sqliteEnv([T]);
+    seedProfile(h, { primary: "aldi", preferred_location: "aldi east" });
+    seedGraph(h, CABBAGE_NODES, CABBAGE_EDGES);
+    await addGroceryRow(h.env, T, { name: "cabbage::type-napa" }, TODAY);
+    h.raw
+      .prepare("INSERT INTO pantry (tenant, name, normalized_name, added_at) VALUES (?, 'Red cabbage', 'cabbage::color-red', ?)")
+      .run(T, TODAY);
+    // Same shape as the fresh-rollup case above, but stamped WAY past the default
+    // 7-day `scanStalenessDays` ceiling (`store_flyer`'s posture) — a dead satellite
+    // scanner must not keep steering suggestions on a stale sale forever.
+    await kvPutRollup(h, "flyer:aldi:aldi east", {
+      sweep_id: "scan-1",
+      as_of: FRESH_AS_OF - 30 * 24 * 60 * 60 * 1000,
+      store: "aldi",
+      location_id: "aldi east",
+      items: [
+        { sku: "F1", brand: "", description: "Green Cabbage", size: null, price: { regular: 2, promo: 1.5 }, savings: 0.5, categories: [], matched_terms: [] },
+      ],
+    });
+    const { wiring, calls } = fakeWiring({ locationId: null });
+    const res = await suggestSubstitutions(h.env, T, {}, wiring);
+    expect(res.location).toBeNull();
+    // Nothing was actually used — flyer_as_of reflects that, not the stale rollup's timestamp.
+    expect(res.flyer_as_of).toBeNull();
+    const line = res.suggestions[0];
+    // The graph half (siblings) is still served — only the flyer hint is suppressed.
+    expect(line.siblings.map((s) => s.id)).toEqual(["cabbage::color-green", "cabbage::color-red", "cabbage"]);
+    for (const s of line.siblings) expect(s.on_sale_hint).toBeUndefined();
+    expect(line.siblings.find((s) => s.id === "cabbage::color-red")!.in_pantry).toBe(true);
+    expect(calls).toEqual({ search: 0, productById: 0 });
   });
 
   it("a Kroger flyer hint matches by matched_terms ELEMENT (base or search_term)", async () => {

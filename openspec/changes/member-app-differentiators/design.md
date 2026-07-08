@@ -118,7 +118,7 @@ server param. Fewer contract knobs keeps the skill-less description clean. Resul
 
 **Bounded subrequests, honest pagination.** Per line: ≤ 1 `productById` revalidation (when a
 cached pick exists) + exactly 1 term search — ≤ 2 Kroger calls. `max_lines` defaults to and is
-capped at **12** (≤ 25 upstream calls incl. token + location resolve — comfortably under the
+capped at **12** (≤ ~26 upstream calls incl. token + location resolve — comfortably under the
 free-tier 50-subrequest cap the flyer warm's budget note documents); unprocessed names return
 in `remaining` so the caller (panel or agent) continues. Kroger's client-side `Semaphore(6)`
 bounds concurrency.
@@ -238,6 +238,13 @@ batched commit, with two corrections grounded in `order-tools.ts`:
 - **`placeOrder` emits a mapping for every resolved line** — including cache-hit lines, whose
   step-2 revalidation (`productById`) already carries fresh `aisleLocation` — not only newly
   learned ones; the commit's identical-skip keeps write churn near zero.
+
+> **Implementation note (D5):** keep-on-null, present-placement-wins — the identical-skip
+> folds the aisle into its comparison only when the fresh mapping actually carries one (so a
+> revalidation whose Kroger response omits `aisleLocation` can't look "changed" and force a
+> write), and a write triggered by a genuine SKU/brand/size change with no fresh placement
+> carries the stored row's `aisle_number`/`description`/`side`/`captured_at` forward instead
+> of writing NULL.
 
 Plumbing (all additive): `ConfidentMatch` and the override `RevalidatedSku` gain
 `aisleLocation` (threaded from the `KrogerCandidate` the pipeline already holds);

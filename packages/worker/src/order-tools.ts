@@ -60,16 +60,36 @@ export interface OrderWiring {
   productById(sku: string): Promise<KrogerCandidate | null>;
 }
 
-/** The learned fields the commit compares for its identical-skip (D5): SKU, brand,
- *  size, and the aisle placement — nulls/absents folded so "no aisle" matches "no aisle". */
-function learnedFieldsKey(m: {
+/** The learned fields the commit compares for its identical-skip (D5): SKU, brand, and
+ *  size always; the aisle placement is folded in ONLY when `compareAisle` is set (the
+ *  fresh mapping actually carries a placement) — so a revalidation whose response omits
+ *  `aisleLocation` compares on SKU/brand/size alone and can't look "changed" against a
+ *  stored placement (keep-on-null, D5 follow-up). */
+function learnedFieldsKey(
+  m: {
+    sku: string;
+    brand?: string | null;
+    size?: string | null;
+    aisle?: { number?: string; description?: string; side?: string } | null;
+  },
+  compareAisle: boolean,
+): string {
+  const parts = [m.sku, m.brand ?? "", m.size ?? ""];
+  if (compareAisle) {
+    const a = m.aisle ?? null;
+    parts.push(a?.number ?? "", a?.description ?? "", a?.side ?? "");
+  }
+  return parts.join("\0");
+}
+
+/** The prior row's learned fields, as needed to re-key the identical-skip and to carry
+ *  a placement forward across a genuine (SKU/brand/size) change. */
+interface PriorLearned {
   sku: string;
-  brand?: string | null;
-  size?: string | null;
-  aisle?: { number?: string; description?: string; side?: string } | null;
-}): string {
-  const a = m.aisle ?? null;
-  return [m.sku, m.brand ?? "", m.size ?? "", a?.number ?? "", a?.description ?? "", a?.side ?? ""].join("\0");
+  brand?: string;
+  size?: string;
+  aisle: { number: string; description: string; side?: string } | null;
+  aisleCapturedAt: string | null;
 }
 
 /**
@@ -77,29 +97,44 @@ function learnedFieldsKey(m: {
  * (the indexed lookup the matcher reads). Each entry is tagged with the caller's
  * resolved `locationId` (D7) so a cross-tenant cache hit revalidates against the
  * right store, and stamped `last_used` today (for revalidation/pruning). A key that
- * is already cached is skipped ONLY when its learned fields (SKU/brand/size/aisle)
- * are identical (D5) — a differing row refreshes in place, so aisle placements and
- * mappings converge organically with each order instead of freezing at first
- * capture. The SKU cache is shared corpus — no tenant column. Returns null (D1 has
- * no commit sha).
+ * is already cached is skipped ONLY when its learned fields (SKU/brand/size, and the
+ * aisle too when the fresh mapping carries one) are identical (D5) — a differing row
+ * refreshes in place, so mappings converge organically with each order instead of
+ * freezing at first capture. Keep-on-null: a fresh mapping with no `aisleLocation`
+ * never overwrites a stored placement with NULL — it either skips (same SKU/brand/size)
+ * or, on a genuine change, carries the prior row's placement forward. Only a PRESENT
+ * fresh placement ever overwrites a stored one. The SKU cache is shared corpus — no
+ * tenant column. Returns null (D1 has no commit sha).
  */
 function makeCommitSkuCache(env: Env, getLocationId: () => Promise<string>) {
   return async (mappings: NewMapping[]): Promise<string | null> => {
     if (mappings.length === 0) return null;
     const locationId = await getLocationId();
     const existing = await readSkuCache(env);
-    const have = new Map(
-      existing.map((m) => [`${m.ingredient}\0${m.locationId ?? ""}`, learnedFieldsKey(m)]),
+    const have = new Map<string, PriorLearned>(
+      existing.map((m) => [
+        `${m.ingredient}\0${m.locationId ?? ""}`,
+        { sku: m.sku, brand: m.brand, size: m.size, aisle: m.aisle ?? null, aisleCapturedAt: m.aisleCapturedAt ?? null },
+      ]),
     );
     const stamp = today();
     const toWrite: NewSkuMapping[] = [];
     for (const m of mappings) {
       const key = `${m.ingredient}\0${locationId}`;
-      const fresh = learnedFieldsKey({ sku: m.sku, brand: m.brand, size: m.size, aisle: m.aisleLocation });
+      const prior = have.get(key);
+      // Only fold the aisle into the comparison when the FRESH mapping actually
+      // carries one — an absent fresh placement must not make an otherwise-identical
+      // row look changed (keep-on-null).
+      const compareAisle = m.aisleLocation != null;
+      const fresh = learnedFieldsKey({ sku: m.sku, brand: m.brand, size: m.size, aisle: m.aisleLocation }, compareAisle);
+      const priorKey = prior && learnedFieldsKey(prior, compareAisle);
       // Identical learned fields → no write churn; a differing row upserts in place.
-      if (have.get(key) === fresh) continue;
-      have.set(key, fresh);
-      const aisle = m.aisleLocation ?? null;
+      if (priorKey === fresh) continue;
+      // A present fresh placement wins outright; otherwise carry the prior row's
+      // placement forward (if any) rather than clearing it.
+      const aisle = m.aisleLocation ?? prior?.aisle ?? null;
+      const capturedAt = m.aisleLocation ? stamp : (prior?.aisle ? prior.aisleCapturedAt : null);
+      have.set(key, { sku: m.sku, brand: m.brand, size: m.size, aisle, aisleCapturedAt: capturedAt });
       toWrite.push({
         ingredient: m.ingredient,
         sku: m.sku,
@@ -110,8 +145,7 @@ function makeCommitSkuCache(env: Env, getLocationId: () => Promise<string>) {
         aisle_number: aisle ? aisle.number : null,
         aisle_description: aisle ? aisle.description : null,
         aisle_side: aisle?.side ?? null,
-        // Stamped only when placement data is present — NULL says "never captured".
-        aisle_captured_at: aisle ? stamp : null,
+        aisle_captured_at: capturedAt,
       });
     }
     if (toWrite.length > 0) await upsertSkuMappings(env, toWrite);

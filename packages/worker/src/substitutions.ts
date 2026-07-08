@@ -43,7 +43,8 @@ import { readPreferences } from "./profile-db.js";
 import { computeToBuyView } from "./to-buy.js";
 import { compareUnitPrice, type UnitPriceItem } from "./unit-price.js";
 import { baseOf, isFulfillable, isOnSale, MIN_FLYER_DISCOUNT, type CachedMapping, type FlyerItem } from "./matching.js";
-import { readStoreFlyer, filterByMinSavings, KROGER_STORE, type FlyerRollup } from "./flyer-warm.js";
+import { readStoreFlyer, filterByMinSavings, isSatelliteRollupStale, KROGER_STORE, type FlyerRollup } from "./flyer-warm.js";
+import { loadOperatorConfig, DEFAULT_OPERATOR_CONFIG } from "./operator-config.js";
 import type { KvStore } from "./kroger-user.js";
 import type { OrderWiring } from "./order-tools.js";
 import type {
@@ -68,8 +69,9 @@ export type {
   SuggestSubstitutionsResult,
 } from "./order-shapes.js";
 
-/** Per-call line budget (D1): ≤ 2 Kroger calls per line + token + location resolve
- *  stays comfortably under the free-tier 50-subrequest cap. Default AND ceiling. */
+/** Per-call line budget (D1): ≤ 2 Kroger calls per line + token + location resolve —
+ *  ≤ ~26 upstream calls at the 12-line cap — stays comfortably under the free-tier
+ *  50-subrequest cap. Default AND ceiling. */
 export const MAX_SUBSTITUTION_LINES = 12;
 /** Same-identity alternatives returned per line, `compareUnitPrice`-ranked (D2). */
 export const ALTERNATIVES_CAP = 5;
@@ -242,6 +244,14 @@ export async function suggestSubstitutions(
   const flyerLocation = primary === KROGER_STORE ? locationId : label;
   if (label && flyerLocation) {
     rollup = await readStoreFlyer(kv, primary, flyerLocation).catch(() => null);
+  }
+  // A satellite rollup past the operator's staleness ceiling is suppressed entirely —
+  // the same gate `store_flyer` applies — rather than hinting off stale sales;
+  // `flyer_as_of` below then reflects that nothing was actually used.
+  if (rollup) {
+    const operatorConfig = await loadOperatorConfig(env).catch(() => null);
+    const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
+    if (isSatelliteRollupStale(primary, rollup.as_of, stalenessDays)) rollup = null;
   }
   const saleItems = rollup ? filterByMinSavings(rollup.items, MIN_FLYER_DISCOUNT) : [];
 

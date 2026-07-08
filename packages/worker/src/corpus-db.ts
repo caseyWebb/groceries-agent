@@ -359,6 +359,16 @@ export async function readIdentityNeighbors(env: Env, ids: string[]): Promise<Ma
         }
       }
     }
+    // A sibling reachable through two same-kind parents is pushed once per parent
+    // (each carrying a different `via`); sort by (id, via) so the tie the downstream
+    // first-relation-wins dedup (`identitySiblings`) resolves is stable rather than
+    // dependent on the edge table's scan order.
+    coChildren.sort((a, b) => {
+      if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+      const av = a.via ?? "";
+      const bv = b.via ?? "";
+      return av < bv ? -1 : av > bv ? 1 : 0;
+    });
     out.set(raw, { id: x, satisfiedBy, satisfies, coChildren });
   }
   return out;

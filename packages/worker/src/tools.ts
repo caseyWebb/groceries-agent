@@ -74,7 +74,7 @@ import {
   type MatchResult,
 } from "./matching.js";
 import { compareUnitPrice } from "./unit-price.js";
-import { readStoreFlyer, filterByMinSavings, KROGER_STORE } from "./flyer-warm.js";
+import { readStoreFlyer, filterByMinSavings, isSatelliteRollupStale, KROGER_STORE } from "./flyer-warm.js";
 import type { KvStore } from "./kroger-user.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -876,14 +876,11 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         if (!rollup) return { items: [], as_of: null };
         const as_of = new Date(rollup.as_of).toISOString();
 
-        // Staleness ceiling — SATELLITE-scanned stores only. Kroger's daily cron re-scan bounds its
-        // freshness, but a satellite that goes offline would leave its last rollup indefinitely, so
+        // Staleness ceiling — SATELLITE-scanned stores only (see `isSatelliteRollupStale`):
         // past the ceiling a scanned store reads as empty rather than steering on stale sales.
-        if (store !== KROGER_STORE) {
-          const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
-          if (Date.now() - rollup.as_of > stalenessDays * 24 * 60 * 60 * 1000) {
-            return { items: [], as_of };
-          }
+        const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
+        if (isSatelliteRollupStale(store, rollup.as_of, stalenessDays)) {
+          return { items: [], as_of };
         }
         return { items: filterByMinSavings(rollup.items, minDiscount), as_of };
       }),
