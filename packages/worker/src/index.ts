@@ -20,6 +20,7 @@ import { buildEmbedDeps, runEmbedJob } from "./recipe-embeddings.js";
 import { runNightVibeVectorJob } from "./night-vibe-vector.js";
 import { runReconcileSignalsJob } from "./reconcile-signals.js";
 import { runArchetypeDerivationJob } from "./night-vibe-suggest.js";
+import { buildDupScanDeps, runDupScanJob } from "./dup-scan.js";
 import { buildFacetDeps, runFacetJob } from "./recipe-classify.js";
 import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
 import { buildDiscoveryDeps, runDiscoverySweepJob, DEFAULT_CONFIG } from "./discovery-sweep.js";
@@ -283,10 +284,17 @@ export default {
     // Phase 4: the sweep runs after the index + embeddings are fresh (it dedups + matches against
     // them), using the operator's stored config loaded once above.
     const phase4 = await Promise.allSettled([runDiscoverySweepJob(env, buildDiscoveryDeps(env), sweepConfig)]);
-    // Phase 5: profile-reconciliation producers — the deterministic signal pass (no model) plus
-    // the generative archetype-derivation pass (self-gated to ~daily; names new archetypes on the
-    // small model and enqueues add_vibe proposals). Both feed the pending_proposals queue.
-    const phase5 = await Promise.allSettled([runReconcileSignalsJob(env), runArchetypeDerivationJob(env)]);
+    // Phase 5: the pending_proposals producers — the deterministic profile signal pass (no
+    // model), the generative archetype-derivation pass (self-gated to ~daily; names new
+    // archetypes on the small model and enqueues add_vibe proposals), and the corpus dup-scan
+    // (recipe-dedup): bounded + watermarked pure arithmetic over the phase-2 projection's fresh
+    // ingredients_key and the phase-3 reconcile's fresh vectors (the same freshness ordering the
+    // sweep relies on), surfacing near-duplicate pairs as operator merge_recipes proposals.
+    const phase5 = await Promise.allSettled([
+      runReconcileSignalsJob(env),
+      runArchetypeDerivationJob(env),
+      runDupScanJob(env, buildDupScanDeps(env)),
+    ]);
     const failed = [...phase1, ...phase2, ...phase3, ...phase4, ...phase5].find((r) => r.status === "rejected");
     if (failed && failed.status === "rejected") throw failed.reason;
   },
