@@ -13,23 +13,23 @@ and the implementer binds to the landed actuals (e.g. `buildOrderWiring`, `compu
 
 ## 1. Worker: aisle capture on the SKU cache (D5)
 
-- [ ] 1.1 Migration (`packages/worker/migrations/d1/`, next free number — 0041 at authoring,
+- [x] 1.1 Migration (`packages/worker/migrations/d1/`, next free number — 0041 at authoring,
   after P3's 0040): `ALTER TABLE sku_cache ADD COLUMN` × `aisle_number TEXT`,
   `aisle_description TEXT`, `aisle_side TEXT`, `aisle_captured_at TEXT` — all nullable, no
   backfill (convergence through the order pipeline). Update `docs/SCHEMAS.md`'s `sku_cache`
   line in the same commit.
-- [ ] 1.2 `matching.ts`: `ConfidentMatch` and the override-revalidation shape
+- [x] 1.2 `matching.ts`: `ConfidentMatch` and the override-revalidation shape
   (`RevalidatedSku`) gain `aisleLocation` (the `KrogerCandidate` field passed through at the
   cache-revalidation, search-pick, and override paths). Additive — no scoring/step change; the
   resolve-only and never-substitutes contracts untouched.
-- [ ] 1.3 `order.ts` + `order-tools.ts`: `NewMapping` carries the aisle fields; `placeOrder`
+- [x] 1.3 `order.ts` + `order-tools.ts`: `NewMapping` carries the aisle fields; `placeOrder`
   emits a mapping for **every** resolved line (cache-hit lines included — their revalidation
   already holds fresh aisle data); `makeCommitSkuCache` replaces skip-if-present with
   **skip-only-if-identical** (same SKU/brand/size/aisle) so differing rows refresh in place.
-- [ ] 1.4 `corpus-db.ts`: `NewSkuMapping` + `upsertSkuMappings` write the four columns
+- [x] 1.4 `corpus-db.ts`: `NewSkuMapping` + `upsertSkuMappings` write the four columns
   (stamping `aisle_captured_at` when aisle data is present); `sku-cache-rekey.ts` carries the
   columns through its delete+reinsert (else the reconcile erases placements) — extend its test.
-- [ ] 1.5 Unit tests: commit refresh-on-difference (identical row skipped; changed aisle
+- [x] 1.5 Unit tests: commit refresh-on-difference (identical row skipped; changed aisle
   upserted in place; `last_used` refreshed on upsert), cache-hit line emits a mapping, rekey
   round-trips aisle columns, matcher threads `aisleLocation` untouched through
   confident/override paths.
