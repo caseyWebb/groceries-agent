@@ -41,59 +41,20 @@ function devEnv(tables: Record<string, Record<string, unknown>[]>): { env: Env; 
 const post = (body: unknown) =>
   ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) as RequestInit;
 
-describe("Config › shared-corpus editors (SSR pages)", () => {
-  it("404s an unknown Config group slug as a structured not_found, not a 500", async () => {
-    const { env } = devEnv({ aliases: [] });
-    const res = await app.request("/admin/config/nonsense", {}, env);
-    // No SSR route matches /config/nonsense, so it falls through to ASSETS (404 here).
-    expect(res.status).toBe(404);
-  });
-});
-
 // --- Config › four-group sub-nav (admin-ui-redesign-config) ------------------
 
-describe("Config › four consolidated groups", () => {
-  it("the bare /admin/config route serves the Discovery group by default, with calibration + Feeds + Email Sources", async () => {
-    const { env } = devEnv({
-      feeds: [{ url: "https://a.example/feed", name: "A", weight: 1, tags: [] }],
-      discovery_members: [{ address: "casey@dirtbag.social" }],
-      discovery_senders: [{ address: "digest@nyt-forward.example" }],
-    });
-    const res = await app.request("/admin/config", {}, env);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain("Calibration");
-    expect(html).toContain("/admin/islands/calibration.js");
-    expect(html).toContain("Discovery feeds");
-    expect(html).toContain("https://a.example/feed");
-    expect(html).toContain("Email Sources");
-    expect(html).toContain("casey@dirtbag.social");
-    expect(html).toContain("digest@nyt-forward.example");
-    expect(html).toContain("/admin/islands/email-sources.js");
-    // The Discovery pill is active on the default route.
-    expect(html).toMatch(/class="pill active">\s*Discovery/);
-  });
-
-  it("/admin/config/flyer serves the Kroger Flyer group: flyer knobs + flyer-terms editor", async () => {
-    const { env } = devEnv({ flyer_terms: [{ term: "olive oil" }] });
-    const res = await app.request("/admin/config/flyer", {}, env);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain("Flyer behaviour");
-    expect(html).toContain("/admin/islands/opconfig.js");
-    expect(html).toContain("Flyer terms");
-    expect(html).toContain("olive oil");
-    expect(html).toMatch(/class="pill active">\s*Kroger Flyer/);
-  });
-
-  it("/admin/config/ranking serves only the Ranking knob console (no corpus editor)", async () => {
+describe("Config › four consolidated groups (now SPA screens over the typed reads)", () => {
+  it("the Config routes are served the SPA shell (group content renders client-side)", async () => {
+    // The group screens (calibration console, corpus editors, opconfig knobs, ingest keys)
+    // are the admin app's — their content/sub-nav assertions live in the Playwright config
+    // specs; here the Worker's job is only to answer the routes with the shell.
     const { env } = devEnv({});
-    const res = await app.request("/admin/config/ranking", {}, env);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain("Ranking weights");
-    expect(html).toContain("/admin/islands/opconfig.js");
-    expect(html).toMatch(/class="pill active">\s*Ranking/);
+    for (const path of ["/admin/config", "/admin/config/flyer", "/admin/config/ranking", "/admin/config/ingest-keys"]) {
+      const res = await app.request(path, {}, env);
+      // devEnv's ASSETS stub 404s everything, so "asked the binding for the shell" reads
+      // as a 404 here — the point is it did NOT 500 and did NOT match a stale SSR route.
+      expect([200, 404]).toContain(res.status);
+    }
   });
 
   it("/admin/config/aliases redirects to the Normalization Aliases tab (bookmark preserved)", async () => {
@@ -101,27 +62,6 @@ describe("Config › four consolidated groups", () => {
     const res = await app.request("/admin/config/aliases", {}, env);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/admin/normalize?tab=aliases");
-  });
-
-  it("the sub-nav lists exactly the three group labels, in order", async () => {
-    const { env } = devEnv({});
-    const res = await app.request("/admin/config", {}, env);
-    const html = await res.text();
-    const navMatch = html.match(/<div class="data-nav">.*?<\/div>/s);
-    expect(navMatch).not.toBeNull();
-    const subNav = navMatch![0];
-    const labels = ["Discovery", "Kroger Flyer", "Ranking"];
-    let lastIndex = -1;
-    for (const label of labels) {
-      const idx = subNav.indexOf(`>${label}</a>`);
-      expect(idx).toBeGreaterThan(lastIndex);
-      lastIndex = idx;
-    }
-    // The old eight-slug flat destinations are gone as standalone sub-nav pills.
-    expect(subNav).not.toContain(">Senders</a>");
-    expect(subNav).not.toContain(">Members</a>");
-    expect(subNav).not.toContain(">Flyer terms</a>");
-    expect(subNav).not.toContain(">Feeds</a>");
   });
 });
 
