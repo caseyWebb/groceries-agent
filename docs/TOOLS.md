@@ -48,7 +48,7 @@ Find recipes in the corpus. Takes an array of search **specs** and returns one r
 - **Ranked mode — re-rank = cosine + three small nudges.** `+ favoriteWeight · max cosine to any favorited recipe` (taste *direction* — nearest-liked, not a centroid; no-op on cold start), `+ freshness` (never-cooked surfaced by `novelty_boost`; cooked-within-`resurface_after_days` linearly demoted), and `+ pantry overlap` (below). The nudges are deliberately small relative to cosine. Favorites are the caller's `favorite`-flagged recipes (set via `toggle_favorite`); `rotation.{novelty_boost,resurface_after_days}` come from preferences, defaulting when unset.
 - **Ranked mode — pantry overlap = two-tier, saturating, perishable-weighted.** For each `boost_ingredient`, a hit on the recipe's `perishable_ingredients` (the waste-prevention win) counts more than a hit on only its `ingredients_key`; the weighted sum saturates and scales by a small weight. Boost items and ingredient lists are alias-normalized before exact set-overlap — synonym recall depends on the alias table, **not** on ingredient embeddings. The weights are fixed constants today.
 - **Ranked mode — unembedded recipes are dropped.** A just-imported recipe whose embedding the cron hasn't reconciled yet is excluded from a ranked group (not an error) — it stays findable via a **vibe-less** membership spec until the next reconcile.
-- **One round-trip, one embedding call.** All vibe-bearing specs embed in a single Workers AI request; a batch of only vibe-less specs makes **no** AI request. Pass several diverse vibe specs (a vibe, a variety/wildcard, a never-cooked novelty) for recall rather than many calls.
+- **One round-trip, at most one embedding call.** All vibe-bearing specs embed through the shared **query-embedding cache** (see `docs/SCHEMAS.md`) — cached phrases (recently embedded by either this tool or `propose_meal_plan`) cost no AI request, and the misses batch into a single Workers AI call; a batch of only vibe-less specs makes **no** AI request. Pass several diverse vibe specs (a vibe, a variety/wildcard, a never-cooked novelty) for recall rather than many calls.
 
 ### `read_recipe(slug)`
 
@@ -328,9 +328,9 @@ Patch an existing vibe — pass only the fields to change. Editing `vibe` re-emb
 
 Remove a vibe by `id` (its derived embedding is pruned on the next tick). Unknown id → `not_found`. Returns `{ id, removed: true }`.
 
-### `propose_meal_plan(nights?, seed?, lock?, exclude?, boost_ingredients?, nudges?)`
+### `propose_meal_plan(nights?, seed?, lock?, exclude?, boost_ingredients?, nudges?, slots?)`
 
-Propose a week of dinners from the caller's night-vibe palette — **stateless, deterministic, no Workers AI call** (every query vector is cron-captured), **no writes**. Two levels: **(1) shape** — sample `nights` night-vibe slots by **cadence-debt** (a vibe overdue against its `cadence_days` surfaces; pinned vibes are placed; overdue placement yields ≥1 slot to the weighted pool) combined with **discrete weather-bucket quotas**: each forecast day collapses to exactly one category (`grill | cold-comfort | wet | mild`), the window's day-category mix is histogrammed into integer slot quotas (largest-remainder rounding — mirroring the forecast's proportion, e.g. one hot day in seven yields a small `grill` quota, not full-strength pressure on every slot), and each category's quota is filled from that category's member vibes plus bucketless (universal-filler) vibes, ranked by cadence-debt; a quota with no eligible member, and every `mild`-day slot, degrades to the flex pool (the whole remaining palette) so a slot is **never** left empty for lack of a weather match; **(2) fill** — retrieve each slot's vibe by meaning (the same ranked retrieval as `search_recipes`) and select a **varied** main by MMR + protein/cuisine caps **across the week** (not the top-3 lookalikes), then compose rung-1 `pairs_with` corpus sides. The fill also does **holistic use-it-up**: it derives the caller's at-risk perishables from their **pantry** (always-on — no param) and spreads them across the week's mains via a bounded, decrementing set-cover term, so a multi-serving item (a family pack of ground beef) can be used across **two** mains and residual is reported — all subordinate to vibe relevance and the hard gate.
+Propose a week of dinners from the caller's night-vibe palette — **stateless, deterministic, no writes**, and at most **one batched, cache-gated Workers AI embedding call** per request: only the `nudges.freeform` phrase and any `slots[].vibe` override phrases not already served by the query-embedding cache are embedded (one batched call covers all misses); a request supplying **no such text makes no AI call** — every other query vector is cron-captured. The member app's `POST /api/propose` runs the **same shared operation** with the same input and result shape (one contract). Two levels: **(1) shape** — sample `nights` night-vibe slots by **cadence-debt** (a vibe overdue against its `cadence_days` surfaces; pinned vibes are placed; overdue placement yields ≥1 slot to the weighted pool) combined with **discrete weather-bucket quotas**: each forecast day collapses to exactly one category (`grill | cold-comfort | wet | mild`), the window's day-category mix is histogrammed into integer slot quotas (largest-remainder rounding — mirroring the forecast's proportion, e.g. one hot day in seven yields a small `grill` quota, not full-strength pressure on every slot), and each category's quota is filled from that category's member vibes plus bucketless (universal-filler) vibes, ranked by cadence-debt; a quota with no eligible member, and every `mild`-day slot, degrades to the flex pool (the whole remaining palette) so a slot is **never** left empty for lack of a weather match; **(2) fill** — retrieve each slot's vibe by meaning (the same ranked retrieval as `search_recipes`) and select a **varied** main by MMR + protein/cuisine caps **across the week** (not the top-3 lookalikes), then compose rung-1 `pairs_with` corpus sides. The fill also does **holistic use-it-up**: it derives the caller's at-risk perishables from their **pantry** (always-on — no param) and spreads them across the week's mains via a bounded, decrementing set-cover term, so a multi-serving item (a family pack of ground beef) can be used across **two** mains and residual is reported — all subordinate to vibe relevance and the hard gate.
 
 The **planning window** (`preferences.planning_cadence_days`, days; defaults to 7 when unset) names how far out the caller plans/shops, independent of `nights`/`default_cooking_nights` (the count of cooking nights **within** that window — a longer window alone doesn't imply cooking more often). The window drives three things: the weather forecast is requested for that many days out (replacing a fixed horizon, clamped to the forecast source's own supported range, and further capped at a ~10-day forecast-reliability horizon for category derivation — days beyond it are treated as `mild`), each night vibe's **occurrence cap** for this plan — `max(1, floor(window / cadence_days))` — so a weekly vibe (`cadence_days: 7`) can be sampled into up to 2 slots of a 14-day window instead of at most once (a vibe with no period, or a period ≥ the window, still caps at 1; this cap, and "already placed" status, is enforced **globally across every category's quota fill**, not reset per category), and an overdue vibe whose bucket's quota is **zero** this window rolls over rather than force-placing into a mismatched slot — until its debt crosses the escape-hatch tier, at which point it force-places regardless. Recurrences are spread across the window (not placed adjacently) where the sampling mechanism allows it; determinism, pinned/overdue precedence, and rollover are unaffected. A recurring vibe never repeats the **same recipe** — cross-slot diversity (`usedSlugs`) still guarantees two occurrences of a vibe resolve to two different recipes.
 
@@ -340,16 +340,27 @@ The **planning window** (`preferences.planning_cadence_days`, days; defaults to 
 - `lock` (string[], optional): recipe slugs to keep — returned as leading `locked` slots; the rest of the week diversifies *against* them (won't duplicate/clash). Slugs resolve **case-insensitively** and **respect the reject hard gate**; a lock that's unknown, not-yet-embedded, or rejected is returned as an **explicit empty `locked` slot** (never silently dropped). Each lock occupies one night, so the sampled slot count is `nights − lock.length`.
 - `exclude` (string[], optional): recipe slugs to drop from every pool (swap-out).
 - `boost_ingredients` (string[], optional): an **override** for the always-on use-it-up — extra items to fold into the at-risk demand ("definitely use these"), unioned with the pantry-derived set (never lowering a larger pantry count). Not required to get use-it-up: the demand is derived from the pantry every call. Alias-normalized; a bounded coverage nudge, never a gate.
-- `nudges` (object, optional): `{ max_time_total? }` (a hard time gate applied to every slot) and `{ variety? }` (0–1; higher = more diverse, lower λ).
+- `nudges` (object, optional):
+  - `max_time_total?` (number): a hard time gate applied to every slot (overridden per-slot by `slots[].max_time_total`).
+  - `variety?` (0–1): higher = more diverse (lower λ, clamped so relevance can't collapse).
+  - `freeform?` (string): a week-level phrase ("more soup, lighter dinners") — embedded once (cache-gated) and applied to **every** slot's ranking as a bounded additive term, subordinate to the primary vibe relevance. **Never a gate**: it reorders gate survivors and cannot admit a gated-out recipe. A chosen main it materially matches says so in its `why[]`.
+  - `proteins?` (string[]): a week-level **soft** protein boost, matched case-insensitively — matching candidates get a bounded additive bump and a `why` line; never a gate (the per-slot `protein` pin is the hard version).
+- `slots` (array, optional): per-**vibe-slot** constraints, each `{ vibe_id, protein?, cuisine?, max_time_total?, vibe?, recipe? }`, keyed by the palette vibe's id (a vibe legitimately drawn twice in a long window applies the same constraints to both of its slots; a duplicate `vibe_id` entry beyond the first is ignored). A constraint whose vibe **isn't sampled this week** (or no longer exists) is **inert** — no effect, no error — so a replayed client session survives palette edits.
+  - `protein?` / `cuisine?`: facet pins narrowing **that night's** hard gate (they overwrite the vibe facet's values for that slot; every other slot is untouched).
+  - `max_time_total?` (number | **null**): a per-night time cap. Precedence: **slot pin > global `nudges.max_time_total` > the vibe's own facet**; an **explicit `null` lifts the vibe's own cap** for that night (which absence cannot express).
+  - `vibe?` (string): a typed phrase **replacing that slot's query vector** (embedded at request time, cache-gated). The facet gate and the slot's vibe identity are unchanged; the returned slot carries `vibe_override: true`. Side effect: a fresh, **not-yet-embedded** palette vibe becomes fillable this request instead of returning an empty slot.
+  - `recipe?` (string): an **identity-preserving recipe pin** — fills that slot with the named recipe while keeping its `vibe_id`/`reason` (so `from_vibe` provenance survives a swap→commit), admitted into the week's diversify state **up-front** alongside the locks so the rest of the week diversifies away from it. Resolved under the lock rules (case-insensitive; must exist, be embedded, not rejected, **not excluded** — `exclude` beats a pin); an unresolvable pin returns as an **explicit empty slot** with the reason, never silently dropped. The returned slot carries `recipe_pinned: true` and its `why` leads with "your pick".
 
 **Returns:**
 - `{ plan, variety, uncovered_at_risk, diagnostics }`.
-  - `plan`: one entry per slot — `{ vibe_id, reason (pinned|overdue|sampled|locked), main, sides, uses_perishables, flags, why }`. `main` is `{ slug, title, description, protein, cuisine, time_total, score }` or **`null`** for an **explicit empty slot** (`empty_reason` set — a vibe with no retrievable candidate, or none clearing the caps — never silently dropped). `sides` are rung-1 corpus sides `{ slug, title }`. `uses_perishables` is the at-risk items this main **claimed** (decremented from the demand — what it actually uses up, not merely any perishable it lists). `flags`: `waste` (single-use perishables no other main shares — a cheap hint), `meal_prep`, `novel` (never cooked), `no_corpus_side` (add an open-world side). `why[]` explains the pick (incl. "uses your X (going bad)").
+  - `plan`: one entry per slot — `{ vibe_id, reason (pinned|overdue|sampled|locked), main, alternates, alt_similar, alt_different, sides, uses_perishables, flags, why, vibe_override?, recipe_pinned?, weather_category? }`. `main` is `{ slug, title, description, protein, cuisine, time_total, score }` or **`null`** for an **explicit empty slot** (`empty_reason` set — a vibe with no retrievable candidate, none clearing the caps, or an unresolvable pin — never silently dropped). `sides` are rung-1 corpus sides `{ slug, title }`. `uses_perishables` is the at-risk items this main **claimed** (decremented from the demand — what it actually uses up, not merely any perishable it lists). `flags`: `waste` (single-use perishables no other main shares — a cheap hint), `meal_prep`, `novel` (never cooked), `no_corpus_side` (add an open-world side). `why[]` explains the pick (incl. "uses your X (going bad)", the weather fit, a matched freeform ask, a requested protein, "your pick" on a pinned main).
+  - **Swap material per vibe slot**, from its **already-computed ranked pool** (no extra retrieval or model call), excluding every recipe the week already uses: `alternates` — the top 6 remaining candidates as lites `{ slug, title, protein, cuisine, time_total }`; `alt_similar` — the remaining candidate nearest by cosine to the chosen main; `alt_different` — the highest-ranked remaining candidate of a different cuisine (each `null` when none qualifies). All are gate survivors by construction — a rejected, gated-out, or excluded recipe never appears. An **empty** vibe slot still returns its pool's alternates (the escape hatch for an over-constrained night); a vibe-less `locked` slot has no pool and returns none. Deterministic for a given request.
+  - `vibe_override` / `recipe_pinned` (present when true): the slot's query vector came from `slots[].vibe` / its main was pinned via `slots[].recipe`. `weather_category` (`grill | cold-comfort | wet`, optional): the non-`mild` weather-category quota that placed this sampled slot — also folded into its `why[]`.
   - `variety`: `{ distinct_proteins, distinct_cuisines, mean_pairwise_sim, max_pairwise_sim }` over the chosen mains.
   - `uncovered_at_risk`: at-risk items the assembled plan could **not** use up (residual demand) — the honest "still going bad" signal, so the caller can re-roll, lock, or shop around them. `[]` when everything was covered (or there was no at-risk demand).
   - `diagnostics`: `{ seed, lambda, nights, filled, empty, rolled_over }` — `rolled_over` are due vibes that didn't fit this week (debt keeps climbing).
 
-**Notes:** An empty palette returns an empty `plan` with a `note` to add vibes first. The tool never writes — persist an agreed plan with `update_meal_plan`, threading each chosen main's `vibe_id` as the row's `from_vibe` so cooking it advances that vibe's cadence (`satisfied_vibe`). Sides are **corpus-only** (rung-1 `pairs_with`); open-world sides and freeform-text queries are the calling surface's job, so the tool never fabricates a side. Holistic use-it-up is **always-on** (derived from the pantry) — the caller doesn't need to pass `boost_ingredients` to get it; matching is keyword + alias set-membership over `perishable_ingredients`/`ingredients_key` (no vectors).
+**Notes:** An empty palette returns an empty `plan` with a `note` to add vibes first. Determinism holds across **every** param: identical request bodies (with request-time vectors served from the query-embedding cache) produce identical responses — pins and nudges are inputs, and the seed fully determines the week given the inputs; this is what makes the stateless iteration loop (and the member app's client-side session replay) work. The tool never writes — persist an agreed plan with `update_meal_plan`, threading each chosen main's `vibe_id` as the row's `from_vibe` so cooking it advances that vibe's cadence (`satisfied_vibe`). Sides are **corpus-only** (rung-1 `pairs_with`); open-world sides and freeform-text queries are the calling surface's job, so the tool never fabricates a side. Holistic use-it-up is **always-on** (derived from the pantry) — the caller doesn't need to pass `boost_ingredients` to get it; matching is keyword + alias set-membership over `perishable_ingredients`/`ingredients_key` (no vectors).
 
 ---
 
@@ -359,11 +370,11 @@ The reconcile reconciles a member's **stated** preference (their night-vibe pale
 
 ### `list_proposals()`
 
-List the caller's **pending** reconcile proposals — suggested palette edits (prune a vibe you never cook, stretch a cadence you keep deferring). Read-only. `{ proposals: [{ id, kind, target, rationale, payload, evidence, producer }] }`.
+List the caller's **pending** reconcile proposals — suggested palette edits (prune a vibe you never cook, stretch a cadence you keep deferring, tighten a cadence you keep satisfying early). Read-only. `{ proposals: [{ id, kind, target, rationale, payload, evidence, producer }] }`.
 
 ### `confirm_proposal(id, accept)`
 
-Accept (`accept: true` → applies the diff: prune/adjust/add a night vibe, marks accepted) or reject (`false` → recorded; the stable id means the same proposal is never re-surfaced) a proposal. Unknown/already-resolved id → `not_found`. Returns `{ id, status, applied? }`.
+Accept (`accept: true` → applies the diff: prune/adjust/add a night vibe, marks accepted) or reject (`false` → recorded; the stable id means the same proposal is never re-surfaced) a proposal. Unknown id → `not_found`; already-resolved id → `conflict` (the earlier resolution stands — treat as converged). Returns `{ id, status, applied? }`.
 
 ### `reconcile_read_signals()` — operator-only
 
@@ -385,14 +396,74 @@ The grocery list is the SKU-free buy list for the next order (D1-backed, `grocer
 
 ### `read_grocery_list()`
 
-Return the current buy list.
+Return the current buy list — the **stored rows only** (all statuses). This does **not** include the meal plan's derived ingredient needs: for any shop-time read (what would an order buy, a store walk, the stale-cart check) use [`read_to_buy`](#read_to_buywith_aisles) instead. Use this read when the raw rows themselves are the subject (status/source/note edits, the receive flow).
 
 **Returns:**
 - `{ items: [...] }`
 
+### `read_to_buy(with_aisles?)`
+
+The **derived to-buy view** — what an order placed right now would buy: the `active` grocery list ∪ the **meal plan's derived ingredient needs** (each planned recipe's derived `ingredients_full`) − pantry on-hand, joined on canonical ingredient ids. This is the **same set algebra `place_order` flushes** (and the satellite pull-list serves), so "what would we buy?" has one answer on every surface. One shared operation with the member app's `GET /api/grocery/to-buy` (`?aisles=1` for the enriched variant).
+
+**Guarantees:** read-only and cheap — the default read makes **zero Kroger calls, zero AI calls, and writes nothing** (derived lines exist only in the read; no reconcile or cron materializes them into rows). The plan is the derived lines' source of truth: editing the plan changes the next read with no sync step. The optional **`with_aisles: true`** variant costs at most **one Kroger Locations resolve** (label → locationId, `kroger_flyer`'s posture) and **zero product searches**; the default read is byte-identical to the pre-param shape.
+
+**Returns:**
+```
+{
+  to_buy:        [{ name, quantity, assumed_quantity, for_recipes, origin, key, kind, domain, note?,
+                    placement? }],   // with_aisles only: { aisle_number?, aisle_description?, aisle_side?, department? } | null
+  pantry_covered:[{ name, for_recipes, on_hand: { quantity?, category?, last_verified_at? } }],
+  in_cart:       [{ name, added_at }],
+  underived:     ["<slug>", ...],
+  location?:     { id } | null       // with_aisles only: the store the placements are for
+}
+```
+
+- `origin` — `"list"` (an explicit row the plan doesn't need), `"plan"` (a **virtual** line derived from a planned recipe; no stored row exists — an `add_to_grocery_list` of the same name **materializes/pins** it under the same canonical `key`), or `"both"` (a stored row the plan also needs, merged with unioned `for_recipes`).
+- `quantity` is the package count the order would use; derived lines default to 1 with `assumed_quantity: true` (derivation is **presence-only** — no portion math).
+- `pantry_covered` — the needs the pantry cancels: the **same set `place_order` returns as `partials`**, each joined with the pantry row's verify metadata so a stale-verified perishable earns a "still good?" nudge instead of a silent skip.
+- `in_cart` — the stored in-cart rows: the deterministic **stale-cart signal** (non-empty at order time ⇒ a prior order was never confirmed placed).
+- `underived` — planned recipes whose full ingredient list is **not yet derived**; their items are NOT in `to_buy` (reported, never silently dropped) — compensate explicitly.
+- A derived need whose canonical id matches an **in-flight** (`in_cart`/`ordered`) row is suppressed from `to_buy` — it is already being bought (it shows under `in_cart`); receiving (pantry restock) or re-listing the row resolves it.
+- `placement` (**with_aisles only**) — the line's captured aisle at the caller's Kroger location, read from the shared `sku_cache` (learned by `place_order`'s commit; the untagged-`''` legacy row is the fallback), plus a `department` derived from the identity graph's parents (out-edges, precedence `membership` → `general` → `containment`, lexicographic tiebreak; absent when the key has no parent). With no resolvable Kroger location (walk/satellite primary), `location` is null and placements carry `department` only. Placements start sparse and **converge organically as orders run** — a line without one is an honest unknown, never a fabricated aisle.
+
+### `suggest_substitutions(names?, max_lines?)`
+
+Deterministic substitution suggestions for to-buy lines. **READ-ONLY**: it never writes the cart, the SKU cache, the grocery list, or anything else — nothing is applied implicitly, and acting on a suggestion reuses the existing writes (a same-identity swap is a `place_order` `overrides` entry; a cross-ingredient swap is the list add/remove writes, or — for a plan-derived virtual line — an add plus an order-scoped `exclude`). One shared operation with the member app's `POST /api/grocery/substitutions`. The matcher is not involved: the read composes the SKU cache, one term search per line, the unit-price core, the identity graph, the pantry, and the warmed flyer rollup — the matcher's resolve-only / never-substitutes contracts are untouched.
+
+**Params:**
+- `names` (array, optional) — lines to process, resolved through the ingredient funnel. Omitted = the caller's current derived to-buy set, in view order.
+- `max_lines` (number, optional) — per-call line budget; defaults to and is **capped at 12**.
+
+**Returns:**
+```
+{
+  suggestions: [{
+    for: { name, key, origin? },                    // origin from the to-buy view when derived
+    status: "ok" | "current_unavailable" | "no_cached_pick",
+    current: { sku, brand, description, size, price, on_sale, available,
+               unit_price?, base_unit?, aisleLocation } | null,
+    alternatives: [{ …product fields, reasons: ("cheaper" | "on_sale" | "in_stock")[] }],
+    siblings: [{ id, label,
+                 relation: { role: "satisfies" | "sibling" | "generalization",
+                             kind: "general" | "containment" | "membership", via? },
+                 in_pantry, on_sale_hint? }]
+  }],
+  remaining: [name, ...],          // unprocessed this call — call again to continue
+  location: { id } | null,         // null = no resolvable Kroger location
+  flyer_as_of: ISO | null
+}
+```
+
+- `current` — the line's cached SKU pick, **revalidated live** (fresh price/fulfillment/aisle). `status: "current_unavailable"` when it no longer fulfills; `"no_cached_pick"` when no mapping exists at the caller's location (nor a legacy untagged one).
+- `alternatives` — same-ingredient products from **exactly one term search**, fulfillable only, current SKU excluded, ranked by `compare_unit_price`'s core, capped at 5. `reasons` is a **closed deterministic vocabulary and nothing else**: `cheaper` (strictly lower unit price than the current pick, only when both ranked comparable in one size dimension — `unit_price`/`base_unit` carry the numbers), `on_sale` (a genuine promo discount), `in_stock` (fulfillable while the current pick is unavailable). Qualitative reasons ("lower fat") are never produced here — that judgment stays with the caller, grounded in this data.
+- `siblings` — cross-ingredient suggestions from a **depth-1 walk over the persisted identity graph**, every endpoint representative-resolved, concrete (buyable) targets only, the line itself and anything already on the to-buy set excluded, capped at 4. Emitted in fixed precedence — satisfies → `general`-kind siblings → generalizations → `containment`-kind siblings → `membership`-kind siblings (a broad class family like `vegetables` only surfaces when nothing better exists) — each **labeled with its relation** (`role`, `kind`, and the shared parent `via` for siblings): the walk proposes and names the relation; fitness for the dish is the caller's judgment. `in_pantry` marks a sibling already on hand; `on_sale_hint` matches the primary store's flyer rollup at the flyer reads' default sale floor (not caller-tunable here) — a cached hint, not a live price; **no per-sibling Kroger search is issued**.
+- **Budget:** ≤ 1 product revalidation + 1 term search per processed line, ≤ 12 lines per call; unprocessed names return in `remaining` for an explicit follow-up call.
+- **No Kroger location** (walk-store tenants): degrades instead of erroring — `location: null`, empty price/availability sections, siblings/pantry/flyer hints still served, zero Kroger product calls.
+
 ### `add_to_grocery_list(item)`
 
-Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — re-adding an existing name **merges** (union `for_recipes`, reconcile `quantity`) rather than duplicating. New items start `status: "active"`.
+Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — re-adding an existing name **merges** (union `for_recipes`, reconcile `quantity`) rather than duplicating. New items start `status: "active"`. A **planned recipe's ingredient needs no add** — the to-buy set derives it from the meal plan automatically; adding one anyway **materializes/pins** it as an explicit row (do this to carry a quantity annotation or note) — it upserts under the same canonical id, so the row and the derived need merge into one line, never a duplicate.
 
 **Params:**
 - `name` (string, required)
@@ -410,8 +481,14 @@ Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — r
 
 Patch an existing item by name (`quantity`, `kind`, `domain`, `status`, `source`, `for_recipes`, `note`).
 
+**`status` transition guard** (enforced in the shared update operation, so every caller — this tool and the member web app — gets the identical guarantee):
+- `active ⇄ in_cart` is freely writable in both directions, and an `ordered` item may be re-listed back to `active`/`in_cart` (a canceled order is a legitimate correction).
+- `status: "ordered"` is accepted **only** as the user-asserted *"I placed the order"* advance on an item currently `in_cart`; that write stamps `ordered_at` with today's date.
+- Any other write of `ordered` returns a structured `validation_failed` carrying the attempted transition (`{ name, from, to }`) and changes nothing.
+- The order flow's own advances (`place_order`'s in-cart advance, the satellite receipt flush's ordered advance) are separate code paths, unaffected by this guard.
+
 **Returns:**
-- `{ item }` — `not_found` if no such item; D1-backed, no `commit_sha`
+- `{ item }` — `not_found` if no such item; `validation_failed` on an illegal `status` transition; D1-backed, no `commit_sha`
 
 ### `remove_from_grocery_list(name)`
 
@@ -420,7 +497,7 @@ Remove an item by name.
 **Returns:**
 - `{ removed: bool }` — D1-backed, no `commit_sha`
 
-**Notes:** Promoting a low/out pantry item onto the list is a **prompted** decision (record `source: "pantry_low"`), never automatic. The lifecycle past `active` (`in_cart` → `ordered` → `received`) is driven by `place_order` and the user-asserted transitions — see [`place_order`](#place_orderpayload) below.
+**Notes:** Promoting a low/out pantry item onto the list is a **prompted** decision (record `source: "pantry_low"`), never automatic. Removing a **materialized** (`source: "menu"`) row while its recipe stays planned un-pins, it doesn't un-plan — the ingredient re-derives as a virtual to-buy line on the next `read_to_buy`. The lifecycle past `active` (`in_cart` → `ordered` → the terminal receive action) is driven by `place_order` and the user-asserted transitions — see [`place_order`](#place_orderpayload) below.
 
 ---
 
@@ -884,16 +961,18 @@ Return the current meal plan — recipes committed to cook next (transient cook 
 
 ### `update_meal_plan(ops)`
 
-Add or remove planned meal entries. D1-backed — no commit, no `commit_sha`.
+Add, remove, or edit planned meal entries. D1-backed — no commit, no `commit_sha`.
 
 **Params:**
-- `ops` (array): `[{ op: "add" | "remove", recipe, planned_for?, sides? }]`
-  - `add` upserts by recipe slug (updating `planned_for`, merging open-world `sides`); `remove` drops all rows for the slug.
+- `ops` (array): `[{ op: "add" | "remove" | "set", recipe, planned_for?, sides?, from_vibe? }]`
+  - `add` upserts by recipe slug: updates `planned_for` (when supplied non-null), **unions** open-world `sides` onto the row, and sets `from_vibe` when supplied.
+  - `remove` drops all rows for the slug.
+  - `set` edits an **existing** row with **replace** semantics (a `set` addressing a recipe with no planned row is a per-op conflict, not an error): a supplied `sides` array replaces the row's sides **wholesale** — an empty array removes them all, the only way to remove a side; a supplied `planned_for` string sets the date and an **explicit `planned_for: null` clears it** (unschedules the night); `from_vibe` is preserved unless supplied (supplied `null` clears it).
 
 **Returns:**
 - `{ applied: [...], conflicts: [...] }` — D1-backed, no `commit_sha`; each applied entry has `{ op, recipe }`; conflicts include the reason.
 
-**Notes:** Called after the user confirms a menu (add rows), and during cook-capture or the stale-planned reconcile (remove rows). `log_cooked` also auto-removes a cooked recipe from the meal plan. A **corpus** side (a `course: side` recipe) gets its own `add` row; open-world sides ride on the main's `sides` field. An **`add`** op also stamps the caller's `profile.last_planned_at` planning watermark (today) — the bound `list_new_for_me` reads, so the next plan surfaces only discoveries imported since this one.
+**Notes:** Called after the user confirms a menu (add rows), during cook-capture or the stale-planned reconcile (remove rows), and for row edits — side removal, rescheduling/unscheduling a night (set rows). `log_cooked` also auto-removes a cooked recipe from the meal plan. A **corpus** side (a `course: side` recipe) gets its own `add` row; open-world sides ride on the main's `sides` field. An **`add`** op that applies also stamps the caller's `profile.last_planned_at` planning watermark (today) — the bound `list_new_for_me` reads, so the next plan surfaces only discoveries imported since this one; `set`/`remove` never move the watermark.
 
 ---
 
@@ -903,7 +982,7 @@ Add or remove planned meal entries. D1-backed — no commit, no `commit_sha`.
 
 The order-time flush — the **only** tool that writes a Kroger cart. Resolves the whole to-buy set against *current* Kroger availability, writes the cart (`PUT /v1/cart/add`), and caches learned ingredient→SKU mappings to the shared SKU cache. Backed by the Kroger `authorization_code` + PKCE user-context client and the KV-backed rotating refresh token.
 
-**To-buy set (order-time dedup):** `grocery_list ∪ menu_needs − pantry_has`. Only `active` list items participate. A name present in the pantry is **not** silently dropped — it returns in `partials` for you to prompt on, and is bought only if the user confirms it via `include_partials` (the no-auto-decide rule). Default buy quantity is **1 package** per item unless overridden.
+**To-buy set (order-time dedup):** `grocery_list ∪ menu needs − pantry_has`, joined on canonical ingredient ids — where **menu needs are the union of the meal plan's server-derived ingredient needs and any caller-supplied `menu_needs`**. The tool derives each planned recipe's needs itself from its derived `ingredients_full` (the same derivation [`read_to_buy`](#read_to_buywith_aisles) and the satellite pull-list use), so a caller never hand-expands the plan; `menu_needs` is for **supplements** only (open-world side ingredients not yet captured, spontaneous extras). **A caller passing plan-derived (or already-listed) duplicates in `menu_needs` is safe**: the canonical-id union merges them into one line — a not-yet-republished plugin bundle whose persona still passes the bulk expansion cannot cause a double-buy. Planned recipes whose ingredient list is not yet derived return in `underived` (their items are NOT in the set — compensate explicitly rather than silently under-buying). A derived need whose row is already in flight (`in_cart`/`ordered`) is suppressed — a repeat order never re-buys the lines the last order carted. Only `active` list items participate. A name present in the pantry is **not** silently dropped — it returns in `partials` for you to prompt on, and is bought only if the user confirms it via `include_partials` (the no-auto-decide rule). A caller-supplied **`exclude`** list drops named lines (resolved through the same canonical-id funnel) from the to-buy set **before resolution** — an order-scoped opt-out for a line with no row to remove (a derived one); it is never persisted, so the line returns on the next read/order. Default buy quantity is **1 package** per item unless overridden.
 
 **Quantity (package count):** supply it per item via `menu_needs[].quantity`, or via the `quantities` map; the `quantities` map **overrides** `menu_needs[].quantity` when both are present (precedence: `quantities` → `menu_needs[].quantity` → default 1). A line that fell back to the default carries `assumed_quantity: true`. The tool reports that fact but does **not** classify "by-the-each produce" or do portion math — at `preview`, *you* reconcile any `assumed_quantity` by-the-each produce (peppers, tomatillos, …) against the recipe's required amount and set an explicit quantity before the real flush. (`grocery_list` items' string `quantity` like "2 lbs" is a human need-annotation, not a package count.)
 
@@ -914,35 +993,41 @@ The order-time flush — the **only** tool that writes a Kroger cart. Resolves t
 **Params:**
 ```
 {
-  menu_needs:       [{ name, quantity?, for_recipes? }],  // needs not yet on the list (quantity: 1–99 integer)
+  menu_needs:       [{ name, quantity?, for_recipes? }],  // SUPPLEMENTS only (plan needs are derived server-side); quantity: 1–99 integer
   quantities:       { "<name>": <packages> },             // per-item package count, 1–99 integer (default 1)
   include_partials: ["<name>", ...],                       // pantry items the user confirmed buying anyway
   overrides:        [{ name, sku, brand?, size? }],        // force a SKU: disposition, or lock a verified/on-sale SKU
+  exclude:          ["<name>", ...],                       // drop lines from the to-buy set BEFORE resolution (order-scoped, never persisted)
   preview:          bool                                    // resolve + report only; no cart write, no commits
 }
 ```
-All sections optional. With no args it flushes the current grocery list. Package counts (`quantities` and `menu_needs[].quantity`) must be positive integers ≤ 99 — a fractional, zero, or oversized value is rejected before any cart write (`place_order` is the only tool that writes a real Kroger cart).
+All sections optional. With no args it flushes the current to-buy set (list ∪ derived plan needs − pantry). Package counts (`quantities` and `menu_needs[].quantity`) must be positive integers ≤ 99 — a fractional, zero, or oversized value is rejected before any cart write (`place_order` is the only tool that writes a real Kroger cart).
 
 **Returns:**
 ```
 {
-  resolved:  [{ name, sku, brand, size, quantity, assumed_quantity, price?, on_sale? }],  // assumed_quantity: qty defaulted to 1; price/on_sale: fresh at resolution
+  resolved:  [{ name, sku, brand, size, quantity, assumed_quantity, price?, on_sale?, aisleLocation? }],  // assumed_quantity: qty defaulted to 1; price/on_sale/aisleLocation: fresh at resolution
   checkpoint:[{ name, kind: "ambiguous"|"unavailable", candidates?, message }],
   partials:  [{ name, for_recipes }],
   sku_cache: { committed, error? },
   cart:      { written, count?, error?, code? },   // code carries reauth_required etc.
   list:      { advanced, error? },        // D1-backed (no commit_sha)
-  preview:   bool
+  preview:   bool,
+  underived: ["<slug>", ...]              // planned recipes whose items are NOT in this order
 }
 ```
 
 **Partial-failure honesty:** the SKU-cache commit and the cart write are **independent best-effort** operations (the SKU cache is a pure hint). Order: commit the cache → write the cart → advance the list to `in_cart` *only after a successful cart write*. So a cart failure leaves the list `active` (retryable, no silent drop) and **never** reports a populated cart; a cache-commit failure after a successful cart just re-resolves next time. If the cart write fails because the Kroger refresh token was rejected, `cart.code` is `reauth_required` — call [`kroger_login_url`](#kroger_login_url) and give the member the returned link to re-authorize (see `docs/SELF_HOSTING.md`).
 
+**Mapping commit (refresh-on-difference, aisle capture):** the SKU-cache commit covers **every** resolved line — cache-hit lines included, whose revalidation carries fresh data — and each mapping carries the resolved product's **aisle placement** (`aisle_number`/`aisle_description`/`aisle_side`, stamped `aisle_captured_at`) when Kroger reports one. A key already cached is skipped **only when its learned fields (SKU, brand, size, aisle) are identical**; a differing row is refreshed in place (with `last_used`), so mappings and placements **converge organically with each order** instead of freezing at first capture. The captured placements feed [`read_to_buy`](#read_to_buywith_aisles)'s `with_aisles` enrichment and the in-store walk.
+
 **Lifecycle (`active → in_cart → ordered → received`):** `place_order` sets `in_cart`. Because the cart API is write-only and unreadable, the transitions past `in_cart` are **user-asserted**, never agent-verified:
-- *"I placed the order"* → advance `in_cart` items to `ordered` via `update_grocery_list`.
+- *"I placed the order"* → advance `in_cart` items to `ordered` via `update_grocery_list` (stamps `ordered_at`). This is the **only** path into `ordered` that `update_grocery_list` accepts — a write of `ordered` on an item not currently `in_cart` is rejected with a structured `validation_failed` (see [`update_grocery_list`](#update_grocery_listname-patch)).
 - *"I picked up the groceries"* → `received` (terminal): `remove_from_grocery_list` for each, and for `grocery`-kind items only, restock the pantry via `update_pantry`. `household`/`other` items don't touch the pantry.
 
-A **stale-cart reminder** fires when a new order begins while the prior list still has `in_cart` items never confirmed `ordered`: remind the user to clear the Kroger cart manually (the API can't), rather than silently double-adding.
+A **stale-cart reminder** fires when a new order begins while the prior list still has `in_cart` items never confirmed `ordered` (the deterministic signal is [`read_to_buy`](#read_to_buywith_aisles)'s `in_cart` section — the member app's order dialog leads with the same warning): remind the user to clear the Kroger cart manually (the API can't), rather than silently double-adding.
+
+**One shared operation.** The tool body is the extracted `runPlaceOrder` op; the member app's `POST /api/grocery/order` calls the same operation over fresh `buildOrderWiring` deps (preview and commit are the same endpoint discriminated by `preview`), with the tool's observable behavior unchanged. The endpoint is gated to Kroger-online fulfillment — a non-Kroger primary receives a structured `unsupported` naming the correct flow — and the app's commit is **online-only** (never queued/replayed: the cart write is not idempotent).
 
 **`place_order` stays Kroger-only.** The parallel **satellite cart-fill flush** for an API-less store (satellite-order-cart-fill) adds **no MCP tool** and does not touch `place_order`: it is served by the two direct `/satellite/order/*` endpoints (see `docs/SCHEMAS.md`), driven by the tenant's local helper, and the agent routes to it from the `preferences.stores.fulfillment === "satellite"` marker it already reads at the start of `shop-groceries` — no `place_order`-shaped tool is minted for it (there is nothing Worker-side to mint; the helper URL/token live on the tenant's machine). Carted/substituted lines advance to `in_cart` exactly as `place_order` does, and the same `active → in_cart → ordered → received` lifecycle + user-asserted transitions apply.
 

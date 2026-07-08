@@ -188,6 +188,17 @@ export function filterByMinSavings(items: FlyerItem[], fraction: number): FlyerI
   );
 }
 
+/** Staleness gate for a SATELLITE-scanned store's rollup (`store_flyer`'s posture,
+ *  shared with the substitution read's flyer hints): Kroger's daily cron re-scan
+ *  bounds its own freshness, so this only ever applies past the KROGER store; a
+ *  satellite whose scanner goes offline would otherwise leave its last rollup
+ *  indefinitely, so past the operator's `scanStalenessDays` ceiling it reads as stale
+ *  rather than steering on stale sales. */
+export function isSatelliteRollupStale(store: string, asOf: number, stalenessDays: number): boolean {
+  if (store === KROGER_STORE) return false;
+  return Date.now() - asOf > stalenessDays * 24 * 60 * 60 * 1000;
+}
+
 /** Build the sweep plan: distinct locations (union of tenants' preferred stores) ×
  *  normalized broad terms, ordered grouped-by-location for deterministic output and
  *  so a location's rollup is built across consecutive units. */

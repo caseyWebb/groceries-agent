@@ -72,18 +72,43 @@
 		{ "binding": "USAGE_AE", "dataset": "grocery_usage" },
 		{ "binding": "TOOL_AE", "dataset": "grocery_tool" }
 	],
-	// Static assets (operator-admin): the committed admin SPA under admin/dist/, served
-	// same-origin at /admin/* via the ASSETS binding. `run_worker_first` routes /admin*
-	// to the Worker FIRST so the Cloudflare Access gate (and the /admin/api/* handlers)
-	// run before any static file is served — an unconfigured deploy is 404, not an open
-	// shell. Code-level binding: the deploy merge propagates it (merge-wrangler-config.mjs
-	// allowlist) like `ai`; it carries no operator-owned id.
+	// Static assets (member-app-shell + operator-admin): ONE merged, gitignored build root
+	// (./assets) carrying the member SPA at / (index.html + hashed chunks; deep links fall
+	// back to the shell via `not_found_handling`) AND the admin islands/stylesheet under
+	// assets/admin/ (their /admin/* URLs unchanged). `run_worker_first` routes /admin* to
+	// the Worker FIRST so the Cloudflare Access gate (and the /admin/api/* handlers) run
+	// before any static file is served — an unconfigured deploy is 404, not an open shell.
+	// Code-level binding: the deploy merge propagates the WHOLE object verbatim
+	// (merge-wrangler-config.mjs allowlist) like `ai`; it carries no operator-owned id.
+	//
+	// DISCIPLINE: with the single-page-application fallback, any path NOT enumerated below
+	// is answered with the SPA shell — so `run_worker_first` IS the routing contract.
+	// Adding a Worker-owned HTTP route (src/index.ts, the OAuth provider's endpoints, a new
+	// top-level surface) means adding its entry HERE in the same change, or the fallback
+	// silently swallows it. The same trap class as the merge allowlist, guarded the same
+	// way: this stated rule (+ CONTRIBUTING.md) and the app suite's passthrough assertions.
 	"assets": {
-		"directory": "./admin/dist",
+		"directory": "./assets",
 		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
 		"run_worker_first": [
+			"/mcp",
+			"/mcp/*",
+			"/token",
+			"/register",
+			"/.well-known/*",
+			"/authorize",
+			"/oauth/*",
+			"/satellite/*",
+			"/api",
+			"/api/*",
 			"/admin",
-			"/admin/*"
+			"/admin/*",
+			"/cookbook",
+			"/cookbook/*",
+			"/health",
+			"/health.svg",
+			"/source"
 		]
 	},
 	// R2 (authored corpus). `CORPUS` holds the human-authored markdown — `recipes/*.md`

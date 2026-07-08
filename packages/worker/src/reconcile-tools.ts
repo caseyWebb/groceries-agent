@@ -13,13 +13,50 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { normalizeTenantId, directoryFromEnv, type Tenant } from "./tenant.js";
 import { runTool, ToolError } from "./errors.js";
-import { readNightVibes, readVibeLastSatisfied } from "./night-vibe-db.js";
+import { readNightVibes, readVibeSatisfactionDates } from "./night-vibe-db.js";
 import { draftProposals, type ProposalDraft } from "./reconcile-signals.js";
 import { readProposals, getProposal, enqueueProposal, setProposalStatus, applyProposal } from "./reconcile-db.js";
 
 /** The caller's tenant is the operator iff it matches the configured OWNER_TENANT_ID. */
 function isOperator(env: Env, tenant: Tenant): boolean {
   return !!env.OWNER_TENANT_ID && normalizeTenantId(env.OWNER_TENANT_ID) === tenant.id;
+}
+
+/** What resolving a proposal yields: the recorded status, plus what applying changed on accept. */
+export type ResolveProposalResult =
+  | { id: string; status: "accepted"; applied: string }
+  | { id: string; status: "rejected" };
+
+/**
+ * The `confirm_proposal` core as a shared operation (member-app-core D2): scope the
+ * proposal to the caller, apply-on-accept (`applyProposal` + status) or record the
+ * reject. Unknown id → structured `not_found`; an ALREADY-RESOLVED proposal →
+ * structured `conflict` (D8: a replayed confirm is answered as converged, never
+ * re-applied). Called by the MCP tool and the member API's
+ * `POST /api/vibes/proposals/:id/confirm`.
+ */
+export async function resolveProposal(
+  env: Env,
+  tenant: string,
+  id: string,
+  accept: boolean,
+): Promise<ResolveProposalResult> {
+  const proposal = await getProposal(env, id, tenant);
+  if (!proposal) throw new ToolError("not_found", `no proposal '${id}'`, { id });
+  if (proposal.status !== "pending") {
+    throw new ToolError("conflict", `proposal '${id}' is already ${proposal.status}`, {
+      id,
+      status: proposal.status,
+    });
+  }
+  const nowIso = new Date().toISOString();
+  if (accept) {
+    const applied = await applyProposal(env, tenant, proposal, nowIso);
+    await setProposalStatus(env, id, tenant, "accepted", nowIso);
+    return { id, status: "accepted", applied };
+  }
+  await setProposalStatus(env, id, tenant, "rejected", nowIso);
+  return { id, status: "rejected" };
 }
 
 export function registerReconcileTools(server: McpServer, env: Env, tenant: Tenant): void {
@@ -43,22 +80,10 @@ export function registerReconcileTools(server: McpServer, env: Env, tenant: Tena
     "confirm_proposal",
     {
       description:
-        "Confirm a profile-reconciliation proposal by id. `accept: true` applies its diff to your palette (prune/adjust/add a night vibe) and marks it accepted; `accept: false` rejects it (recorded as a signal — the same proposal is never re-surfaced). Unknown/already-resolved id → not_found. Returns { id, status, applied? }.",
+        "Confirm a profile-reconciliation proposal by id. `accept: true` applies its diff to your palette (prune/adjust/add a night vibe) and marks it accepted; `accept: false` rejects it (recorded as a signal — the same proposal is never re-surfaced). Unknown id → not_found; an already-resolved id → conflict (nothing changes — the earlier resolution stands). Returns { id, status, applied? }.",
       inputSchema: { id: z.string().min(1), accept: z.boolean() },
     },
-    ({ id, accept }) =>
-      runTool(async () => {
-        const proposal = await getProposal(env, id, tenant.id);
-        if (!proposal || proposal.status !== "pending") throw new ToolError("not_found", `no pending proposal '${id}'`, { id });
-        const nowIso = new Date().toISOString();
-        if (accept) {
-          const applied = await applyProposal(env, tenant.id, proposal, nowIso);
-          await setProposalStatus(env, id, tenant.id, "accepted", nowIso);
-          return { id, status: "accepted", applied };
-        }
-        await setProposalStatus(env, id, tenant.id, "rejected", nowIso);
-        return { id, status: "rejected" };
-      }),
+    ({ id, accept }) => runTool(() => resolveProposal(env, tenant.id, id, accept)),
   );
 
   // --- operator surface (cross-tenant; gated on OWNER_TENANT_ID) -------------
@@ -77,8 +102,8 @@ export function registerReconcileTools(server: McpServer, env: Env, tenant: Tena
         const now = new Date();
         const members = [];
         for (const t of tenants) {
-          const [palette, last] = await Promise.all([readNightVibes(env, t), readVibeLastSatisfied(env, t)]);
-          members.push({ tenant: t, palette_size: palette.length, signals: draftProposals(palette, last, now) });
+          const [palette, dates] = await Promise.all([readNightVibes(env, t), readVibeSatisfactionDates(env, t)]);
+          members.push({ tenant: t, palette_size: palette.length, signals: draftProposals(palette, dates, now) });
         }
         return { members };
       }),

@@ -185,8 +185,8 @@ export type CandidateKind = "accepted" | "dup" | "reject" | "park" | "fail" | "d
 
 const ACQUIRE_REASONS = new Set<AcquireReason>(["unreachable", "no_jsonld", "not_a_recipe", "incomplete"]);
 
-/** Compile-time exhaustiveness — mirrors src/admin/lib/remote.ts's assertNever, without the
- *  layering of a core reader importing from the admin panel. */
+/** Compile-time exhaustiveness — the classic `assertNever` helper, local so a core reader
+ *  never imports from the admin panel's layer. */
 function assertNeverOutcome(x: never): never {
   throw new Error(`Unhandled discovery outcome: ${JSON.stringify(x)}`);
 }

@@ -58,9 +58,10 @@ a stateless Cloudflare Worker owns everything that should be exact — file I/O,
 Kroger SKU matching, cart writes, validation.
 
 ```
-  You, in Claude.ai (web + mobile)
+  You, in Claude.ai (web + mobile) — or the member web app at <worker>/
         │   the grocery-agent plugin — workflow skills + the grocery-mcp connector
         │   MCP over HTTPS, OAuth 2.1 · connect once with an operator-issued invite code
+        │   (the web app signs in with the SAME invite code → a cookie session + typed /api)
         ▼
   Cloudflare Worker · grocery-mcp
         │   OAuth provider + multi-tenant gate + coarse, opinionated domain tools
@@ -79,6 +80,11 @@ Two patterns recur and explain most of the design:
   flyer) is captured once into persistent data, retrieved deterministically, and narrowed by the
   model with live context — so the hot path stays fast and the model is reserved for real novelty.
 
+**Two member surfaces, one Worker.** Claude.ai is the conversational surface; the **member web
+app** — a React SPA the same Worker serves at `/` (`packages/app` + the shared `packages/ui`) —
+signs in with the same operator-issued invite code (a revocable cookie session) and talks to a
+typed `/api` JSON surface that calls the same operations the MCP tools call.
+
 **Multi-tenancy is a D1 column.** One self-hosted Worker serves a friend group; an invite code
 resolves to a tenant *before* any tool runs, and every per-tenant table is isolated by its `tenant`
 column. Recipes and store maps are deliberately shared; everything personal is not.
@@ -91,6 +97,7 @@ background crons — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | Path | What it is |
 | --- | --- |
 | `src/`, `test/`, `wrangler.jsonc` | the Cloudflare Worker — the `grocery-mcp` MCP server + OAuth provider |
+| `packages/app`, `packages/admin-app`, `packages/ui` | the member web app (a React SPA served by the Worker at `/`), the operator admin panel (a React SPA served at `/admin`), and the shared shadcn/ui components + theme tokens both build on |
 | `scripts/` | build tooling — recipe indexes, the static cookbook, the plugin bundle |
 | `AGENT_INSTRUCTIONS.md` | the agent persona + conversational flows; the source the plugin bundle is generated from (the bundle is published to the operator's data-repo marketplace, not committed here) |
 | `docs/` | the deep docs (see [Documentation](#documentation)) |
@@ -113,6 +120,7 @@ mise install          # Node 22 + aube, pinned in mise.toml
 aube install          # dependencies (reads aube-lock.yaml in place)
 
 aubr dev              # wrangler dev — a local Worker; point MCP Inspector at the local URL
+aubr dev:app          # wrangler dev + the member app's Vite dev server (HMR; /api proxied)
 aubr typecheck        # tsc --noEmit
 aubr test             # vitest — Worker unit tests (test/*.test.ts)
 aubr test:tooling     # node --test — build-tooling tests (tests/*.test.mjs)

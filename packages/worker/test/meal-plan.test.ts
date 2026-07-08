@@ -97,3 +97,54 @@ describe("dueAndFuture", () => {
     expect(future.map((i) => i.recipe)).toEqual(["future"]);
   });
 });
+
+describe("applyMealPlanOps — set (replace semantics)", () => {
+  const base = (): PlannedItem[] => [
+    { recipe: "miso-salmon", planned_for: "2026-06-12", sides: ["white rice", "roasted broccoli"], from_vibe: "weeknight-fish" },
+  ];
+
+  it("replaces sides wholesale — removing one side leaves the rest and everything else untouched", () => {
+    const res = applyMealPlanOps(base(), [{ op: "set", recipe: "miso-salmon", sides: ["white rice"] }]);
+    expect(res.applied).toEqual([{ op: "set", recipe: "miso-salmon" }]);
+    expect(res.items[0]).toEqual({
+      recipe: "miso-salmon",
+      planned_for: "2026-06-12",
+      sides: ["white rice"],
+      from_vibe: "weeknight-fish",
+    });
+  });
+
+  it("an empty sides array removes them all", () => {
+    const res = applyMealPlanOps(base(), [{ op: "set", recipe: "miso-salmon", sides: [] }]);
+    expect(res.items[0].sides).toBeUndefined();
+  });
+
+  it("an explicit planned_for: null clears the date; absent preserves it", () => {
+    const cleared = applyMealPlanOps(base(), [{ op: "set", recipe: "miso-salmon", planned_for: null }]);
+    expect(cleared.items[0].planned_for).toBeNull();
+    expect(cleared.items[0].from_vibe).toBe("weeknight-fish"); // preserved
+    const untouched = applyMealPlanOps(base(), [{ op: "set", recipe: "miso-salmon", sides: ["white rice"] }]);
+    expect(untouched.items[0].planned_for).toBe("2026-06-12");
+  });
+
+  it("a set on an absent row is a per-op conflict, not an error", () => {
+    const res = applyMealPlanOps(base(), [{ op: "set", recipe: "ghost", planned_for: null }]);
+    expect(res.applied).toHaveLength(0);
+    expect(res.conflicts).toEqual([{ op: "set", recipe: "ghost", reason: "no planned row for that recipe" }]);
+    expect(res.items).toEqual(base());
+  });
+
+  it("a set with an invalid date is a per-op conflict", () => {
+    const res = applyMealPlanOps(base(), [{ op: "set", recipe: "miso-salmon", planned_for: "June 12" }]);
+    expect(res.conflicts).toHaveLength(1);
+    expect(res.items[0].planned_for).toBe("2026-06-12");
+  });
+
+  it("add semantics are untouched: union sides, null planned_for preserves", () => {
+    const res = applyMealPlanOps(base(), [
+      { op: "add", recipe: "miso-salmon", planned_for: null, sides: ["edamame"] },
+    ]);
+    expect(res.items[0].sides).toEqual(["white rice", "roasted broccoli", "edamame"]);
+    expect(res.items[0].planned_for).toBe("2026-06-12");
+  });
+});

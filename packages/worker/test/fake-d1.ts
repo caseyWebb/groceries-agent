@@ -21,6 +21,7 @@ const PK: Record<string, string[]> = {
   pantry: ["tenant", "normalized_name"],
   meal_plan: ["tenant", "recipe"],
   grocery_list: ["tenant", "normalized_name"],
+  cooking_log: ["id"],
   tenant_activity: ["tenant"],
   // shared-corpus (d1-shared-corpus)
   ingredient_identity: ["id"],
@@ -52,7 +53,7 @@ const PK: Record<string, string[]> = {
 
 // Tables whose `id` PK is AUTOINCREMENT: an INSERT that omits `id` gets the next one,
 // so successive inserts don't collide on an undefined id (mirrors SQLite autoincrement).
-const AUTOINCREMENT_TABLES = new Set(["bug_reports", "ingredient_normalization_log"]);
+const AUTOINCREMENT_TABLES = new Set(["bug_reports", "ingredient_normalization_log", "cooking_log"]);
 
 // Shared-corpus tables have no `tenant` column — SELECT/DELETE over them are global,
 // filtered only by explicit WHERE equality clauses below.
@@ -158,6 +159,14 @@ export function fakeD1(
     // Per-job run-history reads (readJobRuns).
     if (/\bjob = \?1/i.test(sql)) eq("job", 1);
     if (/normalized_name = \?2/i.test(sql)) eq("normalized_name", 2);
+    // A member-scoped read keyed on something else first (getProposal: id = ?1 AND tenant = ?2).
+    if (/\btenant = \?2/i.test(sql)) eq("tenant", 2);
+    // The cooking-log dedupe probe (logCooked opts.dedupe) + the tenant-scoped delete-by-id.
+    if (/\bdate = \?2/i.test(sql)) eq("date", 2);
+    if (/\btype = \?3/i.test(sql)) eq("type", 3);
+    if (/\brecipe = \?4/i.test(sql)) eq("recipe", 4);
+    if (/\bname = \?4/i.test(sql)) eq("name", 4);
+    if (/\bid = \?2/i.test(sql)) eq("id", 2);
     // Attributed notes: privacy rule (private=0 OR author=?2), and self-scoped
     // findOwnNote (author=?2 AND created_at=?3).
     if (/\(private = 0 OR author = \?2\)/i.test(sql)) {
@@ -190,6 +199,34 @@ export function fakeD1(
           ? tables[table].filter((r) => r.tenant === binds[0])
           : tables[table];
       let rows = applyWhere(sql, binds, base);
+      // The derived last-satisfied aggregation (readVibeLastSatisfied): MAX(date) per
+      // satisfied_vibe over the caller's provenance-stamped rows.
+      if (/MAX\(date\) AS d/i.test(sql) && /GROUP BY satisfied_vibe/i.test(sql)) {
+        const byVibe = new Map<unknown, unknown>();
+        for (const r of rows) {
+          if (r.satisfied_vibe == null) continue;
+          const prev = byVibe.get(r.satisfied_vibe);
+          if (prev === undefined || String(r.date) > String(prev)) byVibe.set(r.satisfied_vibe, r.date);
+        }
+        return {
+          rows: [...byVibe].map(([satisfied_vibe, d]) => ({ satisfied_vibe, d })),
+          changes: 0,
+        };
+      }
+      // The derived last_cooked aggregation (readLastCookedMap): MAX(date) per recipe
+      // over the caller's type='recipe' rows.
+      if (/MAX\(date\) AS last_cooked/i.test(sql) && /GROUP BY recipe/i.test(sql)) {
+        const byRecipe = new Map<unknown, unknown>();
+        for (const r of rows) {
+          if (r.type !== "recipe" || r.recipe == null) continue;
+          const prev = byRecipe.get(r.recipe);
+          if (prev === undefined || String(r.date) > String(prev)) byRecipe.set(r.recipe, r.date);
+        }
+        return {
+          rows: [...byRecipe].map(([recipe, last_cooked]) => ({ recipe, last_cooked })),
+          changes: 0,
+        };
+      }
       // COUNT(*) AS <alias> — the admin backlog counts (audit-admin). Applied after WHERE.
       const count = /^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)/i.exec(sql);
       if (count) return { rows: [{ [count[1]]: rows.length }], changes: 0 };
@@ -234,6 +271,8 @@ export function fakeD1(
           if (/normalized_name IN \(\?2, \?3\)/i.test(sql))
             return r.normalized_name !== binds[1] && r.normalized_name !== binds[2];
           if (/normalized_name = \?2/i.test(sql)) return r.normalized_name !== binds[1];
+          // Tenant-scoped delete by row id (night_vibes, cooking_log).
+          if (/\bid = \?2/i.test(sql)) return r.id !== binds[1];
           return false; // tenant-wide delete
         });
       }

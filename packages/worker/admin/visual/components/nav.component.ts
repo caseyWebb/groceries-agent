@@ -1,9 +1,10 @@
-// The shell's top-level area nav (src/admin/ui/layout.tsx `AREAS`) as a component object: the
-// one place the harness knows the nav's labels, hrefs, and active-pill markup. Page objects
-// compose it; specs never address `nav.nav` markup directly.
+// The shell's top-level area nav (the admin SPA's root layout `AREAS`) as a component object:
+// the one place the harness knows the nav's labels, hrefs, and active-pill markup. Page objects
+// compose it; specs never address `nav.nav` markup directly. Navigations are CLIENT-SIDE
+// (TanStack Router) — the history API still updates the URL, so `waitForURL` holds.
 import { expect, type Locator, type Page } from "@playwright/test";
 
-/** Mirrors layout.tsx's AREAS — label and href, in nav order. */
+/** Mirrors the SPA root layout's AREAS — label and href, in nav order. */
 export const NAV_AREAS = [
   { label: "Status", href: "/admin" },
   { label: "Members", href: "/admin/members" },
@@ -39,7 +40,7 @@ export class NavComponent {
     await expect(this.link(label)).toHaveClass(/\bactive\b/);
   }
 
-  /** Navigate by clicking the pill (a real cross-document navigation). */
+  /** Navigate by clicking the pill (a client-side router navigation). */
   async goto(label: NavLabel): Promise<void> {
     const href = NAV_AREAS.find((a) => a.label === label)!.href;
     await this.link(label).click();

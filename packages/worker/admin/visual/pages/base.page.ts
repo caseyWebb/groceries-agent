@@ -4,9 +4,10 @@
 // landmark, and their sub-surface accessors; specs consume page objects via fixtures.ts and
 // never address routes or shell markup directly.
 //
-// Landmark discipline (see src/admin/CLAUDE.md): a landmark is SSR-rendered (no island-hydration
-// wait), unique to its area, and time-free (never relative-age text — those strings depend on
-// the run clock even with the seeded now-relative fixtures).
+// Landmark discipline (see src/admin/CLAUDE.md): a landmark renders from the area's PRIMARY
+// QUERY (Playwright locator auto-wait covers the fetch+render cycle), is unique to its area,
+// and is time-free (never relative-age text — those strings depend on the run clock even with
+// the seeded now-relative fixtures).
 import { expect, type Locator, type Page } from "@playwright/test";
 import { NavComponent } from "../components/nav.component";
 import { HealthDockComponent } from "../components/health-dock.component";

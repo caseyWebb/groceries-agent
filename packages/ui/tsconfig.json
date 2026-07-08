@@ -1,0 +1,21 @@
+{
+  // Raw-TS workspace package (the app's bundler compiles it) — this pass is typecheck-only.
+  // DOM lib + react-jsx: these are browser components, unlike the workerd-typed worker root.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}

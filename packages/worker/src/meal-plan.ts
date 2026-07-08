@@ -14,12 +14,16 @@ export interface PlannedItem {
 }
 
 export interface MealPlanOp {
-  op: "add" | "remove";
+  op: "add" | "remove" | "set";
   recipe: string;
+  /** On `add`: set when supplied non-null (null/absent preserves). On `set`: a string
+   *  sets the date, an EXPLICIT null clears it, absent preserves. */
   planned_for?: string | null;
-  /** Open-world sides to attach to the (upserted) main's row on an `add`. */
+  /** On `add`: open-world sides UNIONED onto the row. On `set`: supplied ⇒ replaced
+   *  WHOLESALE (an empty array removes them all); absent ⇒ preserved. */
   sides?: string[];
-  /** Night-vibe slot provenance to set on the (upserted) row on an `add`. */
+  /** Night-vibe slot provenance. On `add`: set when supplied non-null. On `set`:
+   *  supplied ⇒ set (null clears); absent ⇒ preserved. */
   from_vibe?: string | null;
 }
 
@@ -58,9 +62,12 @@ function sameRecipe(a: string, b: string): boolean {
 }
 
 /**
- * Apply add/remove ops in order. `add` upserts by recipe slug (updating
- * planned_for); `remove` drops every row for the slug. Returns the new list and
- * a per-op report.
+ * Apply add/remove/set ops in order. `add` upserts by recipe slug (updating
+ * planned_for, unioning sides); `remove` drops every row for the slug; `set` edits an
+ * EXISTING row's mutable fields with replace semantics (absent row → per-op conflict):
+ * `sides` replaces wholesale (empty removes all — the only way to remove a side),
+ * `planned_for: null` explicitly clears the date, `from_vibe` is preserved unless
+ * supplied. Returns the new list and a per-op report.
  */
 export function applyMealPlanOps(
   items: PlannedItem[],
@@ -95,6 +102,28 @@ export function applyMealPlanOps(
         next.push(item);
       }
       applied.push({ op: "add", recipe: op.recipe });
+      continue;
+    }
+
+    if (op.op === "set") {
+      const existing = next.find((it) => sameRecipe(it.recipe, op.recipe));
+      if (!existing) {
+        conflicts.push({ op: "set", recipe: op.recipe, reason: "no planned row for that recipe" });
+        continue;
+      }
+      // planned_for: a string sets, an EXPLICIT null clears, absent preserves.
+      if ("planned_for" in op) existing.planned_for = op.planned_for ?? null;
+      // sides: supplied ⇒ replaced wholesale; [] removes them all; absent ⇒ preserved.
+      if (op.sides !== undefined) {
+        if (op.sides.length) existing.sides = [...op.sides];
+        else delete existing.sides;
+      }
+      // from_vibe: supplied ⇒ set (null clears); absent ⇒ preserved.
+      if ("from_vibe" in op) {
+        if (op.from_vibe != null) existing.from_vibe = op.from_vibe;
+        else delete existing.from_vibe;
+      }
+      applied.push({ op: "set", recipe: op.recipe });
       continue;
     }
 

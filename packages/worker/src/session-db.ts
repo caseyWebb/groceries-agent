@@ -30,6 +30,8 @@ import {
   addToGroceryList,
   updateGroceryItem,
   removeGroceryItem,
+  findGroceryItem,
+  illegalStatusTransition,
   type GroceryItem,
   type GroceryAddInput,
   type GroceryUpdateInput,
@@ -186,6 +188,33 @@ export async function markPantryVerifiedRows(
   return { verified, missing };
 }
 
+/** One pantry row's verify metadata, keyed for the to-buy view's coverage join. */
+export interface PantryMeta {
+  name: string;
+  quantity: string | null;
+  category: string | null;
+  last_verified_at: string | null;
+}
+
+/**
+ * The caller's pantry rows keyed by their stored `normalized_name` (the canonical id) —
+ * the to-buy view's `pantry_covered` join (member-app-grocery D3): a covered line carries
+ * the pantry row's quantity/category/last-verified so verification nudges are renderable.
+ * Read directly by the stored key (no re-resolution), like `readGroceryKeyIndex`.
+ */
+export async function readPantryByKey(env: Env, tenant: string): Promise<Map<string, PantryMeta>> {
+  const rows = await db(env).all<{ name: string; normalized_name: string } & Omit<PantryMeta, "name">>(
+    "SELECT name, normalized_name, quantity, category, last_verified_at FROM pantry WHERE tenant = ?1",
+    tenant,
+  );
+  return new Map(
+    rows.map((r) => [
+      r.normalized_name,
+      { name: r.name, quantity: r.quantity, category: r.category, last_verified_at: r.last_verified_at },
+    ]),
+  );
+}
+
 /** The caller's pantry item names, normalized — for the order-time set algebra. */
 export async function readPantryNames(env: Env, tenant: string): Promise<Set<string>> {
   const rows = await db(env).all<{ normalized_name: string }>(
@@ -241,8 +270,10 @@ export function mealPlanDeleteStmt(env: Env, tenant: string, recipe: string): D1
 }
 
 /**
- * Apply meal-plan add/remove ops as row statements (add = upsert by recipe; remove =
- * DELETE). Reads current rows, runs the pure `applyMealPlanOps`, emits per-op rows.
+ * Apply meal-plan add/remove/set ops as row statements (add/set = upsert by recipe;
+ * remove = DELETE). Reads current rows, runs the pure `applyMealPlanOps`, emits
+ * per-op rows — the upsert writes the full row, so `set` (replace-wholesale sides,
+ * explicit planned_for clear, preserved from_vibe) is pure op-plumbing here.
  */
 export async function applyMealPlanRowOps(
   env: Env,
@@ -361,23 +392,55 @@ export async function addGroceryRow(
   return { item: result.item, merged: result.merged };
 }
 
-/** Patch one grocery-list item by name. Throws a `not_found` ToolError when absent. */
+/**
+ * Patch one grocery-list item by name. Throws a `not_found` ToolError when absent.
+ * Enforces the W3 status-transition guard (grocery.ts `illegalStatusTransition`) for
+ * EVERY caller — the MCP tool and the member API get the identical guarantee: an
+ * illegal write of `status: "ordered"` is a structured `validation_failed` carrying
+ * `{ name, from, to }`, row unchanged; the legal `in_cart → ordered` (user-asserted
+ * order placed) advance stamps `ordered_at` = `today` (parity with
+ * `advanceOrderedRows`, which is a separate code path and unaffected).
+ */
 export async function updateGroceryRow(
   env: Env,
   tenant: string,
   name: string,
   patch: GroceryUpdateInput,
+  today: string = isoDay(Date.now()),
 ): Promise<GroceryItem> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
+  const existing = findGroceryItem(current, name, ctx.resolve);
+  if (!existing) {
+    throw new ToolError("not_found", `No grocery-list item named: ${name}`, { name });
+  }
+  if (patch.status !== undefined) {
+    const illegal = illegalStatusTransition(existing.status, patch.status);
+    if (illegal) {
+      throw new ToolError("validation_failed", illegal, {
+        name: existing.name,
+        from: existing.status,
+        to: patch.status,
+      });
+    }
+  }
   let result: UpdateResult;
   try {
     result = updateGroceryItem(current, name, patch, ctx.resolve);
   } catch {
     throw new ToolError("not_found", `No grocery-list item named: ${name}`, { name });
   }
-  await db(env).batch([groceryUpsertStmt(env, tenant, result.item, ctx.resolve)]);
-  return result.item;
+  let item = result.item;
+  // The legal user-asserted advance stamps ordered_at (the patch path used to leave it null);
+  // any status write that leaves "ordered" (e.g. re-listing to "active"/"in_cart") clears the
+  // stamp so a later re-advance stamps fresh rather than carrying a stale timestamp.
+  if (patch.status === "ordered" && existing.status === "in_cart") {
+    item = { ...item, ordered_at: today };
+  } else if (patch.status !== undefined && patch.status !== "ordered") {
+    item = { ...item, ordered_at: null };
+  }
+  await db(env).batch([groceryUpsertStmt(env, tenant, item, ctx.resolve)]);
+  return item;
 }
 
 /** Remove one grocery-list item by name. `found` is false when no such row existed. */

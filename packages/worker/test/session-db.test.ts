@@ -165,6 +165,22 @@ describe("meal plan → D1 rows", () => {
   });
 });
 
+describe("meal plan set → D1 rows", () => {
+  it("a set persists via the upsert and preserves from_vibe", async () => {
+    const { env, tables } = fakeD1({
+      tables: { meal_plan: [{ tenant: "everett", recipe: "miso-salmon", planned_for: "2026-06-12", sides: '["white rice","roasted broccoli"]', from_vibe: "weeknight-fish" }] },
+    });
+    const res = await applyMealPlanRowOps(env, "everett", [
+      { op: "set", recipe: "miso-salmon", sides: ["white rice"], planned_for: null },
+    ]);
+    expect(res.applied).toEqual([{ op: "set", recipe: "miso-salmon" }]);
+    const row = tables.meal_plan[0];
+    expect(row.planned_for).toBeNull();
+    expect(JSON.parse(row.sides as string)).toEqual(["white rice"]);
+    expect(row.from_vibe).toBe("weeknight-fish"); // preserved through the full-row upsert
+  });
+});
+
 describe("grocery list → D1 rows", () => {
   it("read filters by status as a WHERE clause", async () => {
     const { env } = fakeD1({
@@ -258,6 +274,61 @@ describe("grocery list → D1 rows", () => {
     const res = await removeGroceryRow(env, "everett", "green onions");
     expect(res.found).toBe(true);
     expect(tables.grocery_list).toHaveLength(0);
+  });
+
+  it("W3: active → ordered is rejected (validation_failed, {from,to}), row unchanged", async () => {
+    const { env, tables } = fakeD1({
+      tables: { grocery_list: [{ tenant: "everett", name: "Milk", normalized_name: "milk", quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: null }] },
+    });
+    await expect(updateGroceryRow(env, "everett", "milk", { status: "ordered" })).rejects.toMatchObject({
+      code: "validation_failed",
+      context: { name: "Milk", from: "active", to: "ordered" },
+    });
+    expect(tables.grocery_list[0].status).toBe("active");
+    expect(tables.grocery_list[0].ordered_at).toBeNull();
+  });
+
+  it("W3: in_cart → ordered (the user-asserted advance) is accepted and stamps ordered_at", async () => {
+    const { env, tables } = fakeD1({
+      tables: { grocery_list: [{ tenant: "everett", name: "Milk", normalized_name: "milk", quantity: "1", kind: "grocery", domain: "grocery", status: "in_cart", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: null }] },
+    });
+    const item = await updateGroceryRow(env, "everett", "milk", { status: "ordered" }, TODAY);
+    expect(item.status).toBe("ordered");
+    expect(item.ordered_at).toBe(TODAY);
+    expect(tables.grocery_list[0].status).toBe("ordered");
+    expect(tables.grocery_list[0].ordered_at).toBe(TODAY);
+  });
+
+  it("W3: active ⇄ in_cart stays freely writable both ways; ordered → active re-lists and clears the stamp, a later re-advance re-stamps", async () => {
+    const { env, tables } = fakeD1({
+      tables: { grocery_list: [{ tenant: "everett", name: "Milk", normalized_name: "milk", quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: null }] },
+    });
+    expect((await updateGroceryRow(env, "everett", "milk", { status: "in_cart" })).status).toBe("in_cart");
+    expect((await updateGroceryRow(env, "everett", "milk", { status: "active" })).status).toBe("active");
+    // Walk it legally to ordered, then re-list back to active (canceled order).
+    await updateGroceryRow(env, "everett", "milk", { status: "in_cart" });
+    const advanced = await updateGroceryRow(env, "everett", "milk", { status: "ordered" }, TODAY);
+    expect(advanced.ordered_at).toBe(TODAY); // advance to ordered stamps
+    const relisted = await updateGroceryRow(env, "everett", "milk", { status: "active" });
+    expect(relisted.status).toBe("active");
+    expect(relisted.ordered_at).toBeNull(); // re-list to active clears the stale stamp
+    expect(tables.grocery_list[0].status).toBe("active");
+    expect(tables.grocery_list[0].ordered_at).toBeNull();
+    // Walk it to ordered again, on a later day — the re-advance re-stamps fresh.
+    await updateGroceryRow(env, "everett", "milk", { status: "in_cart" });
+    const readvanced = await updateGroceryRow(env, "everett", "milk", { status: "ordered" }, "2026-06-05");
+    expect(readvanced.ordered_at).toBe("2026-06-05"); // re-advance re-stamps
+    expect(tables.grocery_list[0].ordered_at).toBe("2026-06-05");
+  });
+
+  it("W3: a non-status patch on an ordered row passes the guard untouched", async () => {
+    const { env } = fakeD1({
+      tables: { grocery_list: [{ tenant: "everett", name: "Milk", normalized_name: "milk", quantity: "1", kind: "grocery", domain: "grocery", status: "ordered", source: "ad_hoc", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: "2026-06-02" }] },
+    });
+    const item = await updateGroceryRow(env, "everett", "milk", { quantity: "2" });
+    expect(item.quantity).toBe("2");
+    expect(item.status).toBe("ordered");
+    expect(item.ordered_at).toBe("2026-06-02"); // untouched — not re-stamped
   });
 
   it("advanceInCartRows advances existing items and inserts unseen ones", async () => {

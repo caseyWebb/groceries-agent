@@ -56,6 +56,17 @@ export interface Env {
    */
   OWNER_TENANT_ID?: string;
 
+  // --- Member app version-skew stamp (member-app-shell). OPTIONAL, non-secret. ---
+  /**
+   * The deployed code SHA, injected by the operator deploy (`wrangler deploy --var
+   * APP_BUILD:<sha>`) — the Worker side of the member app's version-skew contract. Echoed
+   * on every `/api` response as `X-App-Build` and returned by `GET /api/version`; the SPA
+   * compares it against its own embedded `VITE_APP_BUILD` (the deploy stamps the same SHA
+   * into both). UNSET (local dev, tests, the Playwright harnesses) both sides read `"dev"`,
+   * so skew detection is inert locally by construction.
+   */
+  APP_BUILD?: string;
+
   // --- AGPL §13 source offer (open-source-license). OPTIONAL, non-secret. ---
   /**
    * The source location `/source` offers, satisfying AGPL section 13 for users interacting over the
@@ -177,15 +188,20 @@ export interface Env {
    */
   AI: Ai;
 
-  // --- Static assets (operator-admin) ---
+  // --- Static assets (member-app-shell + operator-admin) ---
   /**
-   * Workers Static Assets binding serving the admin panel's island bundles + stylesheet
-   * built under `admin/dist/` (a gitignored artifact, built fresh at deploy time). The Hono
-   * app (`src/admin/app.tsx`) SSRs every page and
-   * falls back to `env.ASSETS.fetch()` for `/admin/islands/*` + `/admin/styles.css` — past
-   * the Access gate, so the static surface is gated too. `run_worker_first` on `/admin*`
-   * keeps assets behind the gate. Code-level binding (no operator id); propagated by the
-   * deploy merge (`scripts/merge-wrangler-config.mjs` allowlist).
+   * Workers Static Assets binding over the ONE merged assets root (`assets/`, a
+   * gitignored artifact built fresh at CI/deploy time): the member SPA at `/`
+   * (`index.html` + hashed chunks, built by `packages/app`; SPA fallback via
+   * `not_found_handling`) AND the admin panel's SPA bundle under `assets/admin/`
+   * (built by the admin app's Vite build, `packages/admin-app` → `assets/admin/`, served
+   * at the unchanged `/admin/*` URLs). The Hono admin app (`src/admin/app.ts`) gates every
+   * `/admin*` request behind Cloudflare Access, serves the typed `/admin/api/*` routes
+   * itself, and falls back to `env.ASSETS.fetch()` for `/admin/assets/*` plus the SPA
+   * shell on any other GET — past the Access gate, so that static surface is gated too.
+   * `run_worker_first` enumerates every Worker-owned path so the member SPA's own fallback
+   * can never shadow one. Code-level binding (no operator id); propagated by the deploy
+   * merge (`scripts/merge-wrangler-config.mjs` allowlist).
    */
   ASSETS: Fetcher;
 

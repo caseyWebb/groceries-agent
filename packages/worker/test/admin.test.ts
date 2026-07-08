@@ -413,7 +413,7 @@ describe("revoke", () => {
     await krogerKv.put("kroger:refresh:casey", "tok");
 
     const r = await revoke(deps, "Casey");
-    expect(r).toEqual({ username: "casey", revoked: true, invites_removed: 1 });
+    expect(r).toEqual({ username: "casey", revoked: true, invites_removed: 1, sessions_removed: 0 });
 
     expect(await tenantKv.get("tenant:casey")).toBeNull();
     expect(await tenantKv.get("invite:X")).toBeNull();
@@ -424,6 +424,22 @@ describe("revoke", () => {
     for (const t of TENANT_TABLES) expect(sqls).toContain(`DELETE FROM ${t} WHERE tenant = ?1`);
     for (const t of AUTHOR_TABLES) expect(sqls).toContain(`DELETE FROM ${t} WHERE author = ?1`);
     expect(batches[0].every((s) => s.binds[0] === "casey")).toBe(true);
+  });
+
+  it("purges the member's web sessions and only theirs (member-session-auth)", async () => {
+    const { deps, tenantKv } = makeDeps();
+    await onboard(deps, "casey", "X");
+    await onboard(deps, "pat", "Y");
+    // Two live sessions for casey (one with legacy mixed-case tenant), one for pat.
+    await tenantKv.put("session:tok-a", JSON.stringify({ tenant: "casey", created_at: 1, refreshed_at: 1 }));
+    await tenantKv.put("session:tok-b", JSON.stringify({ tenant: "Casey", created_at: 2, refreshed_at: 2 }));
+    await tenantKv.put("session:tok-c", JSON.stringify({ tenant: "pat", created_at: 3, refreshed_at: 3 }));
+
+    const r = await revoke(deps, "casey");
+    expect(r.sessions_removed).toBe(2);
+    expect(await tenantKv.get("session:tok-a")).toBeNull();
+    expect(await tenantKv.get("session:tok-b")).toBeNull();
+    expect(await tenantKv.get("session:tok-c")).not.toBeNull(); // pat's session survives
   });
 });
 
@@ -506,7 +522,7 @@ describe("handleAdmin (routing + gate)", () => {
   // The SPA shell is gone — the Hono app SSRs every page — so only a genuine asset miss falls
   // through to ASSETS (still 404, the gate already passed):
 
-  it("keeps a genuine asset 404 (no SSR route → ASSETS fallthrough → 404)", async () => {
+  it("keeps a genuine asset 404 (the admin asset namespace guards the SPA fallback)", async () => {
     const asked: string[] = [];
     const env = {
       TENANT_KV: memKv(),
@@ -520,9 +536,9 @@ describe("handleAdmin (routing + gate)", () => {
         },
       },
     } as unknown as Env;
-    const res = await handleAdmin(new Request("http://localhost/admin/islands/nonexistent.js"), env);
+    const res = await handleAdmin(new Request("http://localhost/admin/assets/nonexistent.js"), env);
     expect(res.status).toBe(404);
-    // No SSR route matched, so the request fell through to ASSETS — asked for the asset itself.
-    expect(asked).toEqual(["/admin/islands/nonexistent.js"]);
+    // The asset namespace asked ASSETS for the asset itself (no shell substitution).
+    expect(asked).toEqual(["/admin/assets/nonexistent.js"]);
   });
 });

@@ -259,6 +259,121 @@ function contextFromResolver(
   };
 }
 
+// --- identity-graph depth-1 neighbors (member-app-differentiators D3) ----------
+// The substitution walk's raw material, read the same way `satisfiesAmong` reads the
+// graph: load the identities+edges pair once, resolve EVERY endpoint through the
+// representative pointer, compute in JS. This returns the three depth-1 neighbor
+// sets per queried id — in-edges (what satisfies it), out-edges (what it satisfies,
+// with kinds), and shared-parent co-children (same kind on both edges) — for the
+// pure walk (`identitySiblings`, src/substitutions.ts) to order, label, and cap.
+
+/** One depth-1 neighbor: a resolved endpoint with the relation's edge kind. */
+export interface IdentityNeighbor {
+  /** The neighbor's surviving canonical id. */
+  id: string;
+  /** Human-readable label from the identity row (`base (detail)`), else the id. */
+  label: string;
+  kind: string;
+  /** Whether the neighbor is a concrete (buyable) node; absent rows default concrete. */
+  concrete: boolean;
+  /** The shared parent, for co-children only. */
+  via?: string;
+}
+
+/** The depth-1 neighbor sets of one queried id (all endpoints representative-resolved). */
+export interface IdentityNeighbors {
+  /** The queried id's surviving canonical id. */
+  id: string;
+  /** In-edges (`from → id`): nodes the graph declares usable where this id is requested. */
+  satisfiedBy: IdentityNeighbor[];
+  /** Out-edges (`id → to`): the nodes this id itself satisfies (its parents). */
+  satisfies: IdentityNeighbor[];
+  /** Co-children sharing one parent through SAME-kind edges (`via` = the parent). */
+  coChildren: IdentityNeighbor[];
+}
+
+/**
+ * Read the depth-1 identity-graph neighbors for a set of ids. Loads the identity and
+ * edge tables once per call (the `satisfiesAmong` posture — 100s of rows, trivially
+ * in-memory); every endpoint is resolved through the representative chain first and
+ * self-loops produced by resolution are dropped, so a merged-away id can never be
+ * suggested. The returned map is keyed by the RAW queried id.
+ */
+export async function readIdentityNeighbors(env: Env, ids: string[]): Promise<Map<string, IdentityNeighbors>> {
+  const d = db(env);
+  const [identities, edges] = await Promise.all([
+    d.all<{ id: string; base: string | null; detail: string | null; representative: string | null; concrete: number | null }>(
+      "SELECT id, base, detail, representative, concrete FROM ingredient_identity",
+    ),
+    d.all<{ from_id: string; to_id: string; kind: string }>("SELECT from_id, to_id, kind FROM ingredient_edge"),
+  ]);
+  const resolve = representativeResolver(identities);
+  const rowOf = new Map(identities.map((r) => [r.id, r] as const));
+  const labelOf = (id: string): string => {
+    const r = rowOf.get(id);
+    if (!r || !r.base) return id;
+    return r.detail ? `${r.base} (${r.detail})` : r.base;
+  };
+  const concreteOf = (id: string): boolean => (rowOf.get(id)?.concrete ?? 1) !== 0;
+
+  // Resolve + dedup the edge list once; a post-resolution self-loop carries no relation.
+  const seen = new Set<string>();
+  const resolved: { from: string; to: string; kind: string }[] = [];
+  for (const e of edges) {
+    const from = resolve(e.from_id);
+    const to = resolve(e.to_id);
+    if (from === to) continue;
+    const key = `${from}\u0000${to}\u0000${e.kind}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resolved.push({ from, to, kind: e.kind });
+  }
+
+  const neighbor = (id: string, kind: string, via?: string): IdentityNeighbor => ({
+    id,
+    label: labelOf(id),
+    kind,
+    concrete: concreteOf(id),
+    ...(via !== undefined ? { via } : {}),
+  });
+
+  const out = new Map<string, IdentityNeighbors>();
+  for (const raw of ids) {
+    if (out.has(raw)) continue;
+    const x = resolve(raw);
+    const satisfiedBy: IdentityNeighbor[] = [];
+    const satisfies: IdentityNeighbor[] = [];
+    const coChildren: IdentityNeighbor[] = [];
+    const coSeen = new Set<string>();
+    for (const e of resolved) {
+      if (e.to === x) satisfiedBy.push(neighbor(e.from, e.kind));
+      if (e.from === x) {
+        satisfies.push(neighbor(e.to, e.kind));
+        // Co-children of this parent through the SAME kind (two edges through one parent).
+        for (const f of resolved) {
+          if (f.to !== e.to || f.kind !== e.kind || f.from === x) continue;
+          const key = `${f.from}\u0000${f.kind}\u0000${e.to}`;
+          if (coSeen.has(key)) continue;
+          coSeen.add(key);
+          coChildren.push(neighbor(f.from, f.kind, e.to));
+        }
+      }
+    }
+    // A sibling reachable through two same-kind parents is pushed once per parent
+    // (each carrying a different `via`); sort by (id, via) so the tie the downstream
+    // first-relation-wins dedup (`identitySiblings`) resolves is stable rather than
+    // dependent on the edge table's scan order.
+    coChildren.sort((a, b) => {
+      if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+      const av = a.via ?? "";
+      const bv = b.via ?? "";
+      return av < bv ? -1 : av > bv ? 1 : 0;
+    });
+    out.set(raw, { id: x, satisfiedBy, satisfies, coChildren });
+  }
+  return out;
+}
+
 /**
  * Add alias mappings (variant → canonical id), upserting each by variant as a HUMAN edit
  * (source='human', which the auto capture pass never overwrites). Ensures the target id
@@ -1222,22 +1337,36 @@ interface SkuRow {
   sku: string;
   brand: string | null;
   size: string | null;
+  aisle_number: string | null;
+  aisle_description: string | null;
+  aisle_side: string | null;
+  aisle_captured_at: string | null;
 }
 
 /**
  * Read the shared SKU cache as the matcher's CachedMapping[]. `location_id` '' (the
  * untagged backfill sentinel) reads as absent so the matcher's same-location
- * preference treats it as legacy/untagged.
+ * preference treats it as legacy/untagged. Aisle placement columns (D5) ride as an
+ * optional `aisle` — the matcher ignores them; the order commit's identical-skip and
+ * the to-buy aisle enrichment read them.
  */
 export async function readSkuCache(env: Env): Promise<CachedMapping[]> {
   const rows = await db(env).all<SkuRow>(
-    "SELECT ingredient, location_id, sku, brand, size FROM sku_cache",
+    "SELECT ingredient, location_id, sku, brand, size, aisle_number, aisle_description, aisle_side, aisle_captured_at FROM sku_cache",
   );
   return rows.map((r) => {
     const m: CachedMapping = { ingredient: r.ingredient, sku: r.sku };
     if (r.brand != null) m.brand = r.brand;
     if (r.size != null) m.size = r.size;
     if (r.location_id) m.locationId = r.location_id;
+    if (r.aisle_number != null || r.aisle_description != null) {
+      m.aisle = {
+        number: r.aisle_number ?? "",
+        description: r.aisle_description ?? "",
+        ...(r.aisle_side != null ? { side: r.aisle_side } : {}),
+      };
+    }
+    if (r.aisle_captured_at != null) m.aisleCapturedAt = r.aisle_captured_at;
     return m;
   });
 }
@@ -1250,6 +1379,12 @@ export interface NewSkuMapping {
   size?: string;
   locationId?: string;
   last_used?: string;
+  /** Aisle placement columns (D5) — written together; `aisle_captured_at` is stamped
+   *  by the caller only when placement data is present. */
+  aisle_number?: string | null;
+  aisle_description?: string | null;
+  aisle_side?: string | null;
+  aisle_captured_at?: string | null;
 }
 
 /**
@@ -1265,16 +1400,22 @@ export async function upsertSkuMappings(env: Env, mappings: NewSkuMapping[]): Pr
     if (!m.ingredient || !m.sku) continue;
     stmts.push(
       d.prepare(
-        "INSERT INTO sku_cache (ingredient, location_id, sku, brand, size, last_used) " +
-          "VALUES (?1, ?2, ?3, ?4, ?5, ?6) " +
+        "INSERT INTO sku_cache (ingredient, location_id, sku, brand, size, last_used, aisle_number, aisle_description, aisle_side, aisle_captured_at) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) " +
           "ON CONFLICT(ingredient, location_id) DO UPDATE SET " +
-          "sku = excluded.sku, brand = excluded.brand, size = excluded.size, last_used = excluded.last_used",
+          "sku = excluded.sku, brand = excluded.brand, size = excluded.size, last_used = excluded.last_used, " +
+          "aisle_number = excluded.aisle_number, aisle_description = excluded.aisle_description, " +
+          "aisle_side = excluded.aisle_side, aisle_captured_at = excluded.aisle_captured_at",
         m.ingredient,
         m.locationId ?? "",
         m.sku,
         m.brand ?? null,
         m.size ?? null,
         m.last_used ?? null,
+        m.aisle_number ?? null,
+        m.aisle_description ?? null,
+        m.aisle_side ?? null,
+        m.aisle_captured_at ?? null,
       ),
     );
   }

@@ -10,9 +10,18 @@
 // Idempotent: every statement DELETEs its fixed ids (or upserts by PK) before inserting, so a
 // re-run against a previously-seeded local D1 converges instead of duplicating.
 
+import { createHash } from "node:crypto";
+
 /** The literals the page objects assert on (one source of truth with the SQL below). */
 export const SEED = {
   members: { active: "casey", pending: "pat" },
+  // The deterministic invite mapping (member-app-foundations): the code the APP suite's
+  // login flow submits, resolving to the active member — one fixture set for both suites.
+  invite: "PW-APP-INVITE",
+  // A second deterministic invite, resolving to the PENDING member (member-app-offline
+  // D9): the app suite's different-tenant login spec needs two real, independently
+  // loggable identities to exercise the stamp-mismatch purge for real.
+  inviteAlt: "PW-APP-INVITE-2",
   recipe: {
     slug: "viz-miso-salmon",
     title: "Miso-Glazed Salmon Bowls",
@@ -58,6 +67,76 @@ export const SEED = {
     degrading: { source: "Bon Appétit", localCount: 40 },
     quarantined: { source: "Cook's Illustrated" },
   },
+  // Member-app fixtures (member-app-core): the grocery rows the app's category groups +
+  // in-cart flows drive, the EMPTY palette + pending reconciliation proposals (production's
+  // observed state: palettes start empty with a proposal backlog), a community note on the
+  // seeded recipe, and the profile fields the taste/preferences tabs render.
+  app: {
+    grocery: {
+      active: ["chicken thighs", "scallions", "coconut milk"],
+      household: "paper towels",
+      inCart: "olive oil",
+    },
+    proposals: {
+      addA: { id: "viz-prop-add-a", vibe: "cozy weeknight noodles" },
+      addB: { id: "viz-prop-add-b", vibe: "a bright citrusy salad night" },
+      prune: { id: "viz-prop-prune", target: "forgotten-stir-fry" },
+    },
+    note: { body: "Swapped honey for the brown sugar — better glaze.", tag: "tweak" },
+    tasteLead: "Big on bold heat and acid",
+    // The propose flow (member-app-propose D12): the shared seed keeps the PALETTE empty
+    // (production's first render — the profile + propose empty states assert it), and
+    // pre-plants everything the propose specs' SELF-PROVISIONED palette needs to fill a
+    // week with ZERO model calls: night_vibe_derived vectors for these exact vibe ids
+    // (the spec creates the night_vibes rows through the real API), recipe_derived
+    // embeddings for the whole corpus, and the pre-warmed query-embedding cache entry
+    // for the exact freeform phrase the spec types.
+    propose: {
+      vibes: {
+        seafood: { id: "viz-vibe-seafood", vibe: "something from the sea" },
+        comfort: { id: "viz-vibe-comfort", vibe: "cozy comfort food" },
+      },
+      freeform: "more cozy soup",
+      soup: { slug: "viz-chicken-soup", title: "Weeknight Chicken Soup" },
+      side: { slug: "viz-garlic-bread", title: "Garlic Bread" },
+      extraRecipes: ["viz-fish-tacos", "viz-beef-ragu", "viz-spinach-curry", "viz-cacio-pepe"],
+    },
+    // The derived to-buy view (member-app-grocery D9): the seeded meal_plan row's recipe
+    // carries `ingredients_full`, so the grocery page renders REAL virtual rows. `virtual`
+    // is a derived-only line (no grocery row); `both` is the seeded active row the plan
+    // also needs (canonical-id merge); `covered` is the stale-verified perishable pantry
+    // row that cancels a derived need (the verify nudge); `underived` is a recipe the
+    // specs plan that has NO ingredients_full (the honesty notice).
+    toBuy: {
+      planned: "viz-miso-salmon",
+      virtual: "salmon",
+      both: "scallions",
+      covered: "baby spinach",
+      underived: "viz-beef-ragu",
+    },
+    // Differentiator fixtures (member-app-differentiators D11): the trending row's
+    // threshold-crossing cook (pat's cook of the seeded recipe makes 3 cooks / 2
+    // tenants — deleting the active member's own rows drops it below the guard for
+    // the empty-state test), the picked-for-you expectation (nearest embedded
+    // neighbor of the favorited recipe's vector), the pre-resolved Kroger locationId
+    // the aisle specs PATCH into preferences (whitespace-free → the client
+    // short-circuit, zero Kroger network), the aisle-tagged sku_cache rows, and the
+    // production-shaped sibling edge family (edges born-audited so the edge-audit
+    // backlog the admin suite pins stays at 1).
+    differentiators: {
+      topPick: "viz-fish-tacos",
+      location: "03500520",
+      aisles: {
+        meat: { ingredient: "chicken thighs", number: "11", description: "Meat & Seafood" },
+        produce: { ingredient: "green-onion", number: "3", description: "Produce" },
+      },
+      siblings: {
+        line: "cabbage::type-napa",
+        family: ["cabbage::color-green", "cabbage::color-red"],
+        parent: "cabbage",
+      },
+    },
+  },
   // Mirrors src/health.ts HEALTH_JOBS (every registered job gets health + run history so no
   // Status row renders never-run).
   jobs: [
@@ -79,6 +158,27 @@ const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+// --- synthetic embeddings (member-app-propose D12) -------------------------------
+// Deterministic EMBED_DIM one-hot-ish vectors: equal dimension, distinct directions, so
+// cosine ordering across the seeded corpus/vibes/freeform phrase is stable and the
+// propose flow computes entirely from these — zero Workers AI calls in the harness.
+/** Must match src/embedding.ts EMBED_DIM/EMBED_MODEL (the cache validates both). */
+const EMBED_DIM = 768;
+const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
+/** JSON vector with weight w at each given index ([[i, w], …]), zeros elsewhere. */
+function embedVec(on) {
+  const v = new Array(EMBED_DIM).fill(0);
+  for (const [i, w] of on) v[i] = w;
+  return JSON.stringify(v);
+}
+/** The query-embedding cache key for a phrase — sha256(model + "\n" + normalized),
+ *  mirroring src/embedding.ts embedCacheKey (keep in lockstep). */
+function embedCacheKey(text) {
+  const normalized = text.toLowerCase().trim().replace(/\s+/g, " ");
+  const hex = createHash("sha256").update(`${EMBED_MODEL}\n${normalized}`).digest("hex");
+  return `embed:${hex}`;
+}
 
 /** The D1 seed statements for `wrangler d1 execute --command` (now = the run's epoch ms). */
 export function d1Statements(now) {
@@ -197,16 +297,54 @@ export function d1Statements(now) {
 
   // --- Data / Insights: one indexed recipe (D1-only renders as "orphaned" in the Data list —
   // fine, the local R2 corpus is empty by design) + cooks and a favorite for the boards.
-  stmts.push(`DELETE FROM recipes WHERE slug = ${q(recipe.slug)};`);
+  // The propose corpus (member-app-propose D12): the seeded recipe plus a small varied
+  // set (distinct proteins/cuisines/times) so slot pools, alternates, facet pins, and the
+  // swap menu all have material. Perishables line up with the at-risk pantry row below
+  // (baby spinach) so uses_perishables/waste flags render. `viz-garlic-bread` is a corpus
+  // SIDE (pairs_with target, deliberately unembedded — sides need no vector).
+  // The last element is `ingredients_full` (member-app-grocery): derived for the planned
+  // miso-salmon (the to-buy view's virtual rows) and the soup; NULL elsewhere so a spec
+  // that plans viz-beef-ragu exercises the honest `underived` report.
+  const proposeRecipes = [
+    [recipe.slug, recipe.title, "fish", "japanese", 35, recipe.source, '["weeknight"]', '["salmon","rice","miso"]', null, null, '["salmon","rice","miso","scallions","baby spinach"]'],
+    ["viz-chicken-soup", "Weeknight Chicken Soup", "chicken", "american", 40, null, '["cozy"]', '["chicken","stock"]', '["baby spinach"]', '["viz-garlic-bread"]', '["chicken","stock","carrots","baby spinach"]'],
+    ["viz-fish-tacos", "Charred Fish Tacos", "fish", "mexican", 25, null, '["weeknight"]', '["white fish","tortillas"]', null, null, null],
+    ["viz-beef-ragu", "Sunday Beef Ragu", "beef", "italian", 90, null, '["project"]', '["beef","tomato"]', null, null, null],
+    ["viz-spinach-curry", "Spinach Coconut Curry", "vegetarian", "indian", 45, null, '["cozy"]', '["coconut milk","chickpeas"]', '["baby spinach"]', null, null],
+    ["viz-cacio-pepe", "Cacio e Pepe", null, "italian", 30, null, '["fast"]', '["pasta","pecorino"]', null, null, null],
+    ["viz-garlic-bread", "Garlic Bread", null, "italian", 15, null, '["side"]', '["bread","butter"]', null, null, null],
+  ];
+  stmts.push(`DELETE FROM recipes WHERE slug IN (${proposeRecipes.map((r) => q(r[0])).join(", ")});`);
   stmts.push(
-    `INSERT INTO recipes (slug, title, protein, cuisine, time_total, source_url, tags, ingredients_key) VALUES` +
-      ` (${q(recipe.slug)}, ${q(recipe.title)}, 'fish', 'japanese', 35, ${q(recipe.source)}, '["weeknight"]', '["salmon","rice","miso"]');`,
+    "INSERT INTO recipes (slug, title, protein, cuisine, time_total, source_url, tags, ingredients_key, perishable_ingredients, pairs_with, course, ingredients_full) VALUES " +
+      proposeRecipes
+        .map(
+          ([slug, title, protein, cuisine, time, source, tags, keys, perishable, pairs, full]) =>
+            `(${q(slug)}, ${q(title)}, ${protein ? q(protein) : "NULL"}, ${q(cuisine)}, ${time}, ${source ? q(source) : "NULL"}, ${q(tags)}, ${q(keys)}, ${perishable ? q(perishable) : "NULL"}, ${pairs ? q(pairs) : "NULL"}, ${slug === "viz-garlic-bread" ? q('["side"]') : "NULL"}, ${full ? q(full) : "NULL"})`,
+        )
+        .join(", ") +
+      ";",
+  );
+  // The classify-time snapshot rows for the derived recipes (recipe_facets mirrors what a
+  // real classify pass would have stored; the projected `recipes` value above is what the
+  // Worker reads — the sibling row keeps the harness's data model honest).
+  const facetRows = proposeRecipes.filter((r) => r[10]);
+  stmts.push(`DELETE FROM recipe_facets WHERE slug IN (${facetRows.map((r) => q(r[0])).join(", ")});`);
+  stmts.push(
+    "INSERT INTO recipe_facets (slug, body_hash, ingredients_key, ingredients_full) VALUES " +
+      facetRows.map((r) => `(${q(r[0])}, 'viz-seeded', ${q(r[7])}, ${q(r[10])})`).join(", ") +
+      ";",
   );
   stmts.push(`DELETE FROM cooking_log WHERE tenant IN (${q(members.active)}, ${q(members.pending)});`);
   stmts.push(
     `INSERT INTO cooking_log (tenant, date, type, recipe, name) VALUES` +
       ` (${q(members.active)}, ${q(day(now - 1 * DAY))}, 'recipe', ${q(recipe.slug)}, NULL),` +
       ` (${q(members.active)}, ${q(day(now - 3 * DAY))}, 'recipe', ${q(recipe.slug)}, NULL),` +
+      // The pending member's cook (member-app-differentiators D11): the seeded recipe
+      // crosses the trending min-signal guard GROUP-WIDE (3 cooks, 2 distinct tenants),
+      // and stays below it (1 cook, 1 tenant) once the active member deletes their own
+      // rows — the browse spec's empty-state provisioning.
+      ` (${q(members.pending)}, ${q(day(now - 2 * DAY))}, 'recipe', ${q(recipe.slug)}, NULL),` +
       ` (${q(members.active)}, ${q(day(now - 5 * DAY))}, 'ad_hoc', NULL, 'Fridge pasta');`,
   );
   stmts.push(`DELETE FROM overlay WHERE tenant = ${q(members.active)};`);
@@ -224,8 +362,11 @@ export function d1Statements(now) {
   );
   stmts.push(`DELETE FROM pantry WHERE tenant = ${q(members.active)};`);
   stmts.push(
-    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at) VALUES` +
-      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grain', ${q(iso(now - 10 * DAY))});`,
+    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at, last_verified_at) VALUES` +
+      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grain', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))}),` +
+      // A perishable past the 7-day staleness threshold — the app pantry page's
+      // needs-verification section (member-app-core) renders + clears from this row.
+      ` (${q(members.active)}, 'Baby spinach', 'baby spinach', '1 bag', 'produce', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))});`,
   );
 
   // --- Normalization: an identity graph corner (two concrete nodes + a concept + edges), an
@@ -355,18 +496,131 @@ export function d1Statements(now) {
     `INSERT INTO satellite_quarantine (tenant, kind, source, quarantined_at, note) VALUES (NULL, 'recipe', ${q(sat.quarantined.source)}, ${now - 2 * DAY}, ${q("adapter flooding contract_invalid after a site redesign")});`,
   );
 
+  // --- Member app (member-app-core): grocery rows, the EMPTY palette + pending
+  // proposals, a community recipe note, the derived description, and the profile row
+  // the taste/preferences tabs render. All additive — the admin suite reads none of it.
+  const app = SEED.app;
+  stmts.push(`DELETE FROM grocery_list WHERE tenant = ${q(members.active)};`);
+  const g = (name, kind, status, source, extra = {}) =>
+    `(${q(members.active)}, ${q(name)}, ${q(name.toLowerCase())}, ${q(extra.quantity ?? "1")}, ${q(kind)}, 'grocery', ${q(status)}, ${q(source)}, ${q(JSON.stringify(extra.for_recipes ?? []))}, ${extra.note ? q(extra.note) : "NULL"}, ${q(day(now - 2 * DAY))}, NULL)`;
+  stmts.push(
+    "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, source, for_recipes, note, added_at, ordered_at) VALUES " +
+      [
+        g(app.grocery.active[0], "grocery", "active", "menu", { quantity: "2 lb", for_recipes: [recipe.slug] }),
+        g(app.grocery.active[1], "grocery", "active", "ad_hoc", { note: "the thin ones" }),
+        g(app.grocery.active[2], "grocery", "active", "pantry_low"),
+        g(app.grocery.household, "household", "active", "ad_hoc"),
+        g(app.grocery.inCart, "grocery", "in_cart", "stockup"),
+      ].join(", ") +
+      ";",
+  );
+  // The palette starts EMPTY (production's observed first render) with a pending backlog.
+  stmts.push(`DELETE FROM night_vibes WHERE tenant = ${q(members.active)};`);
+  stmts.push(`DELETE FROM pending_proposals WHERE tenant = ${q(members.active)};`);
+  const prop = app.proposals;
+  stmts.push(
+    "INSERT INTO pending_proposals (id, tenant, kind, target, payload, rationale, evidence, status, producer, created_at) VALUES " +
+      `(${q(prop.addA.id)}, ${q(members.active)}, 'add_vibe', 'cozy-noodles', ${q(JSON.stringify({ id: "cozy-noodles", vibe: prop.addA.vibe, cadence_days: 10 }))}, 'You keep cooking dishes like this — set a night aside for it?', '{}', 'pending', 'edge', ${q(iso(now - 3 * DAY))}), ` +
+      `(${q(prop.addB.id)}, ${q(members.active)}, 'add_vibe', 'citrus-salad', ${q(JSON.stringify({ id: "citrus-salad", vibe: prop.addB.vibe, cadence_days: 14 }))}, 'Three bright salads in two weeks — make it a rotation slot?', '{}', 'pending', 'edge', ${q(iso(now - 2 * DAY))}), ` +
+      `(${q(prop.prune.id)}, ${q(members.active)}, 'prune_vibe', ${q(prop.prune.target)}, ${q(JSON.stringify({ id: prop.prune.target }))}, 'Added months ago and never cooked from — retire it?', '{}', 'pending', 'edge', ${q(iso(now - 1 * DAY))});`,
+  );
+  // A shared community note from the pending member (the detail page's group half).
+  stmts.push(`DELETE FROM recipe_notes WHERE recipe = ${q(recipe.slug)};`);
+  stmts.push(
+    "INSERT INTO recipe_notes (id, recipe, author, body, tags, private, created_at) VALUES " +
+      `(${q(`${members.pending} ${recipe.slug} viz-note`)}, ${q(recipe.slug)}, ${q(members.pending)}, ${q(app.note.body)}, ${q(JSON.stringify([app.note.tag]))}, 0, ${q(iso(now - 4 * DAY))});`,
+  );
+  // The derived layer (recipe_derived): the description the detail page renders, plus
+  // SYNTHETIC deterministic embeddings (equal dimension, distinct directions — cosine
+  // ordering is stable and assertable) so the propose flow fills slots with zero model
+  // calls (member-app-propose D12). The garlic-bread side stays unembedded on purpose.
+  const derived = [
+    [recipe.slug, "Miso-lacquered salmon over rice with quick-pickled cucumber.", embedVec([[0, 1]])],
+    ["viz-chicken-soup", "A bright weeknight chicken soup with greens.", embedVec([[2, 1]])],
+    ["viz-fish-tacos", "Charred white fish in warm tortillas.", embedVec([[1, 1], [0, 0.2]])],
+    ["viz-beef-ragu", "A long-simmered Sunday ragu.", embedVec([[3, 1], [2, 0.2]])],
+    ["viz-spinach-curry", "Coconut-braised chickpeas and spinach.", embedVec([[4, 1]])],
+    ["viz-cacio-pepe", "Pasta, pecorino, black pepper — fifteen minutes.", embedVec([[5, 1], [2, 0.3]])],
+    ["viz-garlic-bread", "Buttered, toasted, essential.", null],
+  ];
+  stmts.push(`DELETE FROM recipe_derived WHERE slug IN (${derived.map((r) => q(r[0])).join(", ")});`);
+  stmts.push(
+    "INSERT INTO recipe_derived (slug, description, embedding) VALUES " +
+      derived.map(([slug, desc, vec]) => `(${q(slug)}, ${q(desc)}, ${vec ? q(vec) : "NULL"})`).join(", ") +
+      ";",
+  );
+  // Cron-shaped vibe vectors for the propose specs' self-provisioned palette: derived
+  // rows for vibe ids that do NOT yet exist in night_vibes (invisible to every other
+  // surface — the palette stays empty until the spec creates the vibes via the API).
+  const pv = app.propose.vibes;
+  stmts.push(`DELETE FROM night_vibe_derived WHERE tenant = ${q(members.active)};`);
+  stmts.push(
+    "INSERT INTO night_vibe_derived (tenant, id, embedding) VALUES " +
+      `(${q(members.active)}, ${q(pv.seafood.id)}, ${q(embedVec([[0, 0.8], [1, 0.6]]))}), ` +
+      `(${q(members.active)}, ${q(pv.comfort.id)}, ${q(embedVec([[2, 0.8], [3, 0.4], [5, 0.4]]))});`,
+  );
+  // The profile row + one ranked brand (taste markdown, planning knobs, stores, dietary).
+  stmts.push(`DELETE FROM profile WHERE tenant = ${q(members.active)};`);
+  stmts.push(
+    "INSERT INTO profile (tenant, taste, diet_principles, default_cooking_nights, lunch_strategy, ready_to_eat_default_action, stores, dietary, rotation) VALUES " +
+      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, 3, NULL, 'opt-in', ${q(JSON.stringify({ primary: "kroger", preferred_location: "Kroger — Hyde Park" }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))});`,
+  );
+  stmts.push(`DELETE FROM brand_prefs WHERE tenant = ${q(members.active)};`);
+  stmts.push(
+    `INSERT INTO brand_prefs (tenant, term, ranks) VALUES (${q(members.active)}, 'butter', '["Kerrygold","store brand"]');`,
+  );
+
+  // --- Differentiators (member-app-differentiators D11) ---------------------------
+  const diff = app.differentiators;
+  // Aisle-tagged sku_cache rows at the pre-resolved location the aisle spec PATCHes
+  // into preferences: two seeded to-buy lines gain captured placements ("chicken
+  // thighs" by its own key; the scallions row keys under the green-onion alias), the
+  // rest stay honest "Aisle unknown". Keys are canonical fixpoints, so the sku-cache
+  // re-key burndown the admin suite pins stays converged (plan empty).
+  stmts.push(`DELETE FROM sku_cache WHERE location_id = ${q(diff.location)};`);
+  stmts.push(
+    "INSERT INTO sku_cache (ingredient, location_id, sku, brand, size, last_used, aisle_number, aisle_description, aisle_side, aisle_captured_at) VALUES " +
+      `(${q(diff.aisles.meat.ingredient)}, ${q(diff.location)}, '0001111091234', 'Kroger', '1.5 lb', ${q(day(now - 4 * DAY))}, ${q(diff.aisles.meat.number)}, ${q(diff.aisles.meat.description)}, 'L', ${q(day(now - 4 * DAY))}), ` +
+      `(${q(diff.aisles.produce.ingredient)}, ${q(diff.location)}, '0001111046025', 'Kroger', '1 bunch', ${q(day(now - 4 * DAY))}, ${q(diff.aisles.produce.number)}, ${q(diff.aisles.produce.description)}, NULL, ${q(day(now - 4 * DAY))});`,
+  );
+  // The production-shaped sibling edge family (the spike's cabbage fixture): three
+  // concrete specializations satisfying the concrete base, kind `general`. Edges are
+  // BORN-AUDITED (audited_at set) so the edge-audit backlog stays exactly 1.
+  const fam = [diff.siblings.line, ...diff.siblings.family];
+  stmts.push(`DELETE FROM ingredient_edge WHERE to_id = ${q(diff.siblings.parent)};`);
+  stmts.push(`DELETE FROM ingredient_identity WHERE id IN (${[diff.siblings.parent, ...fam].map(q).join(", ")});`);
+  stmts.push(
+    "INSERT INTO ingredient_identity (id, base, detail, concrete, source, decided_at) VALUES " +
+      `(${q(diff.siblings.parent)}, ${q(diff.siblings.parent)}, NULL, 1, 'auto', ${now - 9 * DAY}), ` +
+      fam
+        .map((id) => `(${q(id)}, ${q(id.slice(0, id.indexOf("::")))}, ${q(id.slice(id.indexOf("::") + 2))}, 1, 'auto', ${now - 9 * DAY})`)
+        .join(", ") +
+      ";",
+  );
+  stmts.push(
+    "INSERT INTO ingredient_edge (from_id, to_id, kind, source, decided_at, audited_at) VALUES " +
+      fam.map((id) => `(${q(id)}, ${q(diff.siblings.parent)}, 'general', 'auto', ${now - 9 * DAY}, ${now - 9 * DAY})`).join(", ") +
+      ";",
+  );
+
   return stmts;
 }
 
 /** KV seeds ([binding, key, value]) applied via `wrangler kv key put --local`: the member
- *  allowlist (pending = allowlist only), the connected member's OAuth grant (active status)
- *  and Kroger link. */
+ *  allowlist (pending = allowlist only), the connected member's OAuth grant (active status),
+ *  their Kroger link, and the invite code the app suite's login flow submits. */
 export function kvEntries() {
   const { members } = SEED;
   return [
     ["TENANT_KV", `tenant:${members.active}`, JSON.stringify({ id: members.active })],
     ["TENANT_KV", `tenant:${members.pending}`, JSON.stringify({ id: members.pending })],
+    ["TENANT_KV", `invite:${SEED.invite}`, members.active],
+    ["TENANT_KV", `invite:${SEED.inviteAlt}`, members.pending],
     ["OAUTH_KV", `grant:${members.active}:seed-grant`, JSON.stringify({ id: "seed-grant" })],
     ["KROGER_KV", `kroger:refresh:${members.active}`, "seed-refresh-token"],
+    // The pre-warmed query-embedding cache entry (member-app-propose D12): the exact
+    // freeform phrase the propose spec types, pointed at the chicken-soup axis — so the
+    // freeform path runs as a deterministic cache HIT (no Workers AI in the harness).
+    ["KROGER_KV", embedCacheKey(SEED.app.propose.freeform), embedVec([[2, 1]])],
   ];
 }

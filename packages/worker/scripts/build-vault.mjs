@@ -3,15 +3,16 @@
 // source (vault-template/) and the recipe vocabulary (src/vocab.js).
 //
 // The vault is the third generated, committed artifact in this repo (alongside
-// plugin/ from AGENT_INSTRUCTIONS.md and admin/dist/ from admin/src/). It is the
+// plugin/ from AGENT_INSTRUCTIONS.md and assets/admin/ from src/admin/). It is the
 // corpus-authoring surface: a preconfigured vault whose Metadata Menu `recipe`
 // fileClass turns every vocab-bound facet (protein / cuisine / season /
 // requires_equipment, plus the open `course` set) into a dropdown CONSTRAINED TO THE
 // SAME VOCABULARY the server validator uses — so an author cannot type `poltry`, and
 // the dropdowns can never disagree with src/validate.ts because both read src/vocab.js.
 //
-// Mirrors build-admin.mjs/build-plugin.mjs: ESM, hand-rolled, deterministic (stable
-// field order + stable ids), with a --check validate-only mode (the CI drift gate)
+// Mirrors build-plugin.mjs (the admin panel's bundle is built by Vite instead, not a
+// hand-rolled script): ESM, hand-rolled, deterministic (stable field order + stable ids),
+// with a --check validate-only mode (the CI drift gate)
 // that fails if the committed vault is stale against vocab.js or the template.
 //
 // PLUGINS. The three community plugins (Metadata Menu, Templater, Remotely Save) are

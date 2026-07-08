@@ -2,11 +2,14 @@
 # (Broad patterns — dist/, build/, .wrangler/, node_modules/, *.log, playwright-report/,
 # test-results/, .dev.vars* — are matched by the repo-root .gitignore, which is unanchored.)
 
-# The operator-admin island bundles + stylesheet (esbuild embeds env-specific paths).
-admin/dist/
+# The merged Workers Static Assets root (member-app-shell): the member SPA's
+# index.html + hashed chunks (packages/app's vite build) AND the operator-admin
+# island bundles + stylesheet under assets/admin/ (esbuild embeds env-specific paths).
+assets/
 
-# Playwright (admin visual/smoke harness) run outputs.
+# Playwright (admin + app visual/smoke harnesses) run outputs.
 admin/visual/.results/
+app/visual/.results/
 
 # Authoring vault: vendored community-plugin binaries (fetched on demand, sha256-verified),
 # and the packaged distributable zip — kept out of the repo.
@@ -14,3 +17,4 @@ vault/.obsidian/plugins/*/main.js
 vault/.obsidian/plugins/*/styles.css
 grocery-authoring-vault*.zip
 admin/visual/.screenshots/
+app/visual/.screenshots/

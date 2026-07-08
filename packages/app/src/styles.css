@@ -1,0 +1,11 @@
+/* The app's Tailwind entry: the design system's webfont (an external @import must lead
+   the file), the engine, the shared theme tokens, and the source roots utility scanning
+   must cover — BOTH this app's src/ and the ui package's src/, so classes used inside
+   shared components are compiled (design Decision 13). Geist's stacks in theme.css carry
+   real fallbacks, so an offline run (the Playwright harness) degrades gracefully. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "@grocery-agent/ui/theme.css";
+@import "@grocery-agent/ui/cookbook.css";
+@source "./";
+@source "../../ui/src";

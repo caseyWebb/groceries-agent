@@ -22,10 +22,12 @@ import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
 import { registerNightVibeTools } from "./night-vibe-tools.js";
-import { registerProposeMealPlanTool } from "./meal-plan-proposal-tool.js";
+import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
 import { registerReconcileTools } from "./reconcile-tools.js";
 import { registerSuggestNightVibesTool } from "./night-vibe-suggest.js";
-import { registerOrderTools } from "./order-tools.js";
+import { registerOrderTools, type OrderWiring } from "./order-tools.js";
+import { computeToBuyView } from "./to-buy.js";
+import { suggestSubstitutions, MAX_SUBSTITUTION_LINES } from "./substitutions.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
 import { registerNoteTools, registerStoreNoteTools } from "./notes-tools.js";
 import { registerStoreTools } from "./stores-tools.js";
@@ -35,7 +37,7 @@ import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./reci
 import { readReconcileErrors } from "./recipe-projection.js";
 import { readRejections, getQuarantine } from "./satellite-audit-db.js";
 import { recordBugReport } from "./bug-reports.js";
-import { embedTexts } from "./embedding.js";
+import { embedTextsCached } from "./embedding.js";
 import {
   rankCandidates,
   resolveRankParams,
@@ -45,7 +47,7 @@ import {
 } from "./semantic-search.js";
 import { listGuidance, readGuidance, saveGuidance } from "./guidance.js";
 import { loadOperatorConfig, DEFAULT_OPERATOR_CONFIG } from "./operator-config.js";
-import { fetchWeatherForecast } from "./weather.js";
+import { fetchWeatherForecast, type WeatherForecast, type WeatherError } from "./weather.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
 import { readPantry } from "./session-db.js";
 import {
@@ -54,6 +56,7 @@ import {
   readOverlay,
   readOwnedEquipment,
   readBrandPrefs,
+  type AssembledProfile,
   type Preferences,
 } from "./profile-db.js";
 import { db } from "./db.js";
@@ -71,10 +74,264 @@ import {
   type MatchResult,
 } from "./matching.js";
 import { compareUnitPrice } from "./unit-price.js";
-import { readStoreFlyer, filterByMinSavings, KROGER_STORE } from "./flyer-warm.js";
+import { readStoreFlyer, filterByMinSavings, isSatelliteRollupStale, KROGER_STORE } from "./flyer-warm.js";
 import type { KvStore } from "./kroger-user.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * last_cooked per recipe, derived by D1 aggregation: MAX(date) over the caller's
+ * type='recipe' rows, grouped by slug. An empty/absent log yields an empty map.
+ * Shared by the tool closures below (per-request lazy-cached) and the member API's
+ * recipe-detail read.
+ */
+export async function readLastCookedMap(env: Env, tenant: string): Promise<Map<string, string>> {
+  const rows = await db(env).all<{ recipe: string; last_cooked: string }>(
+    "SELECT recipe, MAX(date) AS last_cooked FROM cooking_log " +
+      "WHERE tenant = ?1 AND type = 'recipe' AND recipe IS NOT NULL GROUP BY recipe",
+    tenant,
+  );
+  const map = new Map<string, string>();
+  for (const { recipe, last_cooked } of rows) {
+    if (recipe && last_cooked) map.set(recipe, last_cooked);
+  }
+  return map;
+}
+
+/**
+ * The `read_recipe` assembly as a shared operation (member-app-core D2): corpus read +
+ * `parseMarkdown` + the caller's overlay/last-cooked merge + the derived description.
+ * Throws the same structured `not_found` for an invalid or unknown slug. Called by the
+ * MCP tool and the member API's `GET /api/cookbook/recipes/:slug`.
+ */
+export async function readRecipeDetail(
+  env: Env,
+  tenant: string,
+  slug: string,
+): Promise<{ slug: string; frontmatter: Record<string, unknown>; body: string }> {
+  if (!SLUG_RE.test(slug)) {
+    throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+  }
+  const corpus = createR2CorpusStore(env.CORPUS);
+  const [text, overlay, lastCooked, description] = await Promise.all([
+    readCorpusFile(corpus, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`),
+    readOverlay(env, tenant),
+    readLastCookedMap(env, tenant),
+    recipeDescription(env, slug),
+  ]);
+  const { frontmatter, body } = parseMarkdown(text, `recipes/${slug}.md`);
+  const merged = mergeOverlay(frontmatter, overlay[slug], lastCooked.get(slug));
+  // description is a Worker-DERIVED field (recipe_derived), merged at read time alongside
+  // overlay/last_cooked; null until the reconcile first generates it (never an error).
+  if (description !== null) merged.description = description;
+  return { slug, frontmatter: merged, body };
+}
+
+/**
+ * Fresh propose deps for non-MCP callers (member-app-propose D1): the member API's
+ * `POST /api/propose` builds these per request over the SAME underlying reads the MCP
+ * server's per-session closures memoize (`buildServer`, below) — lazily and memoized
+ * within one call, so the op's parallel loads share one read each.
+ */
+export function buildProposeDeps(env: Env, tenant: string): ProposeDeps {
+  let overlayP: Promise<Overlay> | null = null;
+  let lastCookedP: Promise<Map<string, string>> | null = null;
+  let ownedP: Promise<string[]> | null = null;
+  let ctxP: Promise<IngredientContext> | null = null;
+  return {
+    getOverlay: () => (overlayP ??= readOverlay(env, tenant)),
+    getLastCookedMap: () => (lastCookedP ??= readLastCookedMap(env, tenant)),
+    getOwnedEquipment: () => (ownedP ??= readOwnedEquipment(env, tenant)),
+    getIngredientContext: () => (ctxP ??= ingredientContext(env)),
+  };
+}
+
+/**
+ * Fresh order wiring for the order operation (member-app-grocery D8): the matcher
+ * resolve, the override-SKU revalidation, and the location resolution over the SAME
+ * underlying reads (preferences → location, brand prefs, ingredient context, SKU cache)
+ * the MCP server memoizes per request — lazily and memoized within one wiring, the
+ * `buildProposeDeps` precedent. `buildServer` calls this ONCE per request and reuses the
+ * closures across its tools; the member API's `POST /api/grocery/order` builds one per
+ * request.
+ */
+export function buildOrderWiring(env: Env, tenant: string): OrderWiring {
+  const kroger = createKrogerClient(env);
+
+  let prefsP: Promise<Preferences> | null = null;
+  const getPreferences = (): Promise<Preferences> =>
+    (prefsP ??= (async () => {
+      const prefs = await readPreferences(env, tenant);
+      if (prefs === null) {
+        throw new ToolError("not_found", "no preferences are set up");
+      }
+      return prefs;
+    })());
+
+  let locationP: Promise<string> | null = null;
+  const getLocationId = (): Promise<string> =>
+    (locationP ??= (async () => {
+      const prefs = await getPreferences();
+      const stores = prefs.stores as Record<string, unknown> | undefined;
+      const label =
+        typeof stores?.preferred_location === "string" ? stores.preferred_location : null;
+      if (!label) {
+        throw new ToolError(
+          "not_found",
+          "no preferred store location is set; cannot price Kroger products",
+        );
+      }
+      return kroger.resolveLocationId(label);
+    })());
+
+  let ctxP: Promise<IngredientContext> | null = null;
+  const getIngredientContext = (): Promise<IngredientContext> => (ctxP ??= ingredientContext(env));
+
+  /** Run the resolve-only matcher for one ingredient with the shared deps. */
+  async function resolve(
+    ingredient: string,
+    context: MatchContext = {},
+    bypassCache = false,
+  ): Promise<MatchResult> {
+    const locationId = await getLocationId();
+    const brands = await readBrandPrefs(env, tenant);
+    const ctx = await getIngredientContext();
+    const cache: CachedMapping[] = await readSkuCache(env);
+    // Capture a novel surface form for the cron (best-effort, non-blocking; the hot path
+    // is unchanged — a hit resolves through the map, a miss returns the cleaned term). The
+    // context's resolve() does the normalize-and-capture; the matcher re-normalizes over the
+    // injected resolver deps (it stays pure over plain aliases/searchTerms data).
+    ctx.resolve(ingredient);
+    const deps: MatchDeps = {
+      search: (term: string): Promise<KrogerCandidate[]> =>
+        // Kroger's per-request max (50) — the matcher returns the full ranked
+        // fulfillable set when ambiguous, so we want the complete relevant pool.
+        kroger.search(term, { locationId, limit: 50 }),
+      productById: (productId: string): Promise<KrogerCandidate | null> =>
+        kroger.productById(productId, locationId),
+      aliases: ctx.resolver.toId,
+      searchTerms: ctx.resolver.searchTerms,
+      brands,
+      cache,
+      locationId,
+    };
+    return matchIngredient(deps, ingredient, context, bypassCache);
+  }
+
+  /**
+   * Revalidate a forced-override SKU (place_order) against current availability +
+   * price at the resolved location — the same one-shot recheck the matcher's cache
+   * path does. Returns the fresh state when fulfillable, or null when it is not.
+   */
+  async function revalidateSku(sku: string) {
+    const locationId = await getLocationId();
+    const fresh = await kroger.productById(sku, locationId);
+    if (!fresh || !isFulfillable(fresh)) return null;
+    return {
+      brand: fresh.brand,
+      size: fresh.size,
+      price: fresh.price,
+      on_sale: isOnSale(fresh),
+      aisleLocation: fresh.aisleLocation,
+    };
+  }
+
+  // Raw product reads at the caller's location (member-app-differentiators D1): the
+  // substitution op's ≤ 1 revalidation + 1 term search per line ride these — the same
+  // client + location resolution the matcher uses, without entering the matcher.
+  async function search(term: string): Promise<KrogerCandidate[]> {
+    const locationId = await getLocationId();
+    return kroger.search(term, { locationId, limit: 50 });
+  }
+
+  async function productById(sku: string): Promise<KrogerCandidate | null> {
+    const locationId = await getLocationId();
+    return kroger.productById(sku, locationId);
+  }
+
+  return { resolve, revalidateSku, getLocationId, search, productById };
+}
+
+/**
+ * The `get_weather_forecast` assembly as a shared operation (member-app-propose D1/D9):
+ * resolve the caller's location from preferences (explicit `stores.location_zip`, else a
+ * ZIP parsed from `preferred_location` — it lives under `stores` in the D1 schema), then
+ * fetch the Open-Meteo daily forecast. Throws the structured `no_location` when no ZIP is
+ * resolvable; upstream failures come back as the fetch's VALUE-shaped `WeatherError`
+ * (`forecast_unavailable` / `no_results`), exactly as the MCP tool has always returned
+ * them. Called by the tool and the member API's `GET /api/propose/weather`.
+ */
+export async function resolveTenantForecast(env: Env, tenant: string, days = 7): Promise<WeatherForecast | WeatherError> {
+  const prefs = (await readPreferences(env, tenant)) ?? {};
+  const stores = prefs.stores as Record<string, unknown> | undefined;
+
+  let zip: string | null = null;
+  if (typeof stores?.location_zip === "string" && stores.location_zip.trim()) {
+    zip = stores.location_zip.trim();
+  } else if (typeof stores?.preferred_location === "string") {
+    zip = stores.preferred_location.match(/\d{5}/)?.[0] ?? null;
+  }
+
+  if (!zip) {
+    throw new ToolError(
+      "no_location",
+      "No location found in preferences. Set location_zip or complete store setup with a ZIP code.",
+    );
+  }
+
+  return fetchWeatherForecast(zip, days);
+}
+
+/** The `read_user_profile` payload: the assembled profile + initialization status. */
+export interface UserProfilePayload extends AssembledProfile {
+  initialized: boolean;
+  missing: string[];
+}
+
+/**
+ * The `read_user_profile` assembly as a shared operation (member-app-core D2):
+ * `readProfile` + the `initialized`/`missing` computation. Called by the MCP tool and
+ * the member API's `GET /api/profile`.
+ */
+export async function assembleUserProfile(env: Env, tenant: string): Promise<UserProfilePayload> {
+  const profile = await readProfile(env, tenant);
+
+  // Each onboarding area maps to a structured field; an area is "missing"
+  // when its field is empty (null preferences/markdown, empty list/inventory).
+  const isEmpty = (v: unknown): boolean => {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim().length === 0;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === "object") return Object.keys(v as Record<string, unknown>).length === 0;
+    return false;
+  };
+  const PROFILE_AREAS: ReadonlyArray<readonly [area: string, value: unknown]> = [
+    ["store", profile.preferences],
+    ["taste", profile.taste],
+    ["diet", profile.diet_principles],
+    ["equipment", profile.kitchen.owned.length ? profile.kitchen : null],
+    ["ready-to-eat", profile.ready_to_eat],
+    ["stockup", profile.stockup],
+  ];
+
+  const initialized = profile.preferences !== null;
+  const missing: string[] = [];
+  for (const [area, value] of PROFILE_AREAS) {
+    if (isEmpty(value)) missing.push(area);
+  }
+
+  return {
+    initialized,
+    missing,
+    preferences: profile.preferences,
+    taste: profile.taste,
+    diet_principles: profile.diet_principles,
+    kitchen: profile.kitchen,
+    staples: profile.staples,
+    ready_to_eat: profile.ready_to_eat,
+    stockup: profile.stockup,
+  };
+}
 
 const recipeFiltersShape = {
   protein: z.string().optional(),
@@ -180,25 +437,13 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     return prefsPromise;
   }
 
-  let locationPromise: Promise<string> | null = null;
-  function getLocationId(): Promise<string> {
-    if (!locationPromise) {
-      locationPromise = (async () => {
-        const prefs = await getPreferences();
-        const stores = prefs.stores as Record<string, unknown> | undefined;
-        const label =
-          typeof stores?.preferred_location === "string" ? stores.preferred_location : null;
-        if (!label) {
-          throw new ToolError(
-            "not_found",
-            "no preferred store location is set; cannot price Kroger products",
-          );
-        }
-        return kroger.resolveLocationId(label);
-      })();
-    }
-    return locationPromise;
-  }
+  // The order wiring (member-app-grocery D8): resolveIngredient / revalidateSku /
+  // getLocationId over lazily-memoized preferences/brands/ingredient-context/SKU-cache
+  // reads — built ONCE per request and shared by every tool below that needs them
+  // (match_ingredient_to_kroger_sku, place_order, the Kroger price/flyer lookups).
+  const orderWiring = buildOrderWiring(env, tenant.id);
+  const getLocationId = orderWiring.getLocationId;
+  const resolveIngredient = orderWiring.resolve;
 
   /**
    * Resolve the caller's PRIMARY fulfillment store for `store_flyer`: its slug (`stores.primary`,
@@ -231,10 +476,6 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     return ctxPromise;
   }
 
-  async function getCacheMappings(): Promise<CachedMapping[]> {
-    return readSkuCache(env);
-  }
-
   // Per-request lazy reads of the caller's subjective layer. The overlay
   // supplies favorite+reject from the D1 `overlay` table; the cooking log supplies
   // last_cooked from the D1 `cooking_log` table. Both are merged onto shared
@@ -247,23 +488,12 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     return overlayPromise;
   }
 
-  // last_cooked per recipe is now a D1 aggregation: MAX(date) over the caller's
-  // type='recipe' rows, grouped by slug. An empty/absent log yields an empty map.
+  // last_cooked per recipe is now a D1 aggregation (readLastCookedMap), lazily
+  // cached per request like the overlay.
   let lastCookedPromise: Promise<Map<string, string>> | null = null;
   function getLastCookedMap(): Promise<Map<string, string>> {
     if (!lastCookedPromise) {
-      lastCookedPromise = (async () => {
-        const rows = await db(env).all<{ recipe: string; last_cooked: string }>(
-          "SELECT recipe, MAX(date) AS last_cooked FROM cooking_log " +
-            "WHERE tenant = ?1 AND type = 'recipe' AND recipe IS NOT NULL GROUP BY recipe",
-          tenant.id,
-        );
-        const map = new Map<string, string>();
-        for (const { recipe, last_cooked } of rows) {
-          if (recipe && last_cooked) map.set(recipe, last_cooked);
-        }
-        return map;
-      })();
+      lastCookedPromise = readLastCookedMap(env, tenant.id);
     }
     return lastCookedPromise;
   }
@@ -276,54 +506,6 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
       ownedPromise = readOwnedEquipment(env, tenant.id);
     }
     return ownedPromise;
-  }
-
-  /** Run the resolve-only matcher for one ingredient with the shared deps. */
-  async function resolveIngredient(
-    ingredient: string,
-    context: MatchContext = {},
-    bypassCache = false,
-  ): Promise<MatchResult> {
-    const locationId = await getLocationId();
-    const brands = await readBrandPrefs(env, tenant.id);
-    const ctx = await getIngredientContext();
-    const cache = await getCacheMappings();
-    // Capture a novel surface form for the cron (best-effort, non-blocking; the hot path
-    // is unchanged — a hit resolves through the map, a miss returns the cleaned term). The
-    // context's resolve() does the normalize-and-capture; the matcher re-normalizes over the
-    // injected resolver deps (it stays pure over plain aliases/searchTerms data).
-    ctx.resolve(ingredient);
-    const deps: MatchDeps = {
-      search: (term: string): Promise<KrogerCandidate[]> =>
-        // Kroger's per-request max (50) — the matcher returns the full ranked
-        // fulfillable set when ambiguous, so we want the complete relevant pool.
-        kroger.search(term, { locationId, limit: 50 }),
-      productById: (productId: string): Promise<KrogerCandidate | null> =>
-        kroger.productById(productId, locationId),
-      aliases: ctx.resolver.toId,
-      searchTerms: ctx.resolver.searchTerms,
-      brands,
-      cache,
-      locationId,
-    };
-    return matchIngredient(deps, ingredient, context, bypassCache);
-  }
-
-  /**
-   * Revalidate a forced-override SKU (place_order) against current availability +
-   * price at the resolved location — the same one-shot recheck the matcher's cache
-   * path does. Returns the fresh state when fulfillable, or null when it is not.
-   */
-  async function revalidateSku(sku: string) {
-    const locationId = await getLocationId();
-    const fresh = await kroger.productById(sku, locationId);
-    if (!fresh || !isFulfillable(fresh)) return null;
-    return {
-      brand: fresh.brand,
-      size: fresh.size,
-      price: fresh.price,
-      on_sale: isOnSale(fresh),
-    };
   }
 
   server.registerTool(
@@ -402,11 +584,14 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         const params = resolveRankParams(prefs, operatorConfig ?? undefined);
 
         // One embed call for ALL vibe-bearing specs, mapped back to their spec index so a
-        // mix of membership and ranked specs in one call stays aligned.
+        // mix of membership and ranked specs in one call stays aligned. Routed through the
+        // query-embedding cache (member-app-propose D5): a recently-embedded vibe phrase —
+        // by this tool or the propose surface — is a KV hit, and only misses hit Workers AI
+        // (still one batched call; byte-identical to the plain embed on a cold cache).
         const vibeSpecs = specs
           .map((spec, i) => ({ spec, i }))
           .filter((x) => typeof x.spec.vibe === "string" && x.spec.vibe.length > 0);
-        const vibeVecs = await embedTexts(
+        const vibeVecs = await embedTextsCached(
           env,
           vibeSpecs.map((x) => x.spec.vibe as string),
         );
@@ -543,24 +728,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         "Read a single recipe's parsed frontmatter and markdown body by slug. Frontmatter includes `course` (the open-vocabulary dish type — main | side | dessert | breakfast | …), `pairs_with` (slugs of sides remembered for this main), and the AI-generated `description` (merged from the derived store; absent if not yet generated).",
       inputSchema: { slug: z.string() },
     },
-    ({ slug }) =>
-      runTool(async () => {
-        if (!SLUG_RE.test(slug)) {
-          throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
-        }
-        const [text, overlay, lastCooked, description] = await Promise.all([
-          readCorpusFile(corpus, `recipes/${slug}.md`, "not_found", `Unknown recipe slug: ${slug}`),
-          getOverlay(),
-          getLastCookedMap(),
-          recipeDescription(env, slug),
-        ]);
-        const { frontmatter, body } = parseMarkdown(text, `recipes/${slug}.md`);
-        const merged = mergeOverlay(frontmatter, overlay[slug], lastCooked.get(slug));
-        // description is a Worker-DERIVED field (recipe_derived), merged at read time alongside
-        // overlay/last_cooked; null until the reconcile first generates it (never an error).
-        if (description !== null) merged.description = description;
-        return { slug, frontmatter: merged, body };
-      }),
+    ({ slug }) => runTool(() => readRecipeDetail(env, tenant.id, slug)),
   );
 
   server.registerTool(
@@ -593,46 +761,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup) — empty when fully set up. Profile fields: preferences (parsed), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist. Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-grocery-profile first.",
       inputSchema: {},
     },
-    () =>
-      runTool(async () => {
-        const profile = await readProfile(env, tenant.id);
-
-        // Each onboarding area maps to a structured field; an area is "missing"
-        // when its field is empty (null preferences/markdown, empty list/inventory).
-        const isEmpty = (v: unknown): boolean => {
-          if (v == null) return true;
-          if (typeof v === "string") return v.trim().length === 0;
-          if (Array.isArray(v)) return v.length === 0;
-          if (typeof v === "object") return Object.keys(v as Record<string, unknown>).length === 0;
-          return false;
-        };
-        const PROFILE_AREAS: ReadonlyArray<readonly [area: string, value: unknown]> = [
-          ["store", profile.preferences],
-          ["taste", profile.taste],
-          ["diet", profile.diet_principles],
-          ["equipment", profile.kitchen.owned.length ? profile.kitchen : null],
-          ["ready-to-eat", profile.ready_to_eat],
-          ["stockup", profile.stockup],
-        ];
-
-        const initialized = profile.preferences !== null;
-        const missing: string[] = [];
-        for (const [area, value] of PROFILE_AREAS) {
-          if (isEmpty(value)) missing.push(area);
-        }
-
-        return {
-          initialized,
-          missing,
-          preferences: profile.preferences,
-          taste: profile.taste,
-          diet_principles: profile.diet_principles,
-          kitchen: profile.kitchen,
-          staples: profile.staples,
-          ready_to_eat: profile.ready_to_eat,
-          stockup: profile.stockup,
-        };
-      }),
+    () => runTool(() => assembleUserProfile(env, tenant.id)),
   );
 
   server.registerTool(
@@ -747,14 +876,11 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         if (!rollup) return { items: [], as_of: null };
         const as_of = new Date(rollup.as_of).toISOString();
 
-        // Staleness ceiling — SATELLITE-scanned stores only. Kroger's daily cron re-scan bounds its
-        // freshness, but a satellite that goes offline would leave its last rollup indefinitely, so
+        // Staleness ceiling — SATELLITE-scanned stores only (see `isSatelliteRollupStale`):
         // past the ceiling a scanned store reads as empty rather than steering on stale sales.
-        if (store !== KROGER_STORE) {
-          const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
-          if (Date.now() - rollup.as_of > stalenessDays * 24 * 60 * 60 * 1000) {
-            return { items: [], as_of };
-          }
+        const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
+        if (isSatelliteRollupStale(store, rollup.as_of, stalenessDays)) {
+          return { items: [], as_of };
         }
         return { items: filterByMinSavings(rollup.items, minDiscount), as_of };
       }),
@@ -883,9 +1009,39 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
   registerStoreTools(server, env);
   registerStoreNoteTools(server, tenant.id, env);
 
+  // read_to_buy — the derived to-buy view (member-app-grocery D1): one shared op with
+  // the member API's GET /api/grocery/to-buy (computeToBuyView).
+  server.registerTool(
+    "read_to_buy",
+    {
+      description:
+        "The DERIVED to-buy view: what an order placed right now would buy — the active grocery list ∪ the meal plan's ingredient needs − pantry on-hand, joined on canonical ingredient ids. This is the SAME set algebra `place_order` flushes, so \"what would we buy?\" has one answer; use it as the shop-time read (read_grocery_list returns only the stored rows and misses the plan's derived needs). READ-ONLY and cheap: zero Kroger calls, zero AI calls, and it writes nothing — derived lines exist only in this read; the plan is their source of truth (editing the plan changes the next read with no sync step). Returns { to_buy, pantry_covered, in_cart, underived }. `to_buy` lines carry `origin`: \"list\" (an explicit row the plan doesn't need), \"plan\" (a VIRTUAL line derived from a planned recipe — no stored row exists; add_to_grocery_list materializes/pins it under the same canonical `key` if the user edits it), or \"both\" (a stored row the plan also needs, merged with unioned `for_recipes`); derived lines default to quantity 1 with `assumed_quantity: true` (derivation is presence-only). `pantry_covered` lists the needs the pantry cancels — the same set `place_order` would return as `partials` — each with the pantry row's quantity/category/last_verified_at so you can nudge verification (\"still good?\") instead of silently skipping. `in_cart` is the current in-cart rows (the stale-cart signal: non-empty at order time means a prior order was never confirmed placed — remind the user to clear the store cart). `underived` names planned recipes whose full ingredient list is not yet derived — their items are NOT in `to_buy` (never silently dropped); offer to add them explicitly. Optional `with_aisles: true` — the ONLY parameter — additionally returns per-line `placement` (captured `aisle_number`/`aisle_description`/`aisle_side` from the shared SKU cache at the caller's Kroger location, learned from past orders; plus a `department` derived from the ingredient identity graph when no aisle is captured) and a top-level `location: { id } | null` naming the store the placements are for. Use it for the Kroger in-store walk: real captured placements beat inferred grouping. The default read's zero-Kroger guarantee is UNCHANGED; the with_aisles variant costs at most one Kroger Locations resolve (label → locationId) and ZERO product searches — with no resolvable Kroger location (walk/satellite primary), placements carry `department` only and `location` is null. Placements start sparse and converge as orders run — a line without one is honest \"unknown\", not an error.",
+      inputSchema: { with_aisles: z.boolean().optional() },
+    },
+    (input) => runTool(() => computeToBuyView(env, tenant.id, { withAisles: input.with_aisles === true })),
+  );
+
+  // suggest_substitutions — the deterministic substitution read (member-app-
+  // differentiators D1): one shared op with POST /api/grocery/substitutions, over the
+  // same per-request order wiring (location, revalidation, term search).
+  server.registerTool(
+    "suggest_substitutions",
+    {
+      description:
+        "Deterministic substitution suggestions for to-buy lines — READ-ONLY: it NEVER writes the cart, the SKU cache, or the grocery list; nothing is applied implicitly. Acting on a suggestion is a separate, explicit call: a same-identity swap (different SKU, same ingredient) is a `place_order` `overrides` entry; a cross-ingredient swap is the existing list writes (add the replacement + remove the row, or — for a plan-derived virtual line — add the replacement and pass an order-scoped `exclude` for the original). Input: `names` (optional — omitted means the caller's current derived to-buy set, in view order; supplied names resolve through the ingredient funnel) and `max_lines` (default and cap " +
+        `${MAX_SUBSTITUTION_LINES}` +
+        "). Per line it returns: `current` — the cached SKU pick revalidated live (fresh price/availability/aisle) with `status` ok | current_unavailable | no_cached_pick; `alternatives` — same-ingredient products from ONE term search, fulfillable only, ranked by the unit-price core, each carrying a CLOSED reason vocabulary and nothing else: `cheaper` (strictly lower unit price than the current pick, only when both are comparable in one size dimension — real numbers ride along as `unit_price`/`base_unit`), `on_sale` (a genuine promo discount), `in_stock` (fulfillable while the current pick is not). Qualitative reasons (\"lower fat\", \"better fit\") are NOT produced here — that judgment is yours, grounded in this data. `siblings` — cross-ingredient suggestions from a depth-1 walk over the persisted ingredient identity graph, each LABELED with its relation (`satisfies` = the graph says it can be used where the line's ingredient is requested; `sibling` = co-variant under a shared parent, named in `via`; `generalization` = the base form), annotated `in_pantry` (already on hand — often the best swap) and `on_sale_hint` (the primary store's warmed flyer rollup at the default sale floor; no live price check — verify with kroger_prices before promising a price). The walk proposes and NAMES the relation; whether a sibling fits the dish is the caller's judgment. Budget: at most one revalidation + one search per line, `max_lines` lines per call — unprocessed names return in `remaining`; call again with them to continue. A caller with no resolvable Kroger location still gets the graph half: `location: null`, empty price sections, siblings/pantry/flyer served. Empty `alternatives` AND `siblings` for every line means there is genuinely nothing to suggest — say so rather than inventing swaps.",
+      inputSchema: {
+        names: z.array(z.string()).optional(),
+        max_lines: z.number().int().positive().optional(),
+      },
+    },
+    (input) => runTool(() => suggestSubstitutions(env, tenant.id, input, orderWiring)),
+  );
+
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
-  registerOrderTools(server, env, tenant.id, resolveIngredient, revalidateSku, getLocationId);
+  registerOrderTools(server, env, tenant.id, orderWiring);
 
   // get_weather_forecast — read-only Open-Meteo fetch; location resolved from
   // the caller's preferences (location_zip → parse preferred_location). Used by
@@ -903,29 +1059,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
           .describe("Number of forecast days to return (default 7, max 16)."),
       },
     },
-    ({ days }) =>
-      runTool(async () => {
-        const prefs = (await readPreferences(env, tenant.id)) ?? {};
-        const stores = prefs.stores as Record<string, unknown> | undefined;
-
-        // Resolve location: explicit stores.location_zip first, then parse from
-        // preferred_location. (location_zip lives under `stores` in the D1 schema.)
-        let zip: string | null = null;
-        if (typeof stores?.location_zip === "string" && stores.location_zip.trim()) {
-          zip = stores.location_zip.trim();
-        } else if (typeof stores?.preferred_location === "string") {
-          zip = stores.preferred_location.match(/\d{5}/)?.[0] ?? null;
-        }
-
-        if (!zip) {
-          throw new ToolError(
-            "no_location",
-            "No location found in preferences. Set location_zip or complete store setup with a ZIP code.",
-          );
-        }
-
-        return fetchWeatherForecast(zip, days ?? 7);
-      }),
+    ({ days }) => runTool(() => resolveTenantForecast(env, tenant.id, days ?? 7)),
   );
 
   // report_bug — record an attributed bug report into the D1 `bug_reports` table the

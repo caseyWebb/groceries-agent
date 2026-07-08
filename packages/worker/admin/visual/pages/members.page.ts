@@ -20,10 +20,10 @@ export class MembersPage extends AdminPage {
   }
 
   inviteDialog(): DialogComponent {
-    return new DialogComponent(this.page.locator("dialog.dialog"));
+    return new DialogComponent(this.page.getByRole("dialog", { name: "Invite member" }));
   }
 
-  /** Open the invite dialog (hydration-safe retry lives in the dialog component). */
+  /** Open the invite dialog (click + open assertion live in the dialog component). */
   async openInviteDialog(): Promise<DialogComponent> {
     const dialog = this.inviteDialog();
     await dialog.openVia(this.inviteButton);

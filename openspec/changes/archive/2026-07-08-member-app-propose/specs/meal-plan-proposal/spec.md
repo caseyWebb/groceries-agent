@@ -1,0 +1,99 @@
+## MODIFIED Requirements
+
+### Requirement: Stateless iteration and re-roll
+
+The tool SHALL support iteration by re-invocation with constraints rather than server-held state: `lock` (pin chosen recipes as vibe-less locked slots), `exclude` (swap specified recipes out of every pool, alternate list, and pin), `nudges` (`max_time_total`, `variety` strength, a week-level `proteins` soft-boost list, and a `freeform` phrase), a `seed`, and per-slot **`slots` constraints** keyed by vibe id: `protein`/`cuisine` facet pins and an explicitly nullable `max_time_total` threaded into that slot's candidate gate with precedence **slot pin > global `nudges.max_time_total` > the vibe's own facets** (a `null` per-slot time cap lifts the vibe's own cap for that night); a `vibe` phrase overriding that slot's query vector (gate and vibe identity unchanged); and a `recipe` pin filling that slot with the named recipe while **keeping the slot's vibe identity and provenance** — resolved under the same rules as `lock` (case-insensitive, embedded, non-rejected, not excluded; an unresolvable pin is returned as an explicit empty slot, never silently dropped), admitted into the week's diversify state so the remaining slots diversify away from it, and marked on the returned slot. A `slots` constraint whose vibe id is not sampled this week SHALL be inert (no error) so a replayed client session survives palette edits. Given a `seed`, re-invocation SHALL be reproducible; changing only the `seed` SHALL yield a different valid week. Discovery seeds (`list_new_for_me`) and at-risk pantry items SHALL be accepted as soft-priority inputs so accepted discoveries and use-it-up needs can claim slots before the palette fills the rest.
+
+#### Scenario: Locked slots survive a re-roll
+
+- **WHEN** a caller re-invokes with two slots `lock`ed and a new `seed`
+- **THEN** the locked slots are preserved and the remaining slots are re-selected diversely against them
+
+#### Scenario: At-risk pantry items bias without gating
+
+- **WHEN** a caller passes at-risk pantry items as boost inputs
+- **THEN** slots that use those items are favored, with no gated-out recipe admitted
+
+#### Scenario: A per-slot facet pin narrows one night's gate
+
+- **WHEN** a caller pins `protein: "fish"` on one sampled vibe's slot
+- **THEN** that slot's candidate pool contains only fish recipes that also clear the vibe's other facets and the hard gate, and every other slot's pool is unaffected
+
+#### Scenario: A null per-slot time cap lifts the vibe's own cap
+
+- **WHEN** a vibe carries `max_time_total: 30` in its facets and the caller pins `max_time_total: null` on its slot
+- **THEN** that slot's pool is not time-gated for this request, while the vibe's stored facets are unchanged
+
+#### Scenario: A recipe pin keeps the slot's vibe identity
+
+- **WHEN** a caller pins a resolvable recipe onto a sampled vibe's slot
+- **THEN** the slot returns that recipe as its main with its `vibe_id` and reason intact and an explicit pinned marker, and the rest of the week's selection diversifies away from the pinned recipe
+
+#### Scenario: A constraint for an unsampled vibe is inert
+
+- **WHEN** the `slots` array names a vibe id that this week's shape did not sample (or that no longer exists in the palette)
+- **THEN** the constraint has no effect and the request succeeds
+
+### Requirement: Off-hot-path composition and legibility
+
+The proposal SHALL be a hot-path composition over cron-captured vectors (recipe embeddings, the caller's favorites, the taste and night-vibe vectors): cosine, MMR, and set math only. The tool SHALL make **at most one** embedding call per request — a single batched call covering only the `nudges.freeform` phrase and any `slots[].vibe` override phrases not served by the query-embedding cache; a request supplying no such text SHALL make **no** AI call. The freeform phrase and the `nudges.proteins` list SHALL enter ranking as **bounded additive terms** subordinate to the primary vibe relevance — they reorder gate survivors and SHALL NOT admit a recipe the hard gate excluded. A `slots[].vibe` override SHALL replace only that slot's query vector — its facet gate and vibe identity are unchanged, the returned slot is marked overridden, and a not-yet-embedded palette vibe with an override SHALL become fillable in the same request rather than returning an empty slot. Each chosen main SHALL carry a `why[]` explaining its selection (e.g. nearest-liked favorite, uses an at-risk perishable, weather fit — including, for a slot placed by a non-`mild` weather-category quota, that category, which SHALL also be returned structurally on the slot — a matched freeform ask, a requested protein, novel/never-cooked, a caller pin). An empty or too-thin slot (no makeable candidate) SHALL be surfaced as an explicit empty slot with a reason, never silently dropped.
+
+#### Scenario: No freeform or override text means no AI call
+
+- **WHEN** a request supplies no `nudges.freeform` and no `slots[].vibe` phrase
+- **THEN** the tool issues no Workers AI request and composes entirely from stored vectors
+
+#### Scenario: An unfillable slot is surfaced, not dropped
+
+- **WHEN** a slot has no makeable candidate
+- **THEN** it is returned as an explicit empty slot with a reason, and the rest of the week is still proposed
+
+#### Scenario: Freeform steers without gating
+
+- **WHEN** a caller supplies `nudges.freeform: "more soup, lighter dinners"`
+- **THEN** gate-surviving candidates closer to the phrase rank higher across every slot, no gated-out recipe appears, and a main materially matched by the phrase says so in its `why[]`
+
+#### Scenario: A vibe override fills a fresh, unembedded vibe
+
+- **WHEN** a palette vibe has no cron-captured vector yet and the caller supplies its phrase as that slot's `vibe` override
+- **THEN** the phrase is embedded at request time and the slot fills normally instead of returning an explicit empty slot
+
+## ADDED Requirements
+
+### Requirement: Alternates are returned per slot from the ranked pool
+
+Each vibe slot SHALL return swap material derived from its **already-computed ranked pool** with no additional retrieval or model call: `alternates` — the top remaining pool candidates (bounded, compact lite rows: slug, title, protein, cuisine, time_total), excluding the week's already-used recipes and the slot's own main; `alt_similar` — the remaining candidate nearest by cosine to the chosen main; and `alt_different` — the highest-ranked remaining candidate of a different cuisine than the main (each `null` when none qualifies). Alternates SHALL be gate survivors by construction — a rejected, gated-out, or excluded recipe SHALL never appear. An **empty** vibe slot SHALL still return its pool's alternates (the escape hatch for an over-constrained night); a vibe-less locked slot, having no pool, SHALL return none. Alternates SHALL be deterministic for a given request.
+
+#### Scenario: The swap menu is powered without a second retrieval
+
+- **WHEN** a proposal returns a filled vibe slot
+- **THEN** the slot carries bounded alternates plus nearest-similar and different-cuisine picks drawn from that slot's ranked pool, none of which duplicate a recipe already used elsewhere in the week
+
+#### Scenario: An over-constrained empty slot still offers alternates
+
+- **WHEN** a slot returns no main because the variety caps blocked every pool candidate
+- **THEN** the slot's alternates still list its remaining gate-surviving pool candidates so the caller can pick one explicitly
+
+#### Scenario: Alternates never surface a rejected recipe
+
+- **WHEN** a recipe is rejected by the caller or dropped by the facet/makeability gate
+- **THEN** it appears in no slot's `alternates`, `alt_similar`, or `alt_different`
+
+### Requirement: Request-time query embeddings are hash-cached
+
+Request-time query-text embeddings (the propose freeform/override phrases and `search_recipes` ranked-mode vibes) SHALL be served through a shared content-addressed cache: keyed by a cryptographic hash over the embedding model id plus the normalized text (lowercased, trimmed, inner whitespace collapsed), stored in the ephemeral-infra KV namespace with a bounded TTL, holding the full-precision vector exactly as the model returned it. Cache misses within one request SHALL be embedded in a **single batched** Workers AI call and written back best-effort. The cache SHALL fail open — a KV read or write failure, or a malformed cached value, degrades to a plain embed and never fails the request. Because the key binds the model id, changing the embedding model SHALL orphan old entries rather than serve mismatched vectors. Scheduled reconciles that already hash-gate their embeddings in D1 SHALL NOT route through this cache.
+
+#### Scenario: A repeated phrase costs no second embed
+
+- **WHEN** the same freeform phrase (modulo case and whitespace) is submitted twice within the TTL
+- **THEN** the second request reads the vector from the cache and makes no Workers AI call for it, and both requests rank with the byte-identical vector
+
+#### Scenario: A cache failure degrades, never breaks
+
+- **WHEN** the KV namespace errors on read or returns a malformed value
+- **THEN** the text is embedded directly and the request succeeds
+
+#### Scenario: The ranked search path shares the cache
+
+- **WHEN** `search_recipes` runs a ranked spec whose vibe phrase was recently embedded (by either surface)
+- **THEN** its query vector is a cache hit and the embed batch covers only uncached phrases

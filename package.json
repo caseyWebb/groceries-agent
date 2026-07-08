@@ -17,6 +17,7 @@
       "workerd": true,
       "@fission-ai/openspec": false,
       "@mongodb-js/zstd": false,
+      "@parcel/watcher": false,
       "core-js-pure": false,
       "node-liblzma": false,
       "sharp": false
@@ -24,14 +25,18 @@
   },
   "scripts": {
     "dev": "aube --filter @grocery-agent/worker run dev",
+    "dev:app": "node scripts/dev-app.mjs",
+    "dev:admin": "node scripts/dev-admin.mjs",
     "deploy": "aube --filter @grocery-agent/worker run deploy",
     "typecheck": "aube --recursive run typecheck",
-    "test": "aube --filter @grocery-agent/worker --filter @grocery-agent/satellite run test",
+    "test": "aube --filter @grocery-agent/worker --filter @grocery-agent/satellite --filter @grocery-agent/admin-app run test",
     "test:tooling": "aube --filter @grocery-agent/worker run test:tooling",
     "test:admin": "aube --filter @grocery-agent/worker run test:admin",
+    "test:app": "aube --filter @grocery-agent/worker run test:app",
     "check:licenses": "aube --filter @grocery-agent/worker run check:licenses",
     "build:plugin": "aube --filter @grocery-agent/worker run build:plugin",
-    "build:admin": "aube --filter @grocery-agent/worker run build:admin",
+    "build:admin": "aube --filter @grocery-agent/admin-app run build",
+    "build:app": "aube --filter @grocery-agent/app run build",
     "build:vault": "aube --filter @grocery-agent/worker run build:vault"
   },
   "devDependencies": {
