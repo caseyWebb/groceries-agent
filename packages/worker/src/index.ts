@@ -185,8 +185,8 @@ export default {
     if (reason) message.setReject(reason);
   },
   /**
-   * The single cron trigger drives FOUR jobs each tick — kept under one trigger so the
-   * free-tier cron-count limit never bites:
+   * The single cron trigger drives every scheduled job each tick — kept under one trigger so
+   * the free-tier cron-count limit never bites. The data-flow spine, in order:
    *   * flyer warm (flyer-cache-warming) — the cursor sweep in `flyer-warm.ts`.
    *   * recipe-index projection (r2-corpus-store) — `recipe-projection.ts` reads the R2
    *     corpus, validates it, and rebuilds the D1 `recipes` index (replacing the retired
@@ -200,8 +200,11 @@ export default {
    *     outcome. It runs LAST so dedup + matching see a fresh index AND fresh embeddings.
    * The flyer warm is independent of the index, so it runs ALONGSIDE the projection; the
    * embed job runs after so it sees the fresh index; the discovery sweep runs after that.
-   * Each writes its own health record + optional ntfy push, and any hard failure is rethrown
-   * so the platform's native cron status reflects it.
+   * Layered onto that spine are the bounded reconcile/audit passes: phase-1 normalization
+   * audits (alias/edge/title) that converge captured data, and phase-5 signal producers
+   * (reconcile-signals, archetype-derive, dup-scan) that read the fresh index + embeddings
+   * to enqueue proposals. Each job writes its own health record + optional ntfy push, and any
+   * hard failure is rethrown so the platform's native cron status reflects it.
    */
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     const corpus = createR2CorpusStore(env.CORPUS);
