@@ -42,7 +42,7 @@
 
 ## 9. Docs (lockstep)
 
-- [ ] 9.1 `docs/SCHEMAS.md`: the three new D1 tables (`tenants`, `signup_invites`, `signup_redemptions`) and the KV-bootstrap vs D1-group-code split.
-- [ ] 9.2 `docs/ARCHITECTURE.md`: tenants gain a strongly-consistent D1 uniqueness registry; the two-invite-systems split (resolve-existing vs create-new); the web-app-only self-service signup path.
-- [ ] 9.3 `docs/SELF_HOSTING.md`: minting a group code (cap/expiry/label), revoke semantics (halts signups, spares accounts), and the half-onboarded recovery via the session cookie or `rotate()`.
-- [ ] 9.4 Confirm `docs/TOOLS.md` is unchanged (no agent-facing MCP tool added) and note it in the PR checklist.
+- [x] 9.1 `docs/SCHEMAS.md`: the three new D1 tables (`tenants`, `signup_invites`, `signup_redemptions`) and the KV-bootstrap vs D1-group-code split.
+- [x] 9.2 `docs/ARCHITECTURE.md`: tenants gain a strongly-consistent D1 uniqueness registry; the two-invite-systems split (resolve-existing vs create-new); the web-app-only self-service signup path.
+- [x] 9.3 `docs/SELF_HOSTING.md`: minting a group code (cap/expiry/label), revoke semantics (halts signups, spares accounts), and the half-onboarded recovery via the session cookie or `rotate()`.
+- [x] 9.4 Confirm `docs/TOOLS.md` is unchanged (no agent-facing MCP tool added) and note it in the PR checklist.
