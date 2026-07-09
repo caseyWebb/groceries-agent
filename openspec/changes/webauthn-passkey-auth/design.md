@@ -91,5 +91,5 @@ Persist `sign_count` for diagnostics but do not reject an assertion when it fail
 
 - **Grace-flag home** — Worker `var` (recommended, admin-out-of-scope) vs. a runtime-toggleable `operator_config` column. Defaulting to `var` unless the operator wants a runtime flip without redeploy.
 - **RP ID granularity** — exact host vs registrable domain; the operator decides with their final-domain choice (documented, not code-blocking).
-- **`@simplewebauthn/server` workerd compatibility** — resolved by the first implementation task (smoke test); fallback is specified.
+- **`@simplewebauthn/server` workerd compatibility** — RESOLVED (task 1.1 spike): `@simplewebauthn/server@13.3.2` runs clean on `workerd` — pure `globalThis.crypto.subtle`, zero `node:` builtins / `Buffer` / `process`, ES256 + RS256 verify both supported, CBOR/COSE handled internally. Adopted as-is; the hand-rolled WebCrypto fallback is not needed. Caveat: repo vitest runs in the Node environment (no `@cloudflare/vitest-pool-workers` installed), so a green vitest exercises the verification logic but does not itself guard the `workerd` runtime; the spike's direct `workerd serve` run is the runtime evidence.
 - **Deep-link scheme for `/connect`** — plain HTTPS deep link (works everywhere, opens the PWA if installed) is the default; a custom scheme is unnecessary.
