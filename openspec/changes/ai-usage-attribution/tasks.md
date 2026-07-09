@@ -46,4 +46,4 @@
 
 - [x] 7.1 `aubr typecheck` + Worker unit tests (full suite, 2203) + `aubr test:tooling` (merge guard, 106) green.
 - [x] 7.2 `aubr test:admin` (panel) green — 44 passed.
-- [~] 7.3 `/code-review` the full branch diff; triage findings. *(running)*
+- [x] 7.3 `/code-review` the full branch diff; triage findings. Fixed the one should-fix (night-vibe AI triggers were hardcoded, mislabeling the `suggest_night_vibes` tool/API path as `cron` — now threaded through `runDerivation` → `nameCluster`/`starterVibesFromTaste`/embed) + nit (relabeled the night-vibe dedup embed `embed-nightvibe`). The nit on `assertNever` was dismissed — the panel's boolean `configured` guard matches the sibling Trends/Tools panels.

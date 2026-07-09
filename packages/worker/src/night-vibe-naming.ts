@@ -8,7 +8,7 @@
 // candidate rather than breaking the derivation pass.
 
 import type { Env } from "./env.js";
-import { runAi } from "./ai.js";
+import { runAi, type AiTrigger } from "./ai.js";
 import { slugify } from "./discovery.js";
 import { WEATHER_BUCKETS, type WeatherCategory } from "./weather.js";
 
@@ -39,6 +39,7 @@ const CLUSTER_SYSTEM =
 export async function nameCluster(
   env: Env,
   input: { descriptions: string[]; cadence_days: number | null },
+  trigger: AiTrigger = "cron",
 ): Promise<{ vibe: string; cadence_days: number | null; weather_affinity?: WeatherCategory[] } | null> {
   const sample = input.descriptions.slice(0, 6);
   if (sample.length === 0) return null;
@@ -47,7 +48,7 @@ export async function nameCluster(
   try {
     res = await runAi<TextGenResponse>(
       env,
-      { activity: "nightvibe-name", trigger: "cron", calls: 1 },
+      { activity: "nightvibe-name", trigger, calls: 1 },
       NAME_MODEL,
       {
         messages: [
@@ -93,14 +94,18 @@ const STARTER_SYSTEM =
  * with too little cooking history to cluster. Returns `{ id, vibe }` candidates (no cadence — a
  * starter vibe has no observed interval yet). Empty on blank taste or a failed generation.
  */
-export async function starterVibesFromTaste(env: Env, tasteText: string | null): Promise<{ id: string; vibe: string }[]> {
+export async function starterVibesFromTaste(
+  env: Env,
+  tasteText: string | null,
+  trigger: AiTrigger = "cron",
+): Promise<{ id: string; vibe: string }[]> {
   const text = (tasteText ?? "").trim();
   if (!text) return [];
   let res: TextGenResponse;
   try {
     res = await runAi<TextGenResponse>(
       env,
-      { activity: "nightvibe-name", trigger: "cron", calls: 1 },
+      { activity: "nightvibe-name", trigger, calls: 1 },
       NAME_MODEL,
       {
         messages: [
