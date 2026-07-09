@@ -5,7 +5,7 @@
 // Unlike the Worker admin islands (a gitignored build artifact — their esbuild bundles embed the
 // aube virtual-store path), THIS bundle embeds no environment-specific paths: the API is same-origin
 // relative and React is vendored, so the output is reproducible across machines and is COMMITTED.
-// That keeps `grocery-satellite order` working offline from a clean checkout with no build step
+// That keeps `yamp-satellite order` working offline from a clean checkout with no build step
 // (the satellite Docker image runs the source via tsx and serves the committed public/ directly).
 //
 // The bundle is fully self-contained and offline: NO CDN, NO in-browser Babel. React 18.3.1

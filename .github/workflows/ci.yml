@@ -561,4 +561,4 @@ jobs:
         # (the defaultBranchRef GraphQL lookup needs Contents:read on the token);
         # the deploy always targets main, so this keeps DATA_REPO_ACTIONS_TOKEN
         # scoped to just Actions:write (+ mandatory Metadata).
-        run: gh workflow run deploy.yml --repo caseyWebb/groceries-agent-data --ref main
+        run: gh workflow run deploy.yml --repo caseyWebb/yet-another-meal-planner-deployment --ref main

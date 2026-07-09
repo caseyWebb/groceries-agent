@@ -35,7 +35,7 @@ import {
   SegmentedControl,
   PageHead,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api, apiError } from "../lib/api";
 import { PERISHABLE, STALE_DAYS, daysSince } from "../lib/format";
 import {

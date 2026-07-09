@@ -1,5 +1,5 @@
 // Inbound-email recipe discovery (newsletter-discovery capability). Cloudflare
-// Email Routing delivers forwarded recipe newsletters for `groceries-agent@<domain>`
+// Email Routing delivers forwarded recipe newsletters for `yamp@<domain>`
 // to the Worker's email() handler. We authenticate the message (DKIM/SPF/DMARC
 // verdicts Cloudflare reports), gate it against the SHARED allowlist
 // (the D1 `discovery_senders`/`discovery_members` allowlist), capture the email body

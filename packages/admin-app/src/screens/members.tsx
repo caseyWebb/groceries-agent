@@ -27,7 +27,7 @@ import {
   DropdownMenuItem,
   Input,
   Label,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { queryClient, tenantsQuery, type TenantRow } from "../lib/queries";
 import { api, unwrap, apiErrorOf } from "../lib/api";
 import { assertNever } from "../lib/assert";

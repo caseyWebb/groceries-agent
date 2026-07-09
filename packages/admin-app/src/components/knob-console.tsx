@@ -9,7 +9,7 @@
 // the confirm gate immediately, without waiting on a round trip.
 
 import * as React from "react";
-import { Input, Label } from "@grocery-agent/ui";
+import { Input, Label } from "@yamp/ui";
 import { Button, ErrorBanner, Slider, type KnobSpec } from "./kit";
 
 export type Draft = Record<string, string>;

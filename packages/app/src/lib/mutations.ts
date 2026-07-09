@@ -16,7 +16,7 @@
 // write (a queued stale precondition would only ever 412). They stay direct calls;
 // persist.ts's shouldDehydrateMutation refuses any key outside the registry.
 import { useMutation, type QueryClient } from "@tanstack/react-query";
-import { toast } from "@grocery-agent/ui";
+import { toast } from "@yamp/ui";
 import { api, apiError, type ApiError } from "./api";
 import { REGISTERED_MUTATION_KEYS } from "./persist";
 import type { GroceryRow, Overlay, PlanOp, ToBuyView } from "./data";

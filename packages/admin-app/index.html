@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
-    <title>grocery-agent admin</title>
+    <title>yamp admin</title>
     <script>
       // Pre-paint theme application (D10 — the member app's ThemeFab pattern): stamp `.dark`
       // on <html> before first paint so a dark-mode operator never sees a light flash.
       try {
-        var t = localStorage.getItem("ga-theme");
+        var t = localStorage.getItem("yamp-theme");
         if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) {
           document.documentElement.classList.add("dark");
         }

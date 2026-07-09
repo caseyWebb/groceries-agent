@@ -16,9 +16,9 @@
         "patterns": [
           {
             "group": [
-              "@grocery-agent/ui/src/*"
+              "@yamp/ui/src/*"
             ],
-            "message": "Import design-system components from '@grocery-agent/ui', not component internals."
+            "message": "Import design-system components from '@yamp/ui', not component internals."
           }
         ]
       }

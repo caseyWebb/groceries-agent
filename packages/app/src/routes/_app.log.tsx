@@ -14,7 +14,7 @@ import {
   PageHead,
   RecipeFacets,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { useIndex, useLog, type LogRow } from "../lib/data";
 import { useLogAdd, useLogRemove } from "../lib/mutations";
 import { fmtDay, isoToday } from "../lib/format";

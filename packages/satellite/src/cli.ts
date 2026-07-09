@@ -369,7 +369,7 @@ async function cmdOrder(rest: string[]): Promise<void> {
     }
     const session = loadSession(ctx.configDir, store.store);
     if (!session) {
-      log.warn(`no captured session for "${store.store}" — run: grocery-satellite login ${store.store}`);
+      log.warn(`no captured session for "${store.store}" — run: yamp-satellite login ${store.store}`);
     }
     storeLabel = store.store;
     helper = createHelper({
@@ -425,7 +425,7 @@ function waitForEnter(): Promise<void> {
 function usage(): never {
   console.error(
     [
-      "grocery-satellite <verb> [args]",
+      "yamp-satellite <verb> [args]",
       "",
       "  run [--watch]                     one tick: recipe push + sale-scan pull (--watch loops on schedule)",
       "  test <source> <url>               dry-run one recipe URL: fetch+extract+validate, print item, no POST",

@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Badge as UiBadge } from "@grocery-agent/ui";
+import { Badge as UiBadge } from "@yamp/ui";
 import { Button } from "../components/kit";
 import { SearchIcon, XCircleIcon, ArrowRightIcon, TrashIcon } from "../components/icons";
 import {

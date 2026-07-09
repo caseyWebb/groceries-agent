@@ -12,7 +12,7 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { api, apiError } from "./api";
 import type { PlannedRow } from "./data";
 
-const SESSION_KEY = "cookbook:propose-session";
+const SESSION_KEY = "yamp:propose-session";
 
 /** The mock's `proposeSession` shape, kept faithfully (D7). All keys are vibe ids. */
 export interface ProposeSession {

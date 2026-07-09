@@ -5,11 +5,11 @@ TBD - created by archiving change add-newsletter-email-discovery. Update Purpose
 ## Requirements
 ### Requirement: Inbound email is received by a Worker email handler
 
-The Worker SHALL expose an `email()` handler (alongside its existing `fetch` handler in the same Worker) that processes messages delivered by Cloudflare Email Routing for the configured newsletter address (`groceries-agent@<domain>`). The newsletter domain SHALL be a dedicated spare zone added to Cloudflare with Email Routing enabled — never the in-use ProtonMail zone — so enabling Routing's MX records breaks no live mail. The handler SHALL NOT poll a mailbox (no IMAP, no cron); intake is push-only.
+The Worker SHALL expose an `email()` handler (alongside its existing `fetch` handler in the same Worker) that processes messages delivered by Cloudflare Email Routing for the configured newsletter address (`yamp@<domain>`). The newsletter domain SHALL be a dedicated spare zone added to Cloudflare with Email Routing enabled — never the in-use ProtonMail zone — so enabling Routing's MX records breaks no live mail. The handler SHALL NOT poll a mailbox (no IMAP, no cron); intake is push-only.
 
 #### Scenario: A delivered newsletter reaches the handler
 
-- **WHEN** Cloudflare Email Routing delivers a message addressed to `groceries-agent@<domain>` to the Worker
+- **WHEN** Cloudflare Email Routing delivers a message addressed to `yamp@<domain>` to the Worker
 - **THEN** the Worker's `email()` handler is invoked with that message and processes it without any scheduled trigger
 
 ### Requirement: Messages are authenticated and gated against the allowlist

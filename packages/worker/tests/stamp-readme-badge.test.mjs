@@ -10,13 +10,13 @@ const END = "<!-- health-badge:end -->";
 
 test("badgeSnippet builds an open /health.svg URL, normalizing the host", () => {
   assert.equal(
-    badgeSnippet("grocery-mcp.me.workers.dev"),
-    "![grocery-mcp health](https://grocery-mcp.me.workers.dev/health.svg)",
+    badgeSnippet("yamp.me.workers.dev"),
+    "![yamp health](https://yamp.me.workers.dev/health.svg)",
   );
   // Tolerates a scheme / trailing slash on the host.
   assert.equal(
     badgeSnippet("https://grocery.example.com/"),
-    "![grocery-mcp health](https://grocery.example.com/health.svg)",
+    "![yamp health](https://grocery.example.com/health.svg)",
   );
 });
 

@@ -58,7 +58,7 @@ export interface OrderStoreConfig {
 
 /** The whole machine's config. */
 export interface SatelliteConfig {
-  /** The grocery-mcp connector base URL; `/admin/api/ingest` (push) + `/satellite/*` (pull) are appended. */
+  /** The yamp connector base URL; `/admin/api/ingest` (push) + `/satellite/*` (pull) are appended. */
   connector_url: string;
   /** Optional mounted directory of operator-authored adapter modules. */
   adapters_dir?: string;

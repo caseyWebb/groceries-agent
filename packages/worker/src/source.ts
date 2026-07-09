@@ -12,7 +12,7 @@
 import type { Env } from "./env.js";
 
 /** Upstream canonical source — the default when no operator `SOURCE_URL` override is set. */
-export const UPSTREAM_SOURCE_URL = "https://github.com/caseyWebb/groceries-agent";
+export const UPSTREAM_SOURCE_URL = "https://github.com/caseyWebb/yet-another-meal-planner";
 
 /** Resolve the source URL to offer: the operator's `SOURCE_URL` override, else the upstream repo. */
 export function sourceUrl(env: Pick<Env, "SOURCE_URL">): string {
@@ -43,10 +43,10 @@ export function handleSource(env: Pick<Env, "SOURCE_URL">): Response {
     `<html lang="en">\n<head>\n` +
     `<meta charset="utf-8">\n` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
-    `<title>grocery-mcp — source</title>\n` +
+    `<title>yamp — source</title>\n` +
     `</head>\n<body>\n` +
-    `<h1>grocery-mcp</h1>\n` +
-    `<p>This service runs <strong>grocery-mcp</strong>, free software licensed under the ` +
+    `<h1>yamp</h1>\n` +
+    `<p>This service runs <strong>yamp</strong>, free software licensed under the ` +
     `<a href="https://www.gnu.org/licenses/agpl-3.0.html">GNU Affero General Public License, version 3</a>.</p>\n` +
     `<p>In accordance with section 13 of that license, the complete corresponding source is available at:</p>\n` +
     `<p><a href="${safe}">${safe}</a></p>\n` +

@@ -1,6 +1,6 @@
 <%*
 /*
- * New recipe — Templater template for the grocery-agent authoring vault.
+ * New recipe — Templater template for the yamp authoring vault.
  *
  * Applied automatically when you create a note in `recipes/` (folder template), or
  * insert it from the Templater command. It scaffolds the human-authored recipe

@@ -3,7 +3,7 @@ name: admin-ui
 description: Run the admin panel's Playwright suite and review its per-area screenshots. Use after any change to the admin panel (src/admin/**, its styles/islands, or the harness), and before checking the "Admin UI tests" box in the PR template. Extends page objects/specs first when a surface was added or changed.
 license: MIT
 metadata:
-  author: groceries-agent
+  author: yamp
   version: "1.0"
 ---
 

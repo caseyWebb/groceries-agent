@@ -19,7 +19,7 @@ import type { PersistedClient, Persister } from "@tanstack/react-query-persist-c
 import { del, get, set } from "idb-keyval";
 
 /** The one IndexedDB key (idb-keyval's default store) the dehydrated client lives under. */
-export const IDB_CACHE_KEY = "cookbook-query-cache";
+export const IDB_CACHE_KEY = "yamp-query-cache";
 
 /** Persisted entries expire after 14 days (plan §6: a cached week must keep working). */
 export const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -125,8 +125,8 @@ export const queryClient = new QueryClient();
 
 // --- the local identity stamp (D3) -------------------------------------------------
 
-const TENANT_STAMP_KEY = "cookbook:tenant";
-const PROPOSE_SESSION_KEY = "cookbook:propose-session";
+const TENANT_STAMP_KEY = "yamp:tenant";
+const PROPOSE_SESSION_KEY = "yamp:propose-session";
 
 /** The stamped tenant id — a boot/display hint ONLY, never an authority: every online
  *  request is authorized by the server-side session, not by this. */

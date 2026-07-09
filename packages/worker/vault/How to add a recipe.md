@@ -1,6 +1,6 @@
 # How to add a recipe
 
-This vault is the **authoring** surface for the shared grocery-agent recipe corpus.
+This vault is the **authoring** surface for the shared yamp recipe corpus.
 You write recipes here; **Remotely Save** syncs them to the operator's Cloudflare **R2**
 bucket; the Worker's scheduled reconcile validates and indexes them. Friends never open
 this vault — they read recipes through the agent and the cookbook site.

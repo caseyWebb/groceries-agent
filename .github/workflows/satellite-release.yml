@@ -52,7 +52,7 @@ jobs:
         # FAIL if they disagree (main advanced under the caller between detect and here), so
         # package.json always wins and the tag can't drift. The recipe CONTRACT version it targets is
         # read from the shared contract source for the Release notes. The satellite reports both at
-        # runtime (version from package.json, contract from the @grocery-agent/contract import), so
+        # runtime (version from package.json, contract from the @yamp/contract import), so
         # nothing here is baked as a Docker build-arg.
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -114,7 +114,7 @@ jobs:
 
       - name: Build and push the satellite image
         if: steps.guard.outputs.already == 'false'
-        # Context is the REPO ROOT (the satellite imports the @grocery-agent/contract workspace
+        # Context is the REPO ROOT (the satellite imports the @yamp/contract workspace
         # package), with the package's own Dockerfile. Multi-arch: the image runs natively on x86
         # home servers (amd64) AND Apple-Silicon home hosts (arm64) — the browser tier's Chromium is
         # native, not emulated. The Playwright base is multi-arch and the Node toolchain is

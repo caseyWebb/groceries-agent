@@ -43,9 +43,9 @@ export default defineConfig({
       // the installable shell (manifest + shell precache) so P5 only adds layers.
       registerType: "prompt",
       manifest: {
-        name: "Cookbook",
-        short_name: "Cookbook",
-        description: "The grocery agent's member app",
+        name: "Yet Another Meal Planner",
+        short_name: "yamp",
+        description: "The yamp member app",
         start_url: "/",
         display: "standalone",
         background_color: "#ffffff",

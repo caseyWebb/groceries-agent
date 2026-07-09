@@ -8,7 +8,7 @@ The per-MCP-tool-call **history** tier — the request-path sibling of `usage-tr
 
 ### Requirement: Each MCP tool call emits a per-call usage data point
 
-Every registered MCP tool call SHALL emit **one tenant-clean data point** to a Workers Analytics Engine dataset (binding `TOOL_AE`, dataset `grocery_tool`), carrying the **tool name**, the call **outcome** (`"ok"` | `"error"`), and the call **duration** in milliseconds. The emission SHALL be **best-effort** — an unbound binding or a throwing `writeDataPoint` SHALL be a swallowed no-op that does not change the tool's result — and SHALL be **non-blocking**, emitted only after the tool's result is computed so it adds no latency to the response. The data point SHALL be **tenant-data-free** by construction: tool name, outcome, and duration only, never a username, tenant id, or call arguments. The emission SHALL consume neither the KV nor the D1 operation budget. The dataset's blob/double **slot layout is positional and a documented contract** (`docs/SCHEMAS.md`); a later change SHALL NOT reorder existing slots.
+Every registered MCP tool call SHALL emit **one tenant-clean data point** to a Workers Analytics Engine dataset (binding `TOOL_AE`, dataset `yamp_tool`), carrying the **tool name**, the call **outcome** (`"ok"` | `"error"`), and the call **duration** in milliseconds. The emission SHALL be **best-effort** — an unbound binding or a throwing `writeDataPoint` SHALL be a swallowed no-op that does not change the tool's result — and SHALL be **non-blocking**, emitted only after the tool's result is computed so it adds no latency to the response. The data point SHALL be **tenant-data-free** by construction: tool name, outcome, and duration only, never a username, tenant id, or call arguments. The emission SHALL consume neither the KV nor the D1 operation budget. The dataset's blob/double **slot layout is positional and a documented contract** (`docs/SCHEMAS.md`); a later change SHALL NOT reorder existing slots.
 
 #### Scenario: A completed tool call emits a tenant-clean data point
 
@@ -46,12 +46,12 @@ The instrumentation SHALL be applied by wrapping tool registration **once** so t
 
 ### Requirement: The tool-usage Analytics Engine binding propagates to every operator
 
-The `TOOL_AE` Analytics Engine dataset is a **second** `analytics_engine_datasets` binding instance the deploy config merge must carry. The merge (`scripts/merge-wrangler-config.mjs`) SHALL propagate **both** the existing `grocery_usage` binding and the new `grocery_tool` binding **verbatim from code** to every operator's deployed config (neither carries an operator-owned id). A regression test SHALL assert that both dataset bindings survive the merge, guarding the silent-drop trap for a second instance of the type.
+The `TOOL_AE` Analytics Engine dataset is a **second** `analytics_engine_datasets` binding instance the deploy config merge must carry. The merge (`scripts/merge-wrangler-config.mjs`) SHALL propagate **both** the existing `yamp_usage` binding and the new `yamp_tool` binding **verbatim from code** to every operator's deployed config (neither carries an operator-owned id). A regression test SHALL assert that both dataset bindings survive the merge, guarding the silent-drop trap for a second instance of the type.
 
 #### Scenario: Both AE bindings survive the config merge
 
 - **WHEN** the deploy merges the code config with an operator's config
-- **THEN** the merged config retains both the `grocery_usage` and the `grocery_tool` Analytics Engine bindings from code
+- **THEN** the merged config retains both the `yamp_usage` and the `yamp_tool` Analytics Engine bindings from code
 
 #### Scenario: A dropped second binding is caught by a test
 

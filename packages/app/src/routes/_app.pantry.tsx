@@ -14,7 +14,7 @@ import {
   IconPlus,
   IconTrash,
   PageHead,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { usePantry, type PantryRow } from "../lib/data";
 import { usePantryOps, usePantryVerify } from "../lib/mutations";
 import { PERISHABLE, STALE_DAYS, daysSince } from "../lib/format";

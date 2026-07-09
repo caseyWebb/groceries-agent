@@ -2,7 +2,7 @@
 // OVER both the login and app surfaces — an update banner or an offline-ready note
 // must be visible pre-login too.
 import { createRootRoute, Outlet } from "@tanstack/react-router";
-import { Toaster } from "@grocery-agent/ui";
+import { Toaster } from "@yamp/ui";
 import { ReloadPrompt } from "../components/reload-prompt";
 
 export const Route = createRootRoute({

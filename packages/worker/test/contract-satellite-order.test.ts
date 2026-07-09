@@ -6,7 +6,7 @@ import {
   parseRecipeItem,
   parseSaleObservation,
   OrderLineSchema,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 
 // The order-fill WIRE contract (satellite-order-cart-fill). Mirrors contract-ingest.test.ts /
 // contract-satellite-pull.test.ts: the `order` observation is a new member of the shared

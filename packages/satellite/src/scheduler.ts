@@ -6,7 +6,7 @@
 // cursor, logger), so the whole flow is testable with in-memory fakes — no network, no
 // browser, no filesystem. The CLI wires the real deps; tests wire fakes.
 
-import { MAX_BATCH_ITEMS, type LocalRejectCategory, type RecipeItem } from "@grocery-agent/contract";
+import { MAX_BATCH_ITEMS, type LocalRejectCategory, type RecipeItem } from "@yamp/contract";
 import type { SatelliteConfig, SourceConfig } from "./config.js";
 import type { AdapterFactory, Sdk, SourceAdapter } from "./adapter.js";
 import { validateEmit } from "./adapter.js";

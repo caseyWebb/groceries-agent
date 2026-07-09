@@ -1,5 +1,5 @@
 {
-  "name": "@grocery-agent/admin-app",
+  "name": "@yamp/admin-app",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
     "format": "biome format --write src"
   },
   "dependencies": {
-    "@grocery-agent/ui": "workspace:*",
+    "@yamp/ui": "workspace:*",
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-router": "^1.170.17",
     "hono": "^4.12.27",
@@ -27,7 +27,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
     "@cloudflare/workers-types": "^4.20260621.1",
-    "@grocery-agent/worker": "workspace:*",
+    "@yamp/worker": "workspace:*",
     "@tailwindcss/vite": "^4.3.2",
     "@tanstack/router-plugin": "^1.168.19",
     "@types/react": "^19.2.17",

@@ -10,7 +10,7 @@
 // initiative principle (core ships host + contract + SDK, users ship the ToS-hostile drivers), NO
 // built-in named-retailer sale adapter ships: scan adapters load only from the mounted adapters_dir.
 
-import { parseSaleObservation, type SaleObservation, type SaleScanPayload, type LocalRejectCategory } from "@grocery-agent/contract";
+import { parseSaleObservation, type SaleObservation, type SaleScanPayload, type LocalRejectCategory } from "@yamp/contract";
 import { pathToFileURL } from "node:url";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

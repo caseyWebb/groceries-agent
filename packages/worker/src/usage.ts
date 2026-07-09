@@ -482,7 +482,7 @@ export async function fetchUsage(env: Env, deps: UsageDeps = defaultDeps): Promi
 // ─────────────────────────────────────────────────────────────────────────────
 // Usage TRENDS (usage-trends): the per-job HISTORY tier, read from the Workers Analytics
 // Engine SQL API — complementing the account-level GraphQL snapshot above and the `job_health`
-// D1 liveness row. Each background job emits one data point per run to the `grocery_usage` AE
+// D1 liveness row. Each background job emits one data point per run to the `yamp_usage` AE
 // dataset (src/health.ts `recordUsagePoint`); this reads them back as a per-job/per-day series.
 //
 // CORRECTION to the snapshot above: built-in datasets (KV ops, AI neurons) use the GraphQL
@@ -574,7 +574,7 @@ export function mapTrendRows(rows: TrendRow[], nowMs: number, windowDays: number
 const trendsSql = (windowDays: number) =>
   `SELECT blob1 AS job, toStartOfDay(timestamp) AS day, ` +
   `count() AS runs, avg(double1) AS avg_ms, sum(double1) AS total_ms ` +
-  `FROM grocery_usage ` +
+  `FROM yamp_usage ` +
   `WHERE timestamp > now() - INTERVAL '${windowDays}' DAY ` +
   `GROUP BY job, day ORDER BY day ASC`;
 
@@ -616,8 +616,8 @@ export async function fetchUsageTrends(env: Env, deps: UsageDeps = defaultDeps):
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool usage TRENDS (tool-usage-trends): the per-MCP-tool-call HISTORY tier, read from the
-// Workers Analytics Engine SQL API over the `grocery_tool` dataset (the request-path sibling of
-// `grocery_usage`). Every tool call emits one tenant-clean point (tool, ok/error, duration) via
+// Workers Analytics Engine SQL API over the `yamp_tool` dataset (the request-path sibling of
+// `yamp_usage`). Every tool call emits one tenant-clean point (tool, ok/error, duration) via
 // the buildServer registration decorator (`src/tool-instrumentation.ts` → `recordToolPoint`);
 // this reads them back as per-tool aggregates — call count, error count, and latency percentiles.
 // A SECOND AE SQL client reusing `CF_ACCOUNT_ID` + `CF_ANALYTICS_TOKEN`, performing NO KV or D1.
@@ -680,7 +680,7 @@ const toolUsageSql = (windowDays: number) =>
   `sum(blob2 = 'error') AS errors, ` +
   `quantileWeighted(0.5)(double1, 1) AS p50_ms, ` +
   `quantileWeighted(0.95)(double1, 1) AS p95_ms ` +
-  `FROM grocery_tool ` +
+  `FROM yamp_tool ` +
   `WHERE timestamp > now() - INTERVAL '${windowDays}' DAY ` +
   `GROUP BY tool ORDER BY calls DESC`;
 

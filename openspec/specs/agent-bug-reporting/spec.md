@@ -1,7 +1,7 @@
 # agent-bug-reporting Specification
 
 ## Purpose
-Defines how the agent files bug reports for the user: the `report_bug` tool records attributed reports into the D1 `bug_reports` table (the operator reviews them in the Cloudflare Access-gated `/admin` panel), and the `report-grocery-agent-bug` skill that decides when to file and informs the user it did.
+Defines how the agent files bug reports for the user: the `report_bug` tool records attributed reports into the D1 `bug_reports` table (the operator reviews them in the Cloudflare Access-gated `/admin` panel), and the `report-yamp-bug` skill that decides when to file and informs the user it did.
 ## Requirements
 ### Requirement: Agent reports friction on errors or repeated correction
 

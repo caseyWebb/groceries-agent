@@ -8,7 +8,7 @@
 // a member mid-grocery-aisle is never interrupted.
 import * as React from "react";
 import { useRegisterSW } from "virtual:pwa-register/react";
-import { Button, toast } from "@grocery-agent/ui";
+import { Button, toast } from "@yamp/ui";
 import { requestSwUpdateCheck } from "../lib/api";
 
 export function ReloadPrompt() {

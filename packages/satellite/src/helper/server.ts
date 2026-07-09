@@ -30,14 +30,14 @@ import { summarizeLocalRejects } from "../local-rejects.js";
 import type { OrderStoreConfig, SatelliteConfig } from "../config.js";
 import type { StorageState } from "../session.js";
 import type { Logger } from "../adapter.js";
-import type { OrderListResponse, OrderReceiptRequest } from "@grocery-agent/contract";
+import type { OrderListResponse, OrderReceiptRequest } from "@yamp/contract";
 
 /** What the caller wires into the helper — everything injectable so tests use fakes and no real network/browser. */
 export interface HelperDeps {
   /** The single `[[order_stores]]` entry this helper drives. */
   store: OrderStoreConfig;
   config: SatelliteConfig;
-  /** The grocery-mcp connector base URL the order client dials outbound. */
+  /** The yamp connector base URL the order client dials outbound. */
   connectorUrl: string;
   /** The tenant-bound ingest key the helper holds to call the Worker (NEVER served to the UI). */
   ingestKey: string;

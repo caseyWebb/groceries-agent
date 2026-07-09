@@ -20,7 +20,7 @@ function page(body: string, status: number): Response {
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-      `<title>Connect — grocery-agent</title><style>` +
+      `<title>Connect — yamp</title><style>` +
       `body{font-family:system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;color:#222}` +
       `h1{font-size:1.4rem}label{display:block;margin:1rem 0}input{font-size:1rem;padding:.5rem;width:100%;box-sizing:border-box}` +
       `button{font-size:1rem;padding:.6rem 1.2rem;background:#f4a259;border:0;border-radius:.4rem;cursor:pointer}` +
@@ -31,7 +31,7 @@ function page(body: string, status: number): Response {
 
 function renderForm(oauthReqB64: string, clientName: string, error?: string): Response {
   return page(
-    `<h1>Connect to grocery-agent</h1>` +
+    `<h1>Connect to yamp</h1>` +
       `<p><strong>${esc(clientName)}</strong> wants to connect. Enter your invite code to continue.</p>` +
       (error ? `<p class="err">${esc(error)}</p>` : "") +
       `<form method="post" action="/authorize">` +

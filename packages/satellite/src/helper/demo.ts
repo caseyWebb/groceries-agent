@@ -8,7 +8,7 @@
 //
 // Fixtures are derived from the Claude Design bundle's sample content (Target · Minneapolis Nicollet).
 
-import type { OrderLine, OrderObservation, OrderReceiptRequest } from "@grocery-agent/contract";
+import type { OrderLine, OrderObservation, OrderReceiptRequest } from "@yamp/contract";
 import type { OrderStoreConfig } from "../config.js";
 import type { StorageState } from "../session.js";
 import type { FetchImpl } from "../push.js";

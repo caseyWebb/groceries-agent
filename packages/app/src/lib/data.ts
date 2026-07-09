@@ -23,7 +23,7 @@ import type {
   LineSuggestions,
   SubstitutionAlternative,
   SiblingSuggestion,
-} from "@grocery-agent/worker/order-shapes";
+} from "@yamp/worker/order-shapes";
 
 export type {
   ToBuyLine,

@@ -11,7 +11,7 @@
 // Worker side (a re-posted receipt converges). Terminal 4xx (bad key / forbidden / wrong-mode /
 // bad-payload / unknown list) are NOT retried; 429 / 5xx / network are, with backoff.
 
-import type { OrderListResponse, OrderReceiptRequest, OrderReceiptResponse } from "@grocery-agent/contract";
+import type { OrderListResponse, OrderReceiptRequest, OrderReceiptResponse } from "@yamp/contract";
 import type { FetchImpl, PushOptions } from "./push.js";
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

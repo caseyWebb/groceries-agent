@@ -107,7 +107,7 @@ When the profile does not exist yet (a brand-new member with no D1 rows), the to
 
 ### Requirement: recipe_site_url resolves the hosted browse URL at runtime
 
-The system SHALL provide a `recipe_site_url` read tool that resolves the URL of the hosted cookbook (the browse view of the shared corpus), served by the grocery-mcp Worker itself at `<origin>/cookbook` — so the agent can point a member at the full corpus without any build-time-baked URL. It SHALL return `{ url, enabled }`: `enabled: true` with `<origin>/cookbook` when the request origin is resolvable, and `enabled: false` with `url: null` when it is not. The tool takes no parameters and never writes.
+The system SHALL provide a `recipe_site_url` read tool that resolves the URL of the hosted cookbook (the browse view of the shared corpus), served by the yamp Worker itself at `<origin>/cookbook` — so the agent can point a member at the full corpus without any build-time-baked URL. It SHALL return `{ url, enabled }`: `enabled: true` with `<origin>/cookbook` when the request origin is resolvable, and `enabled: false` with `url: null` when it is not. The tool takes no parameters and never writes.
 
 #### Scenario: Returns the cookbook URL
 

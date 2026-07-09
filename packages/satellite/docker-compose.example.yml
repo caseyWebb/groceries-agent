@@ -1,6 +1,6 @@
 # Example docker-compose for running the satellite on your home network.
 #
-# The image is built from the monorepo root (it vendors @grocery-agent/contract), so the
+# The image is built from the monorepo root (it vendors @yamp/contract), so the
 # build context is the repo root and the Dockerfile path is this package. Copy this to
 # docker-compose.yml, put your config in ./config/satellite.toml, and set INGEST_API_KEY in
 # your shell or a .env file next to this compose file.
@@ -11,7 +11,7 @@ services:
       # Build from the repo root so the workspace (contract + satellite) is in context.
       context: ../..
       dockerfile: packages/satellite/Dockerfile
-    image: grocery-satellite:local
+    image: yamp-satellite:local
     environment:
       # The machine's single ingest key — mint it in the Worker's /admin panel. Never commit it.
       INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in your environment or a .env file}

@@ -13,12 +13,12 @@ node = "22.17.1"
 # global install. Resolved relative to this file.
 _.path = ["node_modules/.bin"]
 
-# The plugin build reads the connector URL from $GROCERY_MCP_URL so it is never
+# The plugin build reads the connector URL from $YAMP_MCP_URL so it is never
 # hardcoded in committed tooling. Set it per-machine in a gitignored mise.local.toml:
 #
 #   [env]
-#   GROCERY_MCP_URL = "https://<your-worker-host>/mcp"
+#   YAMP_MCP_URL = "https://<your-worker-host>/mcp"
 #
-# `aubr build:plugin` uses it to regenerate plugin/grocery-agent/.mcp.json and
+# `aubr build:plugin` uses it to regenerate plugin/yamp/.mcp.json and
 # refuses to run with the placeholder. (The URL still ends up in the committed
 # bundle — the public marketplace serves it — but it is not in any source/script.)

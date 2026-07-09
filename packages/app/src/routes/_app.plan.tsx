@@ -17,7 +17,7 @@ import {
   IconX,
   PageHead,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { useIndex, usePlan, type PlannedRow } from "../lib/data";
 import { usePlanOps } from "../lib/mutations";
 

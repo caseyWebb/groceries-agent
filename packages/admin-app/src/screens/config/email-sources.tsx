@@ -11,7 +11,7 @@ import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, apiErrorOf, unwrap } from "../../lib/api";
 import { corpusQuery, queryClient, type CorpusData } from "../../lib/queries";
-import { Input, NativeSelect } from "@grocery-agent/ui";
+import { Input, NativeSelect } from "@yamp/ui";
 import { Badge, Button, ErrorBanner, ItemGroup, RemoveButton } from "../../components/kit";
 
 type Kind = "member" | "automated";

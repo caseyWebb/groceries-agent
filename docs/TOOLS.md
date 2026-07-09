@@ -4,7 +4,7 @@ update-when: a tool's parameters or returns change, or the tool surface changes
 
 # TOOLS.md — MCP Tool Inventory
 
-The complete tool surface exposed by `grocery-mcp` to Claude. Each tool encodes a deterministic operation. The LLM composes them; the tools enforce the pipelines.
+The complete tool surface exposed by `yamp` to Claude. Each tool encodes a deterministic operation. The LLM composes them; the tools enforce the pipelines.
 
 ## Design philosophy
 
@@ -62,7 +62,7 @@ Read a single recipe's full content (frontmatter + body).
 
 ### `recipe_site_url()`
 
-Resolve the URL of the hosted cookbook (the static browse view of the shared corpus), served by the **grocery-mcp Worker itself** at `<host>/cookbook` — built from the D1 index + the R2 corpus (`src/cookbook.ts`), no GitHub Pages and no GitHub App token. No parameters; never writes. Used in onboarding to point a member at the full corpus.
+Resolve the URL of the hosted cookbook (the static browse view of the shared corpus), served by the **yamp Worker itself** at `<host>/cookbook` — built from the D1 index + the R2 corpus (`src/cookbook.ts`), no GitHub Pages and no GitHub App token. No parameters; never writes. Used in onboarding to point a member at the full corpus.
 
 **Returns:**
 - `{ url, enabled }` — `enabled: true` with `<host>/cookbook` (the operator's domain the member connected to) when the host is resolvable; `{ url: null, enabled: false }` on the rare path where it isn't.
@@ -289,7 +289,7 @@ Add items to or remove items from the caller's staples list. D1-backed (`staples
 **Returns:**
 - `{ added, removed }` — `added`/`removed` are counts; D1-backed (the `staples` table), no `commit_sha`.
 
-**Notes:** Seeded at onboarding (see the configure-grocery-profile flow); usable any time the user names items they want to track. `perishable` is a flag about that item's typical shelf life — separate from its current pantry `category`. An item can be in both the staples list and the stockup watchlist; they are independent.
+**Notes:** Seeded at onboarding (see the configure-yamp-profile flow); usable any time the user names items they want to track. `perishable` is a flag about that item's typical shelf life — separate from its current pantry `category`. An item can be in both the staples list and the stockup watchlist; they are independent.
 
 ### `update_stockup(items?, freezer_capacity_estimate?)`
 
@@ -302,7 +302,7 @@ Add items to the caller's bulk-buy watchlist. Writes the caller's D1 `stockup` r
 **Returns:**
 - `{ added }` — `added` is the count of new items; D1-backed (the `stockup` table + `profile.freezer_capacity_estimate`), no `commit_sha`.
 
-**Notes:** The top-level `freezer_capacity_estimate` is serialized before the `[[items]]` tables (TOML ordering). Seeded at onboarding (see the configure-grocery-profile flow); also usable any time the user names a bulk-buy item.
+**Notes:** The top-level `freezer_capacity_estimate` is serialized before the `[[items]]` tables (TOML ordering). Seeded at onboarding (see the configure-yamp-profile flow); also usable any time the user names a bulk-buy item.
 
 ---
 
@@ -770,7 +770,7 @@ There is no `fetch_flyer_featured` tool — Kroger exposes no "featured" primiti
 Add trusted sources to the **shared** inbound-newsletter allowlist (the D1 `discovery_senders`/`discovery_members` tables). Use when a member sets up a forward or wants a newsletter indexed. Anyone trusted with this MCP is trusted to widen intake (no extra gate). Deduped by `address` — existing entries untouched.
 
 **Params:**
-- `members` (array, optional): `[{ address }]` — friend-group personal addresses; anything they forward to `groceries-agent@` gets indexed (manual-forward path). **Address only — no label** (`name` is not stored for members; identity is the address, not an agent-supplied display name).
+- `members` (array, optional): `[{ address }]` — friend-group personal addresses; anything they forward to `yamp@` gets indexed (manual-forward path). **Address only — no label** (`name` is not stored for members; identity is the address, not an agent-supplied display name).
 - `senders` (array, optional): `[{ address, name? }]` — newsletter `From` addresses; auto-forwarded mail from them gets indexed. `name` is the **newsletter's** name (e.g. "Serious Eats"), never a person's.
 
 **Returns:**
@@ -837,7 +837,7 @@ Read the caller's full per-tenant profile, assembled from the D1 profile tables 
 }
 ```
 
-**Notes:** The single call for session start, meal-plan pre-pass, and configure-grocery-profile. On `initialized: false`, run the `configure-grocery-profile` flow first; use `missing` to skip areas already done. D1-backed (assembled from the per-tenant profile tables) — a missing profile returns all fields null/empty. Kitchen `owned` is the array of `EQUIPMENT_VOCAB` slugs that **gate** recipe makeability; an **absent/empty** `owned` makes the gate a no-op (everything shows).
+**Notes:** The single call for session start, meal-plan pre-pass, and configure-yamp-profile. On `initialized: false`, run the `configure-yamp-profile` flow first; use `missing` to skip areas already done. D1-backed (assembled from the per-tenant profile tables) — a missing profile returns all fields null/empty. Kitchen `owned` is the array of `EQUIPMENT_VOCAB` slugs that **gate** recipe makeability; an **absent/empty** `owned` makes the gate a no-op (everything shows).
 
 ### `update_preferences(patch)` / `update_taste(content)` / `update_diet_principles(content)` / `update_aliases(aliases)`
 
@@ -1089,11 +1089,11 @@ Fetch a daily weather forecast for the user's location. Read-only, no side effec
 
 ### `report_bug(title, body)`
 
-Records a bug report into the **operator's review queue** (the D1 `bug_reports` table), on behalf of a member who can't file issues themselves. The operator reviews it in the **admin panel** (`GET /admin/api/bug-reports`). The Worker stamps attribution it controls — the reporter is the caller's tenant id, plus a UTC timestamp — so identity can't be omitted or spoofed by the agent. Use it when a grocery-mcp tool errors in a way the agent can't work around, or when the user has had to repeatedly correct/redirect on the same thing; write a specific, reproducible report. Returns `{ filed: true }`.
+Records a bug report into the **operator's review queue** (the D1 `bug_reports` table), on behalf of a member who can't file issues themselves. The operator reviews it in the **admin panel** (`GET /admin/api/bug-reports`). The Worker stamps attribution it controls — the reporter is the caller's tenant id, plus a UTC timestamp — so identity can't be omitted or spoofed by the agent. Use it when a yamp tool errors in a way the agent can't work around, or when the user has had to repeatedly correct/redirect on the same thing; write a specific, reproducible report. Returns `{ filed: true }`.
 
 **Errors:** `storage_error` (the D1 write failed). It does not file a GitHub issue, so it **cannot** return `insufficient_permission`.
 
-Behind the per-tenant gate; a pure D1 write — no GitHub. Driven by the agent's `report-grocery-agent-bug` skill, which fires on an unworkable tool error or repeated user correction, files at most one report per distinct problem per session, then tells the user it flagged it.
+Behind the per-tenant gate; a pure D1 write — no GitHub. Driven by the agent's `report-yamp-bug` skill, which fires on an unworkable tool error or repeated user correction, files at most one report per distinct problem per session, then tells the user it flagged it.
 
 ---
 
@@ -1110,7 +1110,7 @@ Behind the per-tenant gate; a pure D1 write — no GitHub. Driven by the agent's
 
 ## Harness-provided widgets (NOT MCP tools)
 
-These are **claude.ai built-ins**, not part of `grocery-mcp`. They are exposed by the Claude.ai harness, are invisible to the Worker, and appear in the agent's tool set only where the harness exposes them. A skill that uses one MUST guard on its presence and degrade when it is absent — see the guided `cook` flow in [`AGENT_INSTRUCTIONS.md`](../AGENT_INSTRUCTIONS.md). They are documented here so the contract a skill encodes has a single anchor, not because they belong to this surface.
+These are **claude.ai built-ins**, not part of `yamp`. They are exposed by the Claude.ai harness, are invisible to the Worker, and appear in the agent's tool set only where the harness exposes them. A skill that uses one MUST guard on its presence and degrade when it is absent — see the guided `cook` flow in [`AGENT_INSTRUCTIONS.md`](../AGENT_INSTRUCTIONS.md). They are documented here so the contract a skill encodes has a single anchor, not because they belong to this surface.
 
 ### `recipe_display_v0`
 

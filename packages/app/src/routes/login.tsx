@@ -5,7 +5,7 @@
 // exists; `rate_limited` asks for patience). A success lands on `/`.
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Button, IconBook, Input, Label } from "@grocery-agent/ui";
+import { Button, IconBook, Input, Label } from "@yamp/ui";
 import { api, apiError } from "../lib/api";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
 import { restoreQueue, suspendQueue } from "../lib/online";
@@ -86,7 +86,7 @@ function LoginPage() {
             <IconBook />
           </span>
           <div>
-            <div className="brand-name">Cookbook</div>
+            <div className="brand-name">yamp</div>
             <div className="brand-tag">your kitchen, with the agent</div>
           </div>
         </div>

@@ -6,7 +6,7 @@
 // the only full-index browse over a real-sized corpus). Search behavior unchanged.
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { EmptyState, IconSearch, IconX, PageHead } from "@grocery-agent/ui";
+import { EmptyState, IconSearch, IconX, PageHead } from "@yamp/ui";
 import { RecipeList } from "../components/recipe-list";
 import { useIndex, useNewForMe, usePickedForYou, useSearch, useTrending, type Hit } from "../lib/data";
 

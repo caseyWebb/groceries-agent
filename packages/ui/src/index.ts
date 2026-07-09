@@ -1,4 +1,4 @@
-// @grocery-agent/ui — the shared member-app UI surface (member-app-shell +
+// @yamp/ui — the shared member-app UI surface (member-app-shell +
 // member-app-core). Raw-TS workspace exports (the app's bundler compiles this); the
 // theme tokens ship as the sibling `./theme.css` export and the member pages' ported
 // design-bundle styles as `./cookbook.css`. Primitives are shadcn/ui source vendored

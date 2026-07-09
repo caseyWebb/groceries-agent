@@ -27,7 +27,7 @@ RUN mise install
 # every importer — a missing one fails the frozen install); the satellite image thus also carries
 # the other packages' dev deps — a size cost accepted in exchange for a lockfile-faithful,
 # npm-free install. A new `packages/*` workspace must be added here or the release build breaks.
-# `@grocery-agent/contract` resolves at runtime via tsx, so no build step is needed.
+# `@yamp/contract` resolves at runtime via tsx, so no build step is needed.
 COPY pnpm-workspace.yaml package.json aube-lock.yaml ./
 COPY packages/contract/package.json packages/contract/package.json
 COPY packages/satellite/package.json packages/satellite/package.json

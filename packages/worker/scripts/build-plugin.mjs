@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// build-plugin.mjs — generate the installable grocery-agent Claude plugin from
+// build-plugin.mjs — generate the installable yamp Claude plugin from
 // AGENT_INSTRUCTIONS.md (the single canonical source).
 //
 // Shared persona ships as LIBRARY SKILLS loaded by reference (deduped across a
@@ -8,20 +8,20 @@
 // shared content on every link; a referenced library skill loads once. The persona
 // splits into a `core` block (loaded by every workflow) plus depth blocks the heavy
 // flows opt into, so a light flow (e.g. grocery-sale-check) carries nothing extra:
-//   persona-tier markers → grocery-core, grocery-cart, grocery-corpus library skills
+//   persona-tier markers → yamp-core, yamp-cart, yamp-corpus library skills
 // Each `### ` flow under `## Common flows` carries a marker:
 //   <!-- skill: <name>
 //   needs: cart, corpus          (optional; omit for core-only flows)
 //   description: <trigger text> -->
 // The build emits the library skills and prefixes each workflow with a prerequisite
-// line — "if you haven't already this session, read grocery-core (and any needed
+// line — "if you haven't already this session, read yamp-core (and any needed
 // depth)" — that loads the shared skills once. The hedge leans on the model to skip
 // a reload (Claude Code dedups; claude.ai behavior is the gating check).
 //
 // The connector URL is BAKED into .mcp.json (claude.ai does not honor a plugin
 // userConfig variable, so each operator's bundle carries their own Worker URL). The
 // URL is operator-specific and is NOT hardcoded in committed tooling — it comes from
-// --mcp-url, else $GROCERY_MCP_URL (the gitignored mise.local.toml sets it). The
+// --mcp-url, else $YAMP_MCP_URL (the gitignored mise.local.toml sets it). The
 // marketplace bundle is NOT committed in this code repo: the operator's deploy builds
 // it with their URL and publishes it into their (public) data repo, which serves as
 // their plugin marketplace (see .github/workflows/data-deploy.yml). Run this locally
@@ -33,10 +33,10 @@
 // the bundle; edit AGENT_INSTRUCTIONS.md and rebuild.
 //
 // Usage:
-//   node scripts/build-plugin.mjs                         # throwaway build → dist/grocery-agent-plugin/ (placeholder URL ok)
+//   node scripts/build-plugin.mjs                         # throwaway build → dist/yamp-plugin/ (placeholder URL ok)
 //   node scripts/build-plugin.mjs --check                 # parse + validate only, no write
-//   node scripts/build-plugin.mjs --out DIR               # write to DIR (the deploy passes the data repo's plugin/grocery-agent)
-//   node scripts/build-plugin.mjs --mcp-url https://...   # connector URL (overrides $GROCERY_MCP_URL)
+//   node scripts/build-plugin.mjs --out DIR               # write to DIR (the deploy passes the data repo's plugin/yamp)
+//   node scripts/build-plugin.mjs --mcp-url https://...   # connector URL (overrides $YAMP_MCP_URL)
 //   node scripts/build-plugin.mjs --version 0.1.<n>       # manifest version (the deploy passes the data repo's commit count)
 //   node scripts/build-plugin.mjs --src PATH              # source doc (default AGENT_INSTRUCTIONS.md)
 
@@ -47,7 +47,7 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export const PLUGIN_NAME = 'grocery-agent';
+export const PLUGIN_NAME = 'yamp';
 // The manifest carries an explicit `version`: `0.2.<N>` where N is the DATA repo's
 // commit count, computed at deploy time and passed via --version (resolveVersion is
 // the local fallback for throwaway builds). claude.ai gates its auto-update on the
@@ -58,19 +58,19 @@ export const PLUGIN_NAME = 'grocery-agent';
 // which is exactly what claude.ai needs to re-pull. The version is passed in (not
 // baked into the pure builder), so the file map stays deterministic.
 export const PLUGIN_DESCRIPTION =
-  'Personal grocery agent — meal planning, pantry, recipes, and Kroger cart. Bundles the workflow skills and the grocery-mcp connector.';
+  'Personal meal planner — meal planning, pantry, recipes, and Kroger cart. Bundles the workflow skills and the yamp connector.';
 // Depth tiers a flow may opt into via `needs:`. `core` is implicit (always loaded).
 // `discovery` carries the shared recipe triage/import mechanics, loaded by the flows
 // that import a recipe (import-recipe, meal-plan) so they reference one
 // source instead of restating the parse→classify→create detail inline.
 export const DEPTH_TIERS = ['cart', 'corpus', 'discovery'];
-// Persona tiers ship as library skills named grocery-<tier>, loaded by reference.
-export const librarySkillName = (tier) => `grocery-${tier}`;
+// Persona tiers ship as library skills named yamp-<tier>, loaded by reference.
+export const librarySkillName = (tier) => `yamp-${tier}`;
 // Near-empty on purpose: a library skill loaded only by a workflow's prerequisite
 // line, not self-triggered by relevance.
 const LIBRARY_DESCRIPTION =
-  'Internal shared rules for the grocery agent, loaded by reference from the workflow skills (via their prerequisite line). Not invoked on its own.';
-const MCP_URL_PLACEHOLDER = 'https://grocery-mcp.example.workers.dev';
+  'Internal shared rules for yamp, loaded by reference from the workflow skills (via their prerequisite line). Not invoked on its own.';
+const MCP_URL_PLACEHOLDER = 'https://yamp.example.workers.dev';
 // The hosted cookbook (browse) URL is NOT baked here — the Worker resolves it at
 // runtime as `<origin>/cookbook` (the `recipe_site_url` tool). The onboarding flow
 // calls that tool instead of carrying a build-time URL.
@@ -248,7 +248,7 @@ export function renderLibrarySkill(tier, content) {
   return `${fm}\n${content.trim()}\n`;
 }
 
-// The prerequisite line prepended to every workflow skill: load grocery-core plus
+// The prerequisite line prepended to every workflow skill: load yamp-core plus
 // any depth this flow needs, once per session. "If you haven't already" leans on
 // the model to skip a reload when the library skill is already in context.
 export function loaderLine(needs = []) {
@@ -291,7 +291,7 @@ export function isHttpUrl(u) {
 }
 
 export function renderMcpConfig(mcpUrl) {
-  return `${JSON.stringify({ mcpServers: { 'grocery-mcp': { type: 'http', url: mcpUrl } } }, null, 2)}\n`;
+  return `${JSON.stringify({ mcpServers: { 'yamp': { type: 'http', url: mcpUrl } } }, null, 2)}\n`;
 }
 
 // Assemble the in-memory file map (relative path → contents). Pure: no disk I/O,
@@ -347,11 +347,11 @@ async function main() {
     return i !== -1 ? process.argv[i + 1] : fallback;
   };
   const src = path.resolve(argVal('--src', path.join(REPO_ROOT, 'AGENT_INSTRUCTIONS.md')));
-  const out = path.resolve(argVal('--out', path.join(REPO_ROOT, 'dist', 'grocery-agent-plugin')));
+  const out = path.resolve(argVal('--out', path.join(REPO_ROOT, 'dist', 'yamp-plugin')));
   // The connector URL is operator-specific and lives on the machine, not in
-  // committed tooling: --mcp-url wins, else $GROCERY_MCP_URL (set in the gitignored
+  // committed tooling: --mcp-url wins, else $YAMP_MCP_URL (set in the gitignored
   // mise.local.toml), else the placeholder. See CONTRIBUTING.md "Building the plugin".
-  const mcpUrl = argVal('--mcp-url', process.env.GROCERY_MCP_URL ?? MCP_URL_PLACEHOLDER);
+  const mcpUrl = argVal('--mcp-url', process.env.YAMP_MCP_URL ?? MCP_URL_PLACEHOLDER);
   // The version is supplied by the deploy (--version = the data repo's commit count,
   // monotonic per operator); resolveVersion() is the local fallback for throwaway builds.
   const version = argVal('--version', undefined) ?? resolveVersion();
@@ -376,7 +376,7 @@ async function main() {
   // warning (and stays exported for tests).
   if (mcpUrl === MCP_URL_PLACEHOLDER || !isHttpUrl(mcpUrl)) {
     console.warn(
-      `build-plugin: WARNING — no real connector URL (set GROCERY_MCP_URL or pass --mcp-url); .mcp.json uses "${mcpUrl}", so the connector will NOT resolve. Fine for a throwaway/inspection build.`,
+      `build-plugin: WARNING — no real connector URL (set YAMP_MCP_URL or pass --mcp-url); .mcp.json uses "${mcpUrl}", so the connector will NOT resolve. Fine for a throwaway/inspection build.`,
     );
   }
 

@@ -26,7 +26,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { Badge, Button, ErrorBanner } from "../../components/kit";
 import { KeyIcon, TrashIcon } from "../../components/icons";
 import { ConfigShell, Section } from "./shell";

@@ -4,7 +4,7 @@ update-when: the toolchain, Worker dev or deploy workflow, repo layout, or contr
 
 # Contributing
 
-How to work **on** the grocery-agent itself — its persona/skills (generated from [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md)) **and** the `grocery-mcp` Worker, both built in this repo. For how the system is *built* (the technical model), read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first — this guide assumes it.
+How to work **on** yamp itself — its persona/skills (generated from [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md)) **and** the `yamp` Worker, both built in this repo. For how the system is *built* (the technical model), read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first — this guide assumes it.
 
 ## Repo map
 
@@ -12,7 +12,7 @@ There is **no data in this repo** — the data lives in a separate (public) data
 
 | Path | What it is |
 | --- | --- |
-| `src/`, `test/`, `wrangler.jsonc` | the repo root **is** the Cloudflare Worker (TypeScript) hosting the `grocery-mcp` MCP server + OAuth provider |
+| `src/`, `test/`, `wrangler.jsonc` | the repo root **is** the Cloudflare Worker (TypeScript) hosting the `yamp` MCP server + OAuth provider |
 | `packages/app/`, `packages/admin-app/`, `packages/ui/` | the member web app (React 19 SPA served at `/`), the operator admin SPA (served at `/admin`), and their shared shadcn/ui components + Tailwind v4 theme tokens (raw-TS `workspace:*` exports) |
 | `scripts/` | build tooling: `build-plugin.mjs` (the plugin bundle), `build-vault.mjs` (the Obsidian authoring vault, from `vault-template/` + `src/vocab.js`), `merge-wrangler-config.mjs` (the deploy config merge). The recipe index + cookbook are derived by the Worker, not built here; the corpus is copied/edited via `rclone` (see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)). |
 | `vault-template/`, `vault/` | the authoring vault's authored **source** and its **generated** output (the corpus-authoring Obsidian vault; `vault/` is committed like `plugin/`, never hand-edited) |
@@ -32,7 +32,7 @@ aube install                # deps (reads aube-lock.yaml in place)
 
 **Supply-chain cooldown.** `.npmrc` sets `minimum-release-age=10080` (7 days): aube won't install a dependency version published less than 7 days ago, falling back to the newest one old enough. It's kept numerically aligned with the Dependabot `cooldown` (`default-days: 7`) so Dependabot only proposes versions aube will install. **Residual:** Dependabot fast-tracks *security* updates (cooldown doesn't apply to them), but aube's window applies to every install — so a same-day security bump can make `aube ci` fail in CI until the version ages in. It's rare and self-healing: re-run CI once the release crosses 7 days (don't disable the window in CI — that re-opens the day-zero risk it guards against).
 
-The data-repo template lives in its own independent repo, [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template) — it is not vendored here. Build and test never touch it.
+The data-repo template lives in its own independent repo, [`yet-another-meal-planner-deployment-template`](https://github.com/caseyWebb/yet-another-meal-planner-deployment-template) — it is not vendored here. Build and test never touch it.
 
 ## Working on the Worker (`src/`)
 
@@ -62,13 +62,13 @@ aubr deploy          # wrangler deploy — normally NOT run by hand (see Deploym
 
 **wrangler config has a code-vs-operator ownership split.** `data-deploy.yml` merges the two configs (`scripts/merge-wrangler-config.mjs`): **code-level** keys (`main`, `compatibility_date`, `compatibility_flags`, `triggers`, `observability`) come from *this repo's* `wrangler.jsonc`, so a new code-level setting (e.g. a cron trigger) propagates to every operator on their next deploy — put such changes here. The **binding set** likewise comes from code so a new binding propagates: `kv_namespaces`/`d1_databases` carry their bindings from code while taking each id from the operator (code ids stripped), and `ai` (no id, no secret — Workers AI is account-scoped) propagates verbatim. **A new binding type must be added to the merge explicitly** — the merge is an allowlist, not a passthrough, so an unhandled binding is silently dropped from the deployed config. **Operator-owned** keys (`vars`, `kv_namespaces` ids, `name`, `routes`) come from the operator's config; the code repo's `vars`/KV-ids are the maintainer's and are *stripped* by the merge so they never reach another operator.
 
-**Auto-deploy on merge to main.** When Worker- or plugin-relevant paths change (`src/**`, `wrangler.jsonc`, `package.json`, `aube-lock.yaml`, `AGENT_INSTRUCTIONS.md`, `scripts/build-plugin.mjs`), `ci.yml`'s `trigger-deploy` job fires `gh workflow run deploy.yml --repo caseyWebb/groceries-agent-data` automatically — but only after the `test` and `no-open-changes` jobs pass. The deploy redeploys the Worker then republishes the plugin, so a persona-only change reaches members' skills (Worker-first). This requires a fine-grained PAT with `actions: write` on the data repo stored as `DATA_REPO_ACTIONS_TOKEN` in this repo's secrets. Doc/test/openspec-only pushes skip the trigger. Self-hosters manage their own deploy trigger.
+**Auto-deploy on merge to main.** When Worker- or plugin-relevant paths change (`src/**`, `wrangler.jsonc`, `package.json`, `aube-lock.yaml`, `AGENT_INSTRUCTIONS.md`, `scripts/build-plugin.mjs`), `ci.yml`'s `trigger-deploy` job fires `gh workflow run deploy.yml --repo caseyWebb/yet-another-meal-planner-deployment` automatically — but only after the `test` and `no-open-changes` jobs pass. The deploy redeploys the Worker then republishes the plugin, so a persona-only change reaches members' skills (Worker-first). This requires a fine-grained PAT with `actions: write` on the data repo stored as `DATA_REPO_ACTIONS_TOKEN` in this repo's secrets. Doc/test/openspec-only pushes skip the trigger. Self-hosters manage their own deploy trigger.
 
 To kick a deploy manually (e.g. after a doc-only push that still needs a redeploy, or to re-run a failed deploy):
 
 ```bash
-gh workflow run deploy.yml --repo caseyWebb/groceries-agent-data
-gh run watch  --repo caseyWebb/groceries-agent-data                # optional: follow to green
+gh workflow run deploy.yml --repo caseyWebb/yet-another-meal-planner-deployment
+gh run watch  --repo caseyWebb/yet-another-meal-planner-deployment                # optional: follow to green
 ```
 
 (`aubr deploy` is a local escape hatch, but the data-repo workflow is the source of truth — it gates on typecheck + tests first.)
@@ -77,16 +77,16 @@ gh run watch  --repo caseyWebb/groceries-agent-data                # optional: f
 
 `packages/satellite/package.json` `version` is the satellite's version — the value the running satellite reports to the Worker as `satellite_version` (stamped on every ingest batch) and the value the release publishes under. A PR that touches `packages/satellite/**` **or** the shared `packages/contract/**` (a contract change reshapes the satellite) must bump that `version` to a **strictly-greater** semver. The `satellite-version` gate in `ci.yml` (PR-only, bot-exempt) diffs against the PR base and fails the PR otherwise; it never commits the bump — you bump it in your PR. Like the other gates, it blocks merge only once `satellite-version` is added to `main`'s branch protection as a required status check.
 
-**Releasing is automatic on merge.** You don't push a `satellite-v*` tag: on a push to `main`, `ci.yml`'s `detect-satellite-version` job compares the version against the previous commit, and when it changed, `release-satellite` calls the reusable `satellite-release.yml` **inline** (gated on green `test` + `no-open-changes`). That workflow reads/verifies the version from `packages/satellite/package.json`, builds the multi-arch (`linux/amd64` + `linux/arm64`) image, pushes it to GHCR (`ghcr.io/<owner>/groceries-satellite:<version>` + `:latest`), and cuts the `satellite-v<version>` GitHub Release — the tag is derived from `package.json` and created as part of the Release, all with the built-in `GITHUB_TOKEN` (no stored secret, no commit-back). So bumping the version in your PR is what publishes the release. The publish is idempotent (it skips a version whose `satellite-v<version>` release already exists), so a re-run or an unrelated push can't double-publish. Manual fallback: run the `satellite-release` workflow via `workflow_dispatch` — it publishes whatever version `package.json` currently declares (subject to the same idempotence guard). This release control plane is independent of the Worker deploy: a satellite version bump never deploys the Worker, and a Worker deploy never publishes a satellite image.
+**Releasing is automatic on merge.** You don't push a `satellite-v*` tag: on a push to `main`, `ci.yml`'s `detect-satellite-version` job compares the version against the previous commit, and when it changed, `release-satellite` calls the reusable `satellite-release.yml` **inline** (gated on green `test` + `no-open-changes`). That workflow reads/verifies the version from `packages/satellite/package.json`, builds the multi-arch (`linux/amd64` + `linux/arm64`) image, pushes it to GHCR (`ghcr.io/<owner>/yamp-satellite:<version>` + `:latest`), and cuts the `satellite-v<version>` GitHub Release — the tag is derived from `package.json` and created as part of the Release, all with the built-in `GITHUB_TOKEN` (no stored secret, no commit-back). So bumping the version in your PR is what publishes the release. The publish is idempotent (it skips a version whose `satellite-v<version>` release already exists), so a re-run or an unrelated push can't double-publish. Manual fallback: run the `satellite-release` workflow via `workflow_dispatch` — it publishes whatever version `package.json` currently declares (subject to the same idempotence guard). This release control plane is independent of the Worker deploy: a satellite version bump never deploys the Worker, and a Worker deploy never publishes a satellite image.
 
 ## The corpus + the index (no CI data build)
 
 The authored corpus (`recipes/*.md` + `guidance/**/*.md`) lives in the operator's R2 `CORPUS` bucket, read/written through `src/corpus-store.ts`. There is **no CI index/site build**: the recipe index is projected by the Worker's scheduled reconcile, and the cookbook is served by the Worker. The corpus is copied/edited with `rclone` (R2 is S3-compatible) — the one-time seed and the bulk-edit round-trip are documented in [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md):
 
 ```bash
-rclone sync r2:grocery-corpus ./data     # pull the corpus to a local folder
+rclone sync r2:yamp-corpus ./data     # pull the corpus to a local folder
 # …edit recipes/ + guidance/ markdown…
-rclone sync ./data r2:grocery-corpus      # push it back
+rclone sync ./data r2:yamp-corpus      # push it back
 aubr test:tooling                         # node --test (tests/, fixture-based) — the repo's tooling tests
 ```
 
@@ -94,7 +94,7 @@ aubr test:tooling                         # node --test (tests/, fixture-based) 
 
 **Validation.** One validator: `src/validate.ts` (`validateFile`) gates agent writes at the Worker, and the shared `src/recipe-contract.js` is reused by the reconcile for the whole-corpus pass. `validateStoreInput` / `validateDiscoveryCandidate` cover the D1 corpus writes (store registry, discovery candidates).
 
-**Reusable Actions.** This public repo hosts the `on: workflow_call` workflow operators' data repos call (`uses: caseyWebb/groceries-agent/...@main`): `data-deploy.yml`, which deploys the Worker and then **builds the plugin with the operator's connector URL and publishes it to their data-repo marketplace** (the build is the deploy's Worker-first tail). Member provisioning is **not a workflow** — it's the Cloudflare Access-gated `/admin` panel (`packages/admin-app` + `src/admin/`), so no invite code is printed into a CI log (which, with the corpus in R2 and member data in D1, is what lets the data repo be public). The [`groceries-agent-data-template`](https://github.com/caseyWebb/groceries-agent-data-template) repo's `.github/workflows/` is the live reference for the thin data-repo caller.
+**Reusable Actions.** This public repo hosts the `on: workflow_call` workflow operators' data repos call (`uses: caseyWebb/yet-another-meal-planner/...@main`): `data-deploy.yml`, which deploys the Worker and then **builds the plugin with the operator's connector URL and publishes it to their data-repo marketplace** (the build is the deploy's Worker-first tail). Member provisioning is **not a workflow** — it's the Cloudflare Access-gated `/admin` panel (`packages/admin-app` + `src/admin/`), so no invite code is printed into a CI log (which, with the corpus in R2 and member data in D1, is what lets the data repo be public). The [`yet-another-meal-planner-deployment-template`](https://github.com/caseyWebb/yet-another-meal-planner-deployment-template) repo's `.github/workflows/` is the live reference for the thin data-repo caller.
 
 **D1 Migrations.** A D1 schema change is a `migrations/d1/NNNN_name.sql` file: declarative table shape, applied by the Cloudflare-native `wrangler d1 migrations apply DB` (`--local` to seed your dev SQLite, `--remote` on deploy — the deploy step runs this) and tracked in D1's own `d1_migrations` table (created automatically). Just write the SQL.
 
@@ -105,7 +105,7 @@ aubr test:tooling                         # node --test (tests/, fixture-based) 
 To inspect the output locally or validate the source:
 
 ```bash
-aubr build:plugin                        # throwaway build → dist/grocery-agent-plugin/ (placeholder URL; for inspection)
+aubr build:plugin                        # throwaway build → dist/yamp-plugin/ (placeholder URL; for inspection)
 node scripts/build-plugin.mjs --check    # parse + validate only, no write (what CI runs)
 ```
 

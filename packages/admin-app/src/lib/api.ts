@@ -3,7 +3,7 @@
 // the runtime is just hono/client. Same-origin by construction: the base is "/", and under
 // `aubr dev:admin` the Vite proxy carries /admin/api to the local Worker.
 import { hc } from "hono/client";
-import type { AdminApp } from "@grocery-agent/worker/admin-api";
+import type { AdminApp } from "@yamp/worker/admin-api";
 
 // --- Access-expiry detection (admin-spa D7) -----------------------------------------------
 // The Access cookie rides every same-origin fetch transparently — until it expires, when

@@ -12,7 +12,7 @@ import {
   parseSatelliteEnvelope,
   type LocalReject,
   type SatelliteBatch,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 
 // Locks the satellite ingest WIRE CONTRACT (packages/contract) and, by importing it
 // across the workspace boundary, proves the worker↔contract link resolves at test

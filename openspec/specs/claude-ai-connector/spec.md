@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the contract that the deployed grocery-mcp MCP endpoint is connectable from Claude.ai as a custom connector, authorizing through Cloudflare Access Managed OAuth, and that a real external client can complete authorized reads and an authorized write end-to-end. This is the leg distinct from the Worker→GitHub and Worker→Kroger auth; it covers the Claude.ai→Worker path and the connection's externally-observable behavior.
+Define the contract that the deployed yamp MCP endpoint is connectable from Claude.ai as a custom connector, authorizing through Cloudflare Access Managed OAuth, and that a real external client can complete authorized reads and an authorized write end-to-end. This is the leg distinct from the Worker→GitHub and Worker→Kroger auth; it covers the Claude.ai→Worker path and the connection's externally-observable behavior.
 
 ## Requirements
 

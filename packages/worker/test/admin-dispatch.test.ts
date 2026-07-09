@@ -1,6 +1,6 @@
 import { vi, describe, it, expect } from "vitest";
 import { mintIngestKey } from "../src/ingest-db.js";
-import { CONTRACT_VERSION, type BatchResponse } from "@grocery-agent/contract";
+import { CONTRACT_VERSION, type BatchResponse } from "@yamp/contract";
 import { fakeD1 } from "./fake-d1.js";
 
 // Exercises the TOP-LEVEL dispatch in src/index.ts's `defaultHandler` (not `handleIngest`

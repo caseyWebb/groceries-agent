@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CONTRACT_VERSION, type BatchResponse, type RecipeItem } from "@grocery-agent/contract";
+import { CONTRACT_VERSION, type BatchResponse, type RecipeItem } from "@yamp/contract";
 import { buildBatch, pushBatch, SATELLITE_VERSION, type FetchImpl } from "../src/push.js";
 
 const item = (source: string): RecipeItem => ({

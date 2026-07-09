@@ -20,7 +20,7 @@
 
 import { validateOrderEmit, type OrderAdapterFactory, type OrderSdk, type CheckpointPrompt, type CheckpointResolution } from "../order-adapter.js";
 import type { LocalDrop } from "../local-rejects.js";
-import type { OrderLine, OrderObservation } from "@grocery-agent/contract";
+import type { OrderLine, OrderObservation } from "@yamp/contract";
 import type { OrderStoreConfig, SatelliteConfig } from "../config.js";
 import type { StorageState } from "../session.js";
 import type { Logger } from "../adapter.js";

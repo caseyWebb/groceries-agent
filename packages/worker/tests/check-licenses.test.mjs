@@ -70,16 +70,16 @@ test("flattenProdTree dedups, recurses into nested deps, and drops workspace lin
   // `dependencies` map whose values may carry a nested `dependencies` (the transitive closure).
   const tree = [
     {
-      name: "@grocery-agent/worker",
+      name: "@yamp/worker",
       path: "/repo/packages/worker",
       dependencies: {
         hono: { version: "4.12.27" },
-        "@grocery-agent/contract": {}, // workspace link — dropped
+        "@yamp/contract": {}, // workspace link — dropped
         zod: { version: "4.4.3", dependencies: { "some-dep": { version: "1.0.0" } } },
       },
     },
     {
-      name: "@grocery-agent/satellite",
+      name: "@yamp/satellite",
       path: "/repo/packages/satellite",
       dependencies: {
         zod: { version: "4.4.3" }, // duplicate of worker's — deduped by name@version
@@ -90,7 +90,7 @@ test("flattenProdTree dedups, recurses into nested deps, and drops workspace lin
   const flat = flattenProdTree(tree);
   const ids = flat.map((d) => `${d.name}@${d.version}`).sort();
   assert.deepEqual(ids, ["hono@4.12.27", "smol-toml@1.3.1", "some-dep@1.0.0", "zod@4.4.3"]);
-  assert.equal(flat.some((d) => d.name.startsWith("@grocery-agent/")), false);
+  assert.equal(flat.some((d) => d.name.startsWith("@yamp/")), false);
 });
 
 test("flattenProdTree tolerates a non-array / empty input", () => {

@@ -313,7 +313,7 @@ export function currentStreakStart(runs: readonly JobRun[]): number | null {
 }
 
 /**
- * Emit ONE tenant-clean usage data point for a job run to the `grocery_usage` Analytics Engine
+ * Emit ONE tenant-clean usage data point for a job run to the `yamp_usage` Analytics Engine
  * dataset (usage-trends) — the **history** tier that complements this job's `job_health` D1
  * **liveness** row. Carries the job name, the run outcome, the run duration, and the job's own
  * numeric summary counts (a per-job, documented, **positional** order — see `docs/SCHEMAS.md`):
@@ -346,7 +346,7 @@ export function recordUsagePoint(
 }
 
 /**
- * Emit ONE tenant-clean data point for a single MCP tool call to the `grocery_tool` Analytics
+ * Emit ONE tenant-clean data point for a single MCP tool call to the `yamp_tool` Analytics
  * Engine dataset (tool-usage-trends) — the request-path **history** tier (per-tool frequency +
  * performance), sibling to `recordUsagePoint`'s per-job tier. Fired once per call from the
  * `buildServer` registration decorator (`src/tools.ts`). Carries the tool name, the call outcome,
@@ -597,10 +597,10 @@ export function renderHealthSvg(payload: HealthPayload): string {
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
-    `viewBox="0 0 ${width} ${height}" role="img" aria-label="grocery-mcp health: ${esc(headWord)}">` +
+    `viewBox="0 0 ${width} ${height}" role="img" aria-label="yamp health: ${esc(headWord)}">` +
     `<style>text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}</style>` +
     `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="6" fill="${C.bg}" stroke="${C.border}"/>` +
-    `<text x="${padX}" y="26" fill="${C.text}" font-weight="bold">grocery-mcp</text>` +
+    `<text x="${padX}" y="26" fill="${C.text}" font-weight="bold">yamp</text>` +
     `<text x="${width - padX}" y="26" fill="${headColor}" font-weight="bold" text-anchor="end">● ${esc(headWord)}</text>` +
     `<line x1="${padX}" y1="38" x2="${width - padX}" y2="38" stroke="${C.border}"/>` +
     rowSvg +
@@ -642,7 +642,7 @@ export async function notifyFailure(
   if (!env.NTFY_URL) return;
   try {
     const headers: Record<string, string> = {
-      Title: `grocery-mcp: ${name} failed`,
+      Title: `yamp: ${name} failed`,
       Priority: "high",
     };
     if (env.NTFY_TOKEN) headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;

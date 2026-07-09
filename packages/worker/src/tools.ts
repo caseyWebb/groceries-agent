@@ -1,4 +1,4 @@
-// buildServer wires the full grocery-mcp tool surface onto an McpServer: the
+// buildServer wires the full yamp tool surface onto an McpServer: the
 // repo-data read + Kroger tools defined here, plus the write, grocery-list,
 // order, discovery, notes, store, and cooking tool groups registered from
 // their own modules. Each tool returns a structured result; failures map to
@@ -406,11 +406,11 @@ function productRow(c: KrogerCandidate): Record<string, unknown> {
 }
 
 export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServer {
-  const server = new McpServer({ name: "grocery-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "yamp", version: "0.1.0" });
 
   // tool-usage-trends: wrap registerTool ONCE, before any tool is registered, so every tool —
   // the inline ones below AND those added by the register*Tools helpers — emits one tenant-clean
-  // per-call usage point (tool, ok/error, duration) to the `grocery_tool` AE dataset. Best-effort
+  // per-call usage point (tool, ok/error, duration) to the `yamp_tool` AE dataset. Best-effort
   // and non-blocking; never touches the result. Tenant id is deliberately NOT passed.
   instrumentTools(server as unknown as ToolRegistrar, env);
 
@@ -652,7 +652,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "recipe_site_url",
     {
       description:
-        "Resolve the URL of the hosted cookbook (the browse view of the shared corpus), served by the grocery-mcp Worker itself (no GitHub Pages, no GitHub Pro). Returns { url, enabled }: enabled:true with the cookbook URL (`<host>/cookbook`) when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. Use it during onboarding to point a new member at the full collection.",
+        "Resolve the URL of the hosted cookbook (the browse view of the shared corpus), served by the yamp Worker itself (no GitHub Pages, no GitHub Pro). Returns { url, enabled }: enabled:true with the cookbook URL (`<host>/cookbook`) when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. Use it during onboarding to point a new member at the full collection.",
       inputSchema: {},
     },
     () =>
@@ -758,7 +758,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "read_user_profile",
     {
       description:
-        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup) — empty when fully set up. Profile fields: preferences (parsed), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist. Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-grocery-profile first.",
+        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup) — empty when fully set up. Profile fields: preferences (parsed), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist. Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
       inputSchema: {},
     },
     () => runTool(() => assembleUserProfile(env, tenant.id)),
@@ -1069,7 +1069,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "report_bug",
     {
       description:
-        "File a bug report to the operator's review queue, on behalf of the user (who can't file issues themselves). Use it when a grocery-mcp tool errors in a way you can't work around, or when the user has had to repeatedly correct or redirect you on the same thing. Write a specific, reproducible report. The server attributes the report to the caller and timestamps it — don't add identity yourself. The operator sees it in their admin panel. Returns { filed: true }.",
+        "File a bug report to the operator's review queue, on behalf of the user (who can't file issues themselves). Use it when a yamp tool errors in a way you can't work around, or when the user has had to repeatedly correct or redirect you on the same thing. Write a specific, reproducible report. The server attributes the report to the caller and timestamps it — don't add identity yourself. The operator sees it in their admin panel. Returns { filed: true }.",
       inputSchema: {
         title: z.string().describe("A short, specific issue title."),
         body: z

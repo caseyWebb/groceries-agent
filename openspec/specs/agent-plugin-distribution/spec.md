@@ -1,7 +1,7 @@
 # agent-plugin-distribution Specification
 
 ## Purpose
-TBD - created by archiving change package-agent-as-plugin. Update Purpose after archive.
+Defines how yamp's behavior is packaged and distributed as an installable Claude plugin: the bundle (persona-tier library skills + one skill per conversational flow + the `yamp` connector config) is generated from `AGENT_INSTRUCTIONS.md` and published to the operator's own public data-repo marketplace, so installed members receive updates by pulling — no fork, no manual connector addition, and no re-copying of instructions.
 ## Requirements
 ### Requirement: Agent behavior packaged as an installable plugin
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the on-disk layout of the grocery-agent system: the code repository (the Worker source, build tooling, persona source, docs, and specs) and the operator's data repository (the deploy control plane). The authored corpus and all operational data live outside both repos — in Cloudflare R2 and D1 — so this capability also fixes where each kind of artifact lives.
+Defines the on-disk layout of the yamp system: the code repository (the Worker source, build tooling, persona source, docs, and specs) and the operator's data repository (the deploy control plane). The authored corpus and all operational data live outside both repos — in Cloudflare R2 and D1 — so this capability also fixes where each kind of artifact lives.
 ## Requirements
 ### Requirement: Code repository layout
 

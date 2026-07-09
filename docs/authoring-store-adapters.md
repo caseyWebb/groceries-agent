@@ -24,7 +24,7 @@ The generic recipe adapter (`packages/satellite/src/adapters/jsonld.ts`) exists 
 
 ## The two interfaces
 
-Both interfaces live in `packages/satellite/src/`; both are default-exported as a **factory** `(sdk) => Adapter` from a module you place in the mounted `adapters_dir`. The module's **basename is the adapter name** you reference from config (`adapter = "target"` ⇄ `target.ts`). Types are exported from `@grocery-agent/satellite` (the interfaces + SDKs) and `@grocery-agent/contract` (the emit shapes).
+Both interfaces live in `packages/satellite/src/`; both are default-exported as a **factory** `(sdk) => Adapter` from a module you place in the mounted `adapters_dir`. The module's **basename is the adapter name** you reference from config (`adapter = "target"` ⇄ `target.ts`). Types are exported from `@yamp/satellite` (the interfaces + SDKs) and `@yamp/contract` (the emit shapes).
 
 ### Sale-scan — `SaleScanAdapter.scan(sdk, target)`
 
@@ -56,7 +56,7 @@ interface OrderAdapter {
 }
 ```
 
-`fill` drives the store's own cart for the issued pull-list `lines`, resolving any ambiguity through the human, and returns the RAW per-item `order` observations it produced (or a structured `{ error }` to fail the whole fill). It runs from the **local helper** (`grocery-satellite order`), a loopback UI a person drives — cart-fill is the satellite's one human-directed, port-opening surface.
+`fill` drives the store's own cart for the issued pull-list `lines`, resolving any ambiguity through the human, and returns the RAW per-item `order` observations it produced (or a structured `{ error }` to fail the whole fill). It runs from the **local helper** (`yamp-satellite order`), a loopback UI a person drives — cart-fill is the satellite's one human-directed, port-opening surface.
 
 - **`lines: OrderLine[]`** — each `{ item_id, name, quantity, for_recipes, assumed_quantity }`. `item_id` is the canonical, authoritative key (=== `grocery_list.normalized_name`); echo it back on every emit.
 - **`sdk: OrderSdk`**:
@@ -107,7 +107,7 @@ The provisioning around the adapter (minting an ingest key, registering the stor
 1. **Capture the store session out-of-band.** The satellite reuses *your* login; it never automates one. On a machine with a display:
 
    ```bash
-   grocery-satellite login <store>     # headful browser opens → you log in → session saved
+   yamp-satellite login <store>     # headful browser opens → you log in → session saved
    ```
 
    The session lands in the mounted `config/sessions/<store>.json` (Playwright `storageState`), keyed by the store slug. `cookie-import <store> <file>` imports a session you exported elsewhere. The daemon/helper consume it read-only; re-run `login` when it expires (the machine reports `auth_expired`).
@@ -134,12 +134,12 @@ The provisioning around the adapter (minting an ingest key, registering the stor
    Declaring any `[[scan_stores]]` entry is how the machine opts into the sale-scan capability; any `[[order_stores]]` entry opts into cart-fill.
 
 4. **Run it.**
-   - **Sale-scan:** `grocery-satellite run` (add `--watch` to loop on the schedule). The tick claims and runs `sale-scan` tasks and reports observations home.
-   - **Order cart-fill:** `grocery-satellite order` (append the store slug if you declared more than one). It binds loopback, prints a URL + one-time token; you open it, hit Refresh, resolve each checkpoint, and it stops at review.
+   - **Sale-scan:** `yamp-satellite run` (add `--watch` to loop on the schedule). The tick claims and runs `sale-scan` tasks and reports observations home.
+   - **Order cart-fill:** `yamp-satellite order` (append the store slug if you declared more than one). It binds loopback, prints a URL + one-time token; you open it, hit Refresh, resolve each checkpoint, and it stops at review.
 
 5. **Dry-run before going live.**
-   - **Sale-scan:** `grocery-satellite test <store> <locationId> [terms...]` runs your scan adapter behind the store session, validates each emit locally, and **prints** the observations it *would* report — sending nothing. It also prints any locally-rejected emits so you catch a smuggled/malformed field.
-   - **Order cart-fill:** exercise the adapter through the `order` helper itself; `grocery-satellite order --demo` previews the whole helper UI with canned fixtures (no Worker, no real store, no browser) so you can walk the flow before wiring a real adapter.
+   - **Sale-scan:** `yamp-satellite test <store> <locationId> [terms...]` runs your scan adapter behind the store session, validates each emit locally, and **prints** the observations it *would* report — sending nothing. It also prints any locally-rejected emits so you catch a smuggled/malformed field.
+   - **Order cart-fill:** exercise the adapter through the `order` helper itself; `yamp-satellite order --demo` previews the whole helper UI with canned fixtures (no Worker, no real store, no browser) so you can walk the flow before wiring a real adapter.
 
 ---
 
@@ -149,8 +149,8 @@ A minimal, non-retailer-specific starting point. Replace the placeholder selecto
 
 ```ts
 // adapters/mystore.ts  — basename "mystore" is the adapter name you put in [[scan_stores]].adapter
-import type { SaleAdapterFactory, ScanSdk, ScanTarget } from "@grocery-agent/satellite";
-import type { SaleObservation } from "@grocery-agent/contract";
+import type { SaleAdapterFactory, ScanSdk, ScanTarget } from "@yamp/satellite";
+import type { SaleObservation } from "@yamp/contract";
 
 // One raw product card parsed off the sale page. TODO: parse your store's markup.
 // `sdk.fetch` returns HTML TEXT (the browser tier returns rendered HTML), so parse it with a
@@ -215,8 +215,8 @@ export default factory;
 
 ```ts
 // adapters/mystore.ts  — basename "mystore" is the adapter name you put in [[order_stores]].adapter
-import type { OrderAdapterFactory, OrderSdk } from "@grocery-agent/satellite";
-import type { OrderLine, OrderObservation } from "@grocery-agent/contract";
+import type { OrderAdapterFactory, OrderSdk } from "@yamp/satellite";
+import type { OrderLine, OrderObservation } from "@yamp/contract";
 
 // A candidate store product extracted from a search result. TODO: your store's tile markup.
 interface Candidate {
@@ -304,7 +304,7 @@ export default factory;
 
 Writing a per-store adapter is a good fit for an LLM working from a page's HTML — the mechanical parts (selectors, the search→extract→add loop) are exactly what a model drafts well, and the human checkpoint means the model never has to solve product matching. Run the prompt below **in your own Claude/LLM** against a store's page HTML.
 
-> This is an **operator** convenience, not part of the member plugin — nothing here calls the Worker or the agent. You own the output and the ToS decision; always dry-run it (`grocery-satellite test …`, or the `order` helper) before going live.
+> This is an **operator** convenience, not part of the member plugin — nothing here calls the Worker or the agent. You own the output and the ToS decision; always dry-run it (`yamp-satellite test …`, or the `order` helper) before going live.
 
 ````text
 You are writing a per-store adapter module for a self-hosted grocery "satellite". The satellite core

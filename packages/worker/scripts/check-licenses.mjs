@@ -163,7 +163,7 @@ function readJson(path) {
  * Flatten an `aube list --prod --recursive --json` tree into unique `{ name, version }` production
  * dependency records. The tree's top-level entries are the workspace packages themselves (they carry
  * a `path`); their nested `dependencies` are the third-party production closure. Workspace
- * cross-links (`@grocery-agent/*`, emitted without a version) are internal first-party code, not
+ * cross-links (`@yamp/*`, emitted without a version) are internal first-party code, not
  * redistributable third-party deps, so they're skipped. Pure over the parsed JSON (testable).
  */
 export function flattenProdTree(tree) {
@@ -171,7 +171,7 @@ export function flattenProdTree(tree) {
   const out = [];
   const visit = (deps) => {
     for (const [name, info] of Object.entries(deps || {})) {
-      if (!name.startsWith("@grocery-agent/")) {
+      if (!name.startsWith("@yamp/")) {
         const version = info?.version || "";
         const id = `${name}@${version}`;
         if (!seen.has(id)) {

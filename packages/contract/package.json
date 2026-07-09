@@ -1,5 +1,5 @@
 {
-  "name": "@grocery-agent/contract",
+  "name": "@yamp/contract",
   "version": "0.1.0",
   "private": true,
   "type": "module",

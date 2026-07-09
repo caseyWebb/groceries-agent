@@ -5,7 +5,7 @@ TBD - created by archiving change planning-cadence. Update Purpose after archive
 ## Requirements
 ### Requirement: Planning cadence is a first-class profile field
 
-The system SHALL store a per-tenant `planning_cadence_days` field — an integer number of days naming how far out the caller plans and shops — as part of the caller's profile, written through the same profile write path as other profile fields and captured during onboarding (`configure-grocery-profile`).
+The system SHALL store a per-tenant `planning_cadence_days` field — an integer number of days naming how far out the caller plans and shops — as part of the caller's profile, written through the same profile write path as other profile fields and captured during onboarding (`configure-yamp-profile`).
 
 #### Scenario: A caller sets their planning cadence during onboarding
 

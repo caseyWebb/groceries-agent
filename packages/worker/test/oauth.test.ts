@@ -66,14 +66,14 @@ describe("/oauth route handling", () => {
 
     const res = await handleOAuthRequest(
       deps,
-      new URL(`https://grocery-mcp.example.com/oauth/init?nonce=${nonce}`),
+      new URL(`https://yamp.example.com/oauth/init?nonce=${nonce}`),
     );
 
     expect(res.status).toBe(302);
     const loc = res.headers.get("location")!;
     expect(loc).toContain("state=fixed-state");
     expect(loc).toContain("code_challenge=fixed-challenge");
-    expect(loc).toContain(encodeURIComponent("https://grocery-mcp.example.com/oauth/callback"));
+    expect(loc).toContain(encodeURIComponent("https://yamp.example.com/oauth/callback"));
     expect(JSON.parse((await kv.get("kroger:pkce:fixed-state"))!)).toEqual({
       verifier: "fixed-verifier",
       tenant: "alice",
@@ -218,8 +218,8 @@ describe("Kroger consent nonce", () => {
 
   it("buildKrogerConsentUrl embeds a redeemable nonce for the tenant", async () => {
     const kv = memKv();
-    const url = await buildKrogerConsentUrl(kv, "https://grocery-mcp.example.com", "alice");
-    expect(url).toMatch(/^https:\/\/grocery-mcp\.example\.com\/oauth\/init\?nonce=[A-Za-z0-9_-]+$/);
+    const url = await buildKrogerConsentUrl(kv, "https://yamp.example.com", "alice");
+    expect(url).toMatch(/^https:\/\/yamp\.example\.com\/oauth\/init\?nonce=[A-Za-z0-9_-]+$/);
     const nonce = new URL(url).searchParams.get("nonce")!;
     expect(await redeemAuthNonce(kv, nonce)).toBe("alice");
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Drive, toCheckpointResolution, type DriveDeps, type DriveEvent, type PageHandle } from "../src/helper/drive.js";
 import type { OrderAdapterFactory } from "../src/order-adapter.js";
-import type { OrderLine, OrderObservation } from "@grocery-agent/contract";
+import type { OrderLine, OrderObservation } from "@yamp/contract";
 
 // The cart-fill DRIVE orchestration (satellite-order-cart-fill): a fake adapter + a fake page (no
 // real browser) exercise the crux — per-item progress, the human checkpoint blocking round-trip, the

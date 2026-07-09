@@ -30,7 +30,7 @@ function memKv(initial: Record<string, string> = {}): KVNamespace {
  *  shell it serves for any other path (mirroring the merged root's single-page-application
  *  fallback answering a miss with the MEMBER shell at 200) — so the dispatch tests can tell
  *  exactly which document (if any) a route was answered with. */
-const ADMIN_SHELL = "<!doctype html><html><head><title>grocery-agent admin</title></head><body>admin shell</body></html>";
+const ADMIN_SHELL = "<!doctype html><html><head><title>yamp admin</title></head><body>admin shell</body></html>";
 const MEMBER_SHELL = "<!doctype html><html><body>member shell</body></html>";
 
 function fakeAssets(asked: string[] = []): Env["ASSETS"] {

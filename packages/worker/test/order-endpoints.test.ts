@@ -9,7 +9,7 @@ import { addGroceryRow, readGroceryList, removeGroceryRow } from "../src/session
 import { normalizeName } from "../src/grocery.js";
 import { sqliteEnv, type SqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
-import type { OrderListResponse, OrderReceiptResponse } from "@grocery-agent/contract";
+import type { OrderListResponse, OrderReceiptResponse } from "@yamp/contract";
 
 // The order-fill ENDPOINTS (satellite-order-cart-fill) end-to-end over the real-SQLite env: the
 // tenant-bound ingest-key auth, the fulfillment-mode gate, the issued-set-authoritative receipt

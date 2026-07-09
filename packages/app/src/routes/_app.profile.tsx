@@ -29,7 +29,7 @@ import {
   ToggleChip,
   TokenField,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api, apiError } from "../lib/api";
 import {
   useProfile,

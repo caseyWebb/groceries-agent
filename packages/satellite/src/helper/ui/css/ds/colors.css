@@ -4,7 +4,7 @@
    chromatic tokens are --destructive (red) and the blue chart ramp.
 
    Consumers reference these directly (var(--primary)) or via the --color-*
-   semantic aliases below. To re-theme (e.g. the grocery-agent's orange accent),
+   semantic aliases below. To re-theme (e.g. the yamp orange accent),
    override --primary / --accent etc. AFTER importing this file. */
 
 :root {

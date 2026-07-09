@@ -12,7 +12,7 @@
 // It is also browser-ONLY: a fill needs a live authenticated store session, so unlike the recipe/
 // sale SDKs there is no plain-HTTP tier here — the SDK always carries a live Playwright `page`.
 
-import { parseOrderObservation, type OrderLine, type OrderObservation, type LocalRejectCategory } from "@grocery-agent/contract";
+import { parseOrderObservation, type OrderLine, type OrderObservation, type LocalRejectCategory } from "@yamp/contract";
 import { pathToFileURL } from "node:url";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

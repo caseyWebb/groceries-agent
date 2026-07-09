@@ -37,13 +37,13 @@ const tenant: Tenant = { id: "casey" } as Tenant;
 describe("kroger_login_url tool", () => {
   it("returns a consent URL embedding a nonce bound to the caller's tenant", async () => {
     const kv = memKv();
-    const server = buildServer(fakeEnv(kv), tenant, "https://grocery-mcp.example.com");
+    const server = buildServer(fakeEnv(kv), tenant, "https://yamp.example.com");
     const out = await withServer(server, (c) => invokeTool(c, "kroger_login_url", {}));
 
     expect(out.isError).toBe(false);
     const url = (out.result as { url: string }).url;
     expect(url).toMatch(
-      /^https:\/\/grocery-mcp\.example\.com\/oauth\/init\?nonce=[A-Za-z0-9_-]+$/,
+      /^https:\/\/yamp\.example\.com\/oauth\/init\?nonce=[A-Za-z0-9_-]+$/,
     );
     const nonce = new URL(url).searchParams.get("nonce")!;
     expect(await redeemAuthNonce(kv, nonce)).toBe("casey");
@@ -51,7 +51,7 @@ describe("kroger_login_url tool", () => {
 
   it("ignores any tenant passed as an argument — the link binds to the grant tenant", async () => {
     const kv = memKv();
-    const server = buildServer(fakeEnv(kv), tenant, "https://grocery-mcp.example.com");
+    const server = buildServer(fakeEnv(kv), tenant, "https://yamp.example.com");
     // The empty input schema strips unknown keys; an attempt to name another tenant is ignored.
     const out = await withServer(server, (c) =>
       invokeTool(c, "kroger_login_url", { tenant: "victim" }),

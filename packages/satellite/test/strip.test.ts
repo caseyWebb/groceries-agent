@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NormalizedRecipe } from "@grocery-agent/contract";
+import type { NormalizedRecipe } from "@yamp/contract";
 import { toRecipeItem } from "../src/strip.js";
 
 const base: NormalizedRecipe = {

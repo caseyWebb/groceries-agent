@@ -24,7 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api, apiErrorOf, unwrap } from "../lib/api";
 import {
   normalizePageQuery,

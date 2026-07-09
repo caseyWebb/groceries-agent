@@ -1,16 +1,16 @@
 /* The admin SPA's Tailwind entry (admin-spa D10). The design source is the committed design
    bundle (docs/plans/web-app-design/project/ — the companion Claude Design project is the
    source of truth; update the bundle upstream, don't fork the look here):
-     1. the shared theme tokens (@grocery-agent/ui/theme.css — shadcn/ui tokens both apps use),
+     1. the shared theme tokens (@yamp/ui/theme.css — shadcn/ui tokens both apps use),
      2. the operator theme layer below (the bundle's --c-* palette aliases + orange accent,
         light on :root, dark remapped on html.dark — the member app's look is untouched),
      3. the panel-specific layout/vocabulary CSS, ported from the bundle's Admin Panel export
         (dark-aware) plus the shipped panel's later surfaces mapped onto the same aliases.
    Generic primitives (button/card/input/badge/alert/table/dialog/dropdown) are NOT styled
-   here — they are the vendored shadcn components from @grocery-agent/ui. */
+   here — they are the vendored shadcn components from @yamp/ui. */
 
 @import "tailwindcss";
-@import "@grocery-agent/ui/theme.css";
+@import "@yamp/ui/theme.css";
 
 /* Scan this app AND the shared UI package for utility classes (Tailwind v4 does not
    auto-detect workspace-linked sources — the member app does the same). */

@@ -18,7 +18,7 @@ import {
   IconPantry,
   IconSun,
   Button,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api } from "../lib/api";
 import { useGrocery, useOverlay, usePlan, useProfile } from "../lib/data";
 import { useOnline } from "../lib/online";
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/_app")({
 export function applyTheme(mode: "light" | "dark") {
   document.documentElement.classList.toggle("dark", mode === "dark");
   try {
-    localStorage.setItem("cookbook:theme", mode);
+    localStorage.setItem("yamp:theme", mode);
   } catch {
     // private-mode storage failures are fine — the toggle just won't persist
   }
@@ -63,7 +63,7 @@ export function applyTheme(mode: "light" | "dark") {
 
 export function initialTheme(): "light" | "dark" {
   try {
-    return localStorage.getItem("cookbook:theme") === "dark" ? "dark" : "light";
+    return localStorage.getItem("yamp:theme") === "dark" ? "dark" : "light";
   } catch {
     return "light";
   }
@@ -133,7 +133,7 @@ function AppShell() {
           <span className="brand-mark sm">
             <IconBook />
           </span>
-          <span className="brand-name">Cookbook</span>
+          <span className="brand-name">yamp</span>
         </div>
         <nav className="sb-nav">
           {NAV.map((n) => {

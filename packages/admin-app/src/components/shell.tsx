@@ -5,7 +5,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Button } from "@grocery-agent/ui";
+import { Button } from "@yamp/ui";
 import { statusQuery } from "../lib/queries";
 import { subscribeAccessExpired, accessExpiredSnapshot } from "../lib/api";
 import { ChevronDownIcon, ExternalLinkIcon, SunMoonIcon } from "./icons";
@@ -184,7 +184,7 @@ export function ThemeToggle(): React.ReactElement {
     setDark(next);
     document.documentElement.classList.toggle("dark", next);
     try {
-      localStorage.setItem("ga-theme", next ? "dark" : "light");
+      localStorage.setItem("yamp-theme", next ? "dark" : "light");
     } catch {
       // private-mode storage failures leave the toggle session-only
     }

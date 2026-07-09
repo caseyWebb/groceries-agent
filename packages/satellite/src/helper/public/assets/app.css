@@ -4,7 +4,7 @@
    chromatic tokens are --destructive (red) and the blue chart ramp.
 
    Consumers reference these directly (var(--primary)) or via the --color-*
-   semantic aliases below. To re-theme (e.g. the grocery-agent's orange accent),
+   semantic aliases below. To re-theme (e.g. the yamp orange accent),
    override --primary / --accent etc. AFTER importing this file. */
 
 :root {
@@ -951,7 +951,7 @@ hr.separator { border: 0; height: 1px; }
 .chart-legend [data-swatch] { width: 0.625rem; height: 0.625rem; border-radius: 3px; flex: 0 0 auto; }
 
   /* ── Operator theme: warm orange accent over Basecoat's neutral primary, ──
-     matched to the grocery-agent admin panel. Light + dark maps. */
+     matched to the yamp admin panel. Light + dark maps. */
   :root {
     --on-accent: #1a1a1a;
     --c-surface: #fff; --c-page: #fafafa;

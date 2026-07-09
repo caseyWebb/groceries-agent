@@ -1,7 +1,7 @@
 // Tool-call instrumentation (tool-usage-trends). One seam for the whole MCP surface: wrap the
 // server's `registerTool` ONCE in buildServer so every tool — the inline registrations AND those
 // added by the group-registration functions, plus any tool added later — emits one tenant-clean
-// data point per call (tool name, outcome, duration) to the `grocery_tool` AE dataset, with no
+// data point per call (tool name, outcome, duration) to the `yamp_tool` AE dataset, with no
 // per-tool or per-call-site wiring. The outcome is read from the tool's own MCP result
 // (`runTool`'s `fail()` sets `isError`); a raw throw that bypasses `runTool` records `error` via
 // the `finally`. Emission is best-effort and fires AFTER the result is computed, so it never
@@ -23,7 +23,7 @@ export interface ToolRegistrar {
 
 /**
  * Rebind `server.registerTool` so each registered handler is timed and its outcome emitted to the
- * `grocery_tool` dataset, returning the handler's result **unchanged**. Call once, before any tool
+ * `yamp_tool` dataset, returning the handler's result **unchanged**. Call once, before any tool
  * is registered, so every registration (inline and via the `register*Tools` helpers) is covered.
  */
 export function instrumentTools(server: ToolRegistrar, env: Pick<Env, "TOOL_AE">): void {

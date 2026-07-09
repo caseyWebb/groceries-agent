@@ -5,7 +5,7 @@ import { enqueueTask, getTask, claimTasks } from "../src/satellite-tasks-db.js";
 import { readSourceStats } from "../src/satellite-audit-db.js";
 import { readStoreFlyer, writeStoreRollup } from "../src/flyer-warm.js";
 import type { FlyerItem } from "../src/matching.js";
-import { SALE_SCAN_KIND, type ClaimResponse, type ResultResponse, type TaskEnvelope } from "@grocery-agent/contract";
+import { SALE_SCAN_KIND, type ClaimResponse, type ResultResponse, type TaskEnvelope } from "@yamp/contract";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
 import type { KvStore } from "../src/kroger-user.js";

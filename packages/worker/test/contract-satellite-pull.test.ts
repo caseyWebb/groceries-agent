@@ -10,7 +10,7 @@ import {
   MAX_CLAIM_TASKS,
   TASK_SCOPES,
   type TaskEnvelope,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 
 // The pull-channel WIRE contract (satellite-pull-channel). Mirrors contract-ingest.test.ts:
 // the task envelope is a capability-tagged shape with NO concrete kind today, so the forward-

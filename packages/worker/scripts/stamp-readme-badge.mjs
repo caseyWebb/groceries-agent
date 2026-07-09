@@ -1,4 +1,4 @@
-// stamp-readme-badge.mjs — maintain the grocery-mcp health badge in a data repo README
+// stamp-readme-badge.mjs — maintain the yamp health badge in a data repo README
 // (data-repo-health-badge). The deploy calls this to keep an idempotent marker block in
 // the operator's README pointing at the Worker's OPEN /health.svg card. Pure, unit-tested
 // helpers + a thin CLI, mirroring scripts/merge-wrangler-config.mjs.
@@ -23,7 +23,7 @@ export function badgeSnippet(workerHost) {
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "");
   const url = `https://${host}/health.svg`;
-  return `![grocery-mcp health](${url})`;
+  return `![yamp health](${url})`;
 }
 
 function escapeRe(s) {

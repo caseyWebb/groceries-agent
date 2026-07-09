@@ -6,7 +6,7 @@
 // could carry session/PII fragments — a leak risk). A whole-task failure ({ error }) is NOT a local
 // item reject; it rides the existing `failed`/`reason` path, out of this summary's scope.
 
-import { truncate, type LocalReject, type LocalRejectCategory } from "@grocery-agent/contract";
+import { truncate, type LocalReject, type LocalRejectCategory } from "@yamp/contract";
 
 /** One locally-dropped item, tagged with the category its drop maps to. */
 export interface LocalDrop {

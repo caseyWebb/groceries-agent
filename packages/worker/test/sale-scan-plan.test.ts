@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runSaleScanPlan, runSaleScanPlanJob, type SaleScanPlanDeps } from "../src/sale-scan-plan.js";
 import { readJobHealth } from "../src/health.js";
-import { SALE_SCAN_KIND } from "@grocery-agent/contract";
+import { SALE_SCAN_KIND } from "@yamp/contract";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { KvStore } from "../src/kroger-user.js";
 import type { NewTask } from "../src/satellite-tasks-db.js";

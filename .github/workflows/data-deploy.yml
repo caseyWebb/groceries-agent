@@ -1,4 +1,4 @@
-# Reusable workflow: deploy the grocery-mcp Worker AND publish the operator's plugin
+# Reusable workflow: deploy the yamp Worker AND publish the operator's plugin
 # marketplace. A DATA repo (PUBLIC — it carries nothing secret) calls this from a thin
 # workflow_dispatch caller — see that repo's .github/workflows/deploy.yml. The data repo
 # is the operator's single control plane AND their plugin marketplace: it holds the one
@@ -25,7 +25,7 @@ on:
   workflow_call:
     inputs:
       code_ref:
-        description: Ref of caseyWebb/groceries-agent to deploy the Worker source from.
+        description: Ref of caseyWebb/yet-another-meal-planner to deploy the Worker source from.
         type: string
         default: main
       config_path:
@@ -33,7 +33,7 @@ on:
         type: string
         default: wrangler.jsonc
       worker_host:
-        description: "Connector host (e.g. grocery-mcp.<you>.workers.dev). Used to bake https://<host>/mcp into the published plugin bundle AND to stamp the README health badge. Blank skips BOTH the plugin publish and the badge. Callers pass their WORKER_HOST repo variable here."
+        description: "Connector host (e.g. yamp.<you>.workers.dev). Used to bake https://<host>/mcp into the published plugin bundle AND to stamp the README health badge. Blank skips BOTH the plugin publish and the badge. Callers pass their WORKER_HOST repo variable here."
         type: string
         required: false
         default: ""
@@ -75,7 +75,7 @@ jobs:
       # ever committed back to the data repo (except the pinned ids, below).
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: caseyWebb/groceries-agent
+          repository: caseyWebb/yet-another-meal-planner
           ref: ${{ inputs.code_ref }}
           path: _code
 
@@ -122,7 +122,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: _code/packages/worker
-          command: r2 bucket create grocery-corpus
+          command: r2 bucket create yamp-corpus
 
       # The version-skew stamp (member-app-shell): ONE code SHA, computed once, stamped
       # into BOTH sides of the contract — the SPA bundle (VITE_APP_BUILD, embedded at
@@ -294,9 +294,9 @@ jobs:
           # (a data-repo commit count alone can't be relied on to clear 0.1.126). <count>
           # keeps each republish strictly newer.
           VERSION="0.2.$(git rev-list --count HEAD)"
-          node _code/packages/worker/scripts/build-plugin.mjs --out plugin/grocery-agent --mcp-url "$MCP_URL" --version "$VERSION"
-          git add plugin/grocery-agent
-          # marketplace.json (committed in the data repo, → ./plugin/grocery-agent) ships
+          node _code/packages/worker/scripts/build-plugin.mjs --out plugin/yamp --mcp-url "$MCP_URL" --version "$VERSION"
+          git add plugin/yamp
+          # marketplace.json (committed in the data repo, → ./plugin/yamp) ships
           # too if present; the build does not generate it.
           [ -f .claude-plugin/marketplace.json ] && git add .claude-plugin/marketplace.json
           if git diff --cached --quiet; then
@@ -311,7 +311,7 @@ jobs:
               echo "::warning::Could not publish the plugin bundle — either the deploy caller lacks 'permissions: contents: write', or an out-of-band push moved the branch. The Worker deploy itself succeeded; grant the permission (or re-run the deploy) to publish."
             fi
             # Only when we actually published: a bundle with no manifest won't resolve as a marketplace.
-            [ -f .claude-plugin/marketplace.json ] || echo "::warning::Published the plugin bundle but there is no .claude-plugin/marketplace.json — add one pointing at ./plugin/grocery-agent (see the data-repo template) so the marketplace resolves."
+            [ -f .claude-plugin/marketplace.json ] || echo "::warning::Published the plugin bundle but there is no .claude-plugin/marketplace.json — add one pointing at ./plugin/yamp (see the data-repo template) so the marketplace resolves."
           fi
 
       # (The one-time KV/GitHub→D1 backfill migrations have been applied and retired —

@@ -5,7 +5,7 @@ import { mintIngestKey } from "../src/ingest-db.js";
 import { enqueueTask, claimTasks } from "../src/satellite-tasks-db.js";
 import { insertOrderList } from "../src/order-lists-db.js";
 import { readRejections, readSourceStats, readSourceQuality } from "../src/satellite-audit-db.js";
-import { CONTRACT_VERSION, SALE_SCAN_KIND, type LocalReject } from "@grocery-agent/contract";
+import { CONTRACT_VERSION, SALE_SCAN_KIND, type LocalReject } from "@yamp/contract";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
 

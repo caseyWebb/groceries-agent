@@ -3,7 +3,7 @@ name: code-review
 description: Adversarially review the ENTIRE current PR (not just the latest commit) before opening or updating it. Thin orchestrator — computes the full PR diff against the merge-base with the default branch and delegates to the code-reviewer subagent. Use before checking the "Code review" box in the PR template, or whenever the user asks to review the branch / PR.
 license: MIT
 metadata:
-  author: groceries-agent
+  author: yamp
   version: "1.0"
 ---
 

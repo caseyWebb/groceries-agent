@@ -15,7 +15,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api, apiErrorOf, unwrap } from "../lib/api";
 import { satellitesQuery, queryClient, type SatellitesData } from "../lib/queries";
 import { assertNever } from "../lib/assert";
