@@ -519,13 +519,16 @@ export function d1Statements(now) {
   // the taste/preferences tabs render. All additive — the admin suite reads none of it.
   const app = SEED.app;
   stmts.push(`DELETE FROM grocery_list WHERE tenant = ${q(members.active)};`);
+  // `normalized_name` is the canonical id the funnel resolves the name to — for an ALIASED name
+  // (scallions → green-onion) that is the alias target, NOT `name.toLowerCase()`, exactly as
+  // production's write funnel stores it. Pass `key` to pin it; default to the lowercased name.
   const g = (name, kind, status, source, extra = {}) =>
-    `(${q(members.active)}, ${q(name)}, ${q(name.toLowerCase())}, ${q(extra.quantity ?? "1")}, ${q(kind)}, 'grocery', ${q(status)}, ${q(source)}, ${q(JSON.stringify(extra.for_recipes ?? []))}, ${extra.note ? q(extra.note) : "NULL"}, ${q(day(now - 2 * DAY))}, NULL)`;
+    `(${q(members.active)}, ${q(name)}, ${q(extra.key ?? name.toLowerCase())}, ${q(extra.quantity ?? "1")}, ${q(kind)}, 'grocery', ${q(status)}, ${q(source)}, ${q(JSON.stringify(extra.for_recipes ?? []))}, ${extra.note ? q(extra.note) : "NULL"}, ${q(day(now - 2 * DAY))}, NULL)`;
   stmts.push(
     "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, source, for_recipes, note, added_at, ordered_at) VALUES " +
       [
         g(app.grocery.active[0], "grocery", "active", "menu", { quantity: "2 lb", for_recipes: [recipe.slug] }),
-        g(app.grocery.active[1], "grocery", "active", "ad_hoc", { note: "the thin ones" }),
+        g(app.grocery.active[1], "grocery", "active", "ad_hoc", { note: "the thin ones", key: SEED.normalize.canonicalId }),
         g(app.grocery.active[2], "grocery", "active", "pantry_low"),
         g(app.grocery.household, "household", "active", "ad_hoc"),
         g(app.grocery.inCart, "grocery", "in_cart", "stockup"),

@@ -310,14 +310,14 @@ test("accepting a sibling swap materializes a row rendering the curated display 
   expect(stored?.display_name).toBeNull();
 
   // Drop the interception and reload: the REAL enriched derivation renders the materialized row's
-  // label via `display_name ?? name` — here the row's own `name` (the posted display). The raw id
-  // rides only the data-name attribute (keying); it is NEVER shown to the member as text.
+  // label via `display_name ?? name` — here the row's own display `name` ("Green cabbage"). Both the
+  // rendered text and the row's `data-name` are that display; the raw canonical id is NEVER rendered.
   await page.unroute("**/api/grocery/to-buy**");
   await groceryPage.goto();
-  const rendered = groceryPage.anyItem(sibId); // located by its canonical id (data-name)
+  const rendered = groceryPage.anyItem(sibLabel); // located by its display (data-name = the label)
   await expect(rendered).toBeVisible();
   await expect(rendered.locator(".g-name").first()).toHaveText(sibLabel);
-  await expect(rendered.locator(".g-name").first()).not.toContainText("::");
+  await expect(groceryPage.anyItem(sibId)).toHaveCount(0); // the raw canonical id is never a rendered row
   await groceryPage.captureForReview("grocery-swap-reified-label");
 
   // Cleanup: drop the row this accept materialized (the seeded family rows stay untouched).

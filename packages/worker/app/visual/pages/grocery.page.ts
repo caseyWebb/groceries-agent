@@ -90,18 +90,22 @@ export class GroceryPage extends AppPage {
     });
   }
 
-  /** A row's stored status via the API list read (undefined when absent). */
+  /** A row's stored status via the API list read (undefined when absent). Matches the query
+   *  against EITHER the stored `name` or the canonical `normalized_name`, so an add-by-id row
+   *  (whose `name` is the display label and `normalized_name` is the id) is found by its id. */
   async rowStatus(name: string): Promise<string | undefined> {
     return this.page.evaluate(async (n: string) => {
       const res = await fetch("/api/grocery");
-      const { items } = (await res.json()) as { items: { name: string; status: string }[] };
-      return items.find((i) => i.name.toLowerCase() === n.toLowerCase())?.status;
+      const { items } = (await res.json()) as { items: { name: string; normalized_name?: string; status: string }[] };
+      const k = n.toLowerCase();
+      return items.find((i) => i.name.toLowerCase() === k || i.normalized_name?.toLowerCase() === k)?.status;
     }, name);
   }
 
   /** A row's full stored shape via the API list read (undefined when absent) — the reified
    *  split the display-name change asserts on: `name` (surface form / stored label),
-   *  `normalized_name` (canonical dedup key), `display_name` (curated label, may be null). */
+   *  `normalized_name` (canonical dedup key), `display_name` (curated label, may be null).
+   *  Matches EITHER `name` or `normalized_name` so an add-by-id row is found by its canonical id. */
   async row(
     name: string,
   ): Promise<{ name: string; normalized_name?: string; display_name: string | null; status: string } | undefined> {
@@ -110,7 +114,8 @@ export class GroceryPage extends AppPage {
       const { items } = (await res.json()) as {
         items: { name: string; normalized_name?: string; display_name: string | null; status: string }[];
       };
-      return items.find((i) => i.name.toLowerCase() === n.toLowerCase());
+      const k = n.toLowerCase();
+      return items.find((i) => i.name.toLowerCase() === k || i.normalized_name?.toLowerCase() === k);
     }, name);
   }
 
