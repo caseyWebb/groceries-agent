@@ -16,7 +16,7 @@
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { ToolError } from "./errors.js";
-import { normalizeName, storedGroceryKey } from "./grocery.js";
+import { isFoodItem, normalizeName, storedGroceryKey } from "./grocery.js";
 import { ingredientContext, emptyIngredientContext } from "./corpus-db.js";
 import { validateCanonicalId } from "./ingredient-normalize.js";
 import {
@@ -362,18 +362,20 @@ export async function readGroceryList(env: Env, tenant: string, status?: string)
  * `display_name` (`ctx.idLabel`, never a raw `::` id), converging as the node's `display_name`
  * backfills — no per-row edit. A NEW add-by-id row already stores a clean display `name`, and a typed
  * row's `name` is the member's phrasing, so both are no-ops here; a row with an explicit
- * `display_name` override is left untouched. The resolver read is capture-off (a read never enqueues)
- * and degrades to the empty context on a blip, so it never fails the list read.
+ * `display_name` override is left untouched. Only **food** rows are reified — a non-food row never
+ * touches the identity graph, so its `name === normalized_name` (both `normalizeName`) is left as the
+ * member's phrasing even when it collides with a food id. The resolver read is capture-off (a read
+ * never enqueues) and degrades to the empty context on a blip, so it never fails the list read.
  */
 export async function readGroceryListReified(env: Env, tenant: string, status?: string): Promise<GroceryItem[]> {
   const items = await readGroceryList(env, tenant, status);
-  // Fast path: nothing to reify unless a row is stored under its own id as `name` (a legacy row).
-  if (!items.some((it) => it.display_name == null && it.name === it.normalized_name)) return items;
+  // A legacy row to reify: a FOOD row stored under its own canonical id as `name`, no display.
+  const isLegacyIdNamed = (it: GroceryItem): boolean =>
+    it.display_name == null && it.name === it.normalized_name && isFoodItem(it.kind, it.domain);
+  if (!items.some(isLegacyIdNamed)) return items;
   const ctx = await ingredientContext(env, { capture: false }).catch(() => emptyIngredientContext(env));
   return items.map((it) =>
-    it.display_name == null && it.name === it.normalized_name
-      ? { ...it, display_name: ctx.idLabel(it.normalized_name as string) }
-      : it,
+    isLegacyIdNamed(it) ? { ...it, display_name: ctx.idLabel(it.normalized_name as string) } : it,
   );
 }
 

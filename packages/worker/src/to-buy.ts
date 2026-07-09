@@ -13,7 +13,7 @@
 
 import type { Env } from "./env.js";
 import { computeToBuy, type MenuNeed } from "./order.js";
-import { normalizeName, storedGroceryKey, type GroceryItem } from "./grocery.js";
+import { isFoodItem, normalizeName, storedGroceryKey, type GroceryItem } from "./grocery.js";
 import { readGroceryList, readMealPlan, readPantryByKey, readPantryNames } from "./session-db.js";
 import { recipeIngredientsFull } from "./recipe-index.js";
 import {
@@ -312,11 +312,14 @@ async function enrichView(
       }
     }
     // The reified display (seam D), ONE unified rule across every line type: an explicit row-level
-    // `display_name` override wins; else an id-named line (`name === key` — an add-by-id row, a
-    // legacy id-named row, or a plan-derived virtual line) resolves the curated node label (or its
-    // synthesis) via `idLabel`, NEVER a raw `::` id; else a typed row keeps the member's phrasing.
+    // `display_name` override wins; else a FOOD id-named line (`name === key` — a legacy id-named row
+    // or a plan-derived virtual line) resolves the curated node label (or its synthesis) via
+    // `idLabel`, NEVER a raw `::` id; else the stored `name` (a typed/add-by-id display). The food
+    // guard keeps a non-food row (whose `name === normalizeName(name)` can collide with a food id)
+    // off the identity graph — a line with no backing row is a plan-derived need (food).
     const stored = storedByKey.get(line.key);
-    const display_name = stored?.display_name ?? (line.name === line.key ? ctx.idLabel(line.key) : line.name);
+    const foodIdNamed = line.name === line.key && (stored ? isFoodItem(stored.kind, stored.domain) : true);
+    const display_name = stored?.display_name ?? (foodIdNamed ? ctx.idLabel(line.key) : line.name);
     return {
       ...line,
       display_name,
@@ -332,14 +335,16 @@ async function enrichView(
   const pantry_covered = view.pantry_covered.map((line) => {
     const key = ctx.resolve(line.name);
     const stored = storedByKey.get(key);
-    const display_name = stored?.display_name ?? (line.name === key ? ctx.idLabel(key) : line.name);
+    const foodIdNamed = line.name === key && (stored ? isFoodItem(stored.kind, stored.domain) : true);
+    const display_name = stored?.display_name ?? (foodIdNamed ? ctx.idLabel(key) : line.name);
     return { ...line, display_name };
   });
   const inCartByName = new Map(list.filter((it) => it.status === "in_cart").map((it) => [it.name, it] as const));
   const in_cart = view.in_cart.map((line) => {
     const stored = inCartByName.get(line.name);
     const key = stored?.normalized_name ?? ctx.resolve(line.name);
-    const display_name = stored?.display_name ?? (line.name === key ? ctx.idLabel(key) : line.name);
+    const foodIdNamed = line.name === key && (stored ? isFoodItem(stored.kind, stored.domain) : true);
+    const display_name = stored?.display_name ?? (foodIdNamed ? ctx.idLabel(key) : line.name);
     return { ...line, display_name };
   });
 

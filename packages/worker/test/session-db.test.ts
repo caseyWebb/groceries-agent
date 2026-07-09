@@ -582,4 +582,24 @@ describe("readGroceryListReified — legacy id-named rows (reify-ingredient-disp
     expect(items[0].name).toBe("Red cabbage");
     expect(items[0].display_name).toBeNull(); // not reified — name already carries the display
   });
+
+  it("does NOT reify a non-food row whose name collides with a food id (the identity graph is food-only)", async () => {
+    const { env } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "sage", base: "sage", detail: null, representative: null, display_name: "Fresh sage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+        grocery_list: [
+          // A non-food "sage" (a scent/cleaner) — its normalizeName key == its name, colliding with the
+          // food id "sage", but a non-food row must never render a food label.
+          { tenant: "everett", name: "sage", normalized_name: "sage", display_name: null, quantity: "1", kind: "other", domain: "grocery", status: "active", source: "ad_hoc", for_recipes: "[]", note: null, added_at: TODAY, ordered_at: null },
+        ],
+      },
+    });
+    const items = await readGroceryListReified(env, "everett");
+    expect(items[0].display_name).toBeNull(); // not reified (non-food)
+    expect(items[0].name).toBe("sage"); // renders the member's phrasing, not "Fresh sage"
+  });
 });
