@@ -12,6 +12,7 @@ import {
   updateGroceryRow,
   removeGroceryRow,
   advanceInCartRows,
+  advanceOrderedRows,
   rollbackInCartRows,
 } from "../src/session-db.js";
 import { fakeD1 } from "./fake-d1.js";
@@ -363,6 +364,43 @@ describe("grocery list → D1 rows", () => {
     expect(tables.grocery_list.find((r) => r.normalized_name === "flour")).toBeUndefined();
   });
 
+  it("advances/rolls back an add-by-id row keyed on its STORED id, not resolve(name) (coupling #2)", async () => {
+    // An add-by-id row: name "Red cabbage", stored key "cabbage::color-red". resolve("Red cabbage")
+    // is "red cabbage" (≠ the key), so keying existing rows on a re-derivation of the display would
+    // MISS this row and mint a duplicate. The advance/rollback must key on the stored id.
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+        grocery_list: [
+          { tenant: "everett", name: "Red cabbage", normalized_name: "cabbage::color-red", display_name: "Red cabbage", quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "menu", for_recipes: "[]", note: null, added_at: "2026-06-01", ordered_at: null },
+        ],
+      },
+    });
+    // The pipeline hands the advance the canonical id as the line name.
+    const { inserted } = await advanceInCartRows(env, "everett", [{ name: "cabbage::color-red" }], TODAY);
+    expect(inserted).toEqual([]); // matched the stored key → advanced in place, no duplicate minted
+    expect(tables.grocery_list.filter((r) => r.tenant === "everett")).toHaveLength(1);
+    expect(tables.grocery_list[0].status).toBe("in_cart");
+    expect(tables.grocery_list[0].name).toBe("Red cabbage"); // display untouched
+
+    // Roll it back to active by the stored key.
+    await rollbackInCartRows(env, "everett", [{ name: "cabbage::color-red" }]);
+    expect(tables.grocery_list.filter((r) => r.tenant === "everett")).toHaveLength(1);
+    expect(tables.grocery_list.find((r) => r.normalized_name === "cabbage::color-red")!.status).toBe("active");
+
+    // active → in_cart → ordered, the ordered advance also keying on the stored id.
+    await advanceInCartRows(env, "everett", [{ name: "cabbage::color-red" }], TODAY);
+    await advanceOrderedRows(env, "everett", [{ name: "cabbage::color-red" }], TODAY);
+    const row = tables.grocery_list.find((r) => r.normalized_name === "cabbage::color-red")!;
+    expect(row.status).toBe("ordered");
+    expect(row.ordered_at).toBe(TODAY);
+    expect(tables.grocery_list.filter((r) => r.tenant === "everett")).toHaveLength(1);
+  });
+
   it("rollbackInCartRows deletes advance-inserted rows and flips only pre-existing ones", async () => {
     const { env, tables } = fakeD1({
       tables: {
@@ -383,5 +421,62 @@ describe("grocery list → D1 rows", () => {
     expect(tables.grocery_list.find((r) => r.normalized_name === "flour")).toBeUndefined(); // deleted, not stranded
     expect(tables.grocery_list.find((r) => r.normalized_name === "eggs")!.status).toBe("ordered"); // unrelated row untouched
     expect(tables.grocery_list).toHaveLength(2);
+  });
+});
+
+describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", () => {
+  it("a valid id keys the row on the id and takes display_name from the node; a second add-by-id dedups", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+      },
+    });
+    const first = await addGroceryRow(env, "everett", { id: "cabbage::color-red" }, TODAY);
+    expect(first.merged).toBe(false);
+    expect(tables.grocery_list).toHaveLength(1);
+    const row = tables.grocery_list[0];
+    expect(row.normalized_name).toBe("cabbage::color-red"); // the validated id, NOT resolve(name)
+    expect(row.display_name).toBe("Red cabbage"); // copied from the identity node
+    expect(row.name).toBe("Red cabbage"); // no posted name → the curated display, never the bare id
+
+    // A second add-by-id dedups on the id (not a re-derivation of the surface form).
+    const second = await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
+    expect(second.merged).toBe(true);
+    expect(tables.grocery_list).toHaveLength(1);
+  });
+
+  it("an invalid id WITH a name falls back to the name path and never persists an unresolvable key", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
+    });
+    const res = await addGroceryRow(env, "everett", { id: "Cabbage (Red)", name: "Red cabbage" }, TODAY);
+    expect(res.merged).toBe(false);
+    expect(tables.grocery_list).toHaveLength(1);
+    // The unresolvable id is dropped: the row keys on the name, never the invalid id.
+    expect(tables.grocery_list[0].normalized_name).toBe("red cabbage");
+    expect(tables.grocery_list[0].normalized_name).not.toBe("Cabbage (Red)");
+  });
+
+  it("an invalid id with NO name is a structured validation_failed and stores nothing", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
+    });
+    await expect(addGroceryRow(env, "everett", { id: "dates (pitted)" }, TODAY)).rejects.toMatchObject({
+      code: "validation_failed",
+    });
+    expect(tables.grocery_list).toHaveLength(0);
+  });
+
+  it("the id-absent path is unchanged: keyed on resolve(name), display_name null", async () => {
+    const { env, tables } = fakeD1({
+      tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
+    });
+    await addGroceryRow(env, "everett", { name: "Olive Oil" }, TODAY);
+    expect(tables.grocery_list[0].normalized_name).toBe("olive oil");
+    expect(tables.grocery_list[0].display_name).toBeNull();
   });
 });

@@ -13,6 +13,21 @@ export type GrocerySource = "ad_hoc" | "menu" | "pantry_low" | "stockup";
 
 export interface GroceryItem {
   name: string;
+  /**
+   * The STORED canonical dedup key (the D1 `normalized_name` / PK) — the canonical ingredient id
+   * for a food row, else `normalizeName(name)`. Carried on the in-memory shape so the set-algebra
+   * keys on the STORED id, never a re-derivation of the (now-independent) display. Optional only so
+   * the pure-op fixtures need not supply it — they fall back to `groceryKey`; every production row
+   * (and every row this module mints) carries it.
+   */
+  normalized_name?: string;
+  /**
+   * The human-facing label rendered to the member, stored independently of both `name` (the
+   * resolver input / surface form) and `normalized_name` (the key). Null → the rendered label falls
+   * back to `name`. Set from the identity node's curated `display_name` on an add-by-id row; a typed
+   * add leaves it null so the member's own phrasing renders (C3 preserve-phrasing).
+   */
+  display_name?: string | null;
   quantity: string;
   kind: GroceryKind;
   /**
@@ -30,9 +45,27 @@ export interface GroceryItem {
   ordered_at: string | null;
 }
 
-/** Input for adding an item; everything but `name` is optional with sensible defaults. */
+/** Input for adding an item; everything is optional with sensible defaults, but at least one of
+ *  `name` / `id` must be supplied. */
 export interface GroceryAddInput {
-  name: string;
+  /**
+   * The member's surface form. Optional: an add MAY be keyed by `id` alone (add-by-id), in which
+   * case the row writer derives the name (posted name → the identity's curated display → the id)
+   * before the row is created, so no surface ever renders a bare id.
+   */
+  name?: string;
+  /**
+   * An explicit ALREADY-CANONICAL ingredient id (add-by-id). When set, the row keys on this id
+   * DIRECTLY — the id is validated, NOT re-resolved through the funnel — and dedups against any
+   * existing row with that stored key. Food-only: a canonical id implies food.
+   */
+  id?: string;
+  /**
+   * The curated display to store on the row. Populated by the row writer from the identity node's
+   * `display_name` for an add-by-id (null when the node stores none → render falls back to `name`);
+   * left unset for a typed add so the member's phrasing renders.
+   */
+  display_name?: string | null;
   quantity?: string;
   kind?: GroceryKind;
   domain?: string;
@@ -85,18 +118,28 @@ export function groceryKey(
 }
 
 /**
- * Find an item matching `name`. A lookup-by-bare-name carries no kind/domain, so it
- * matches BOTH candidate keys: an item matches when its `groceryKey` (food → `resolve`,
- * non-food → `normalizeName`) equals `resolve(name)` OR `normalizeName(name)`. This finds
- * a food target across surface forms and a non-food target without knowing foodness upfront.
- * `resolve` defaults to `normalizeName`, so an un-threaded caller keeps today's behavior
- * (both candidate keys collapse to `normalizeName(name)`).
+ * The STORED dedup key of an in-memory item: its carried `normalized_name` (the trusted D1 PK —
+ * NEVER re-derived from the display, which closes coupling #2: a row whose display no longer equals
+ * `resolve(name)` must not silently fall out of the set-algebra) when present, else the derived
+ * `groceryKey` for a fixture / not-yet-persisted item. Every production row carries `normalized_name`.
+ */
+export function storedGroceryKey(item: GroceryItem, resolve: (n: string) => string = normalizeName): string {
+  return item.normalized_name ?? groceryKey(item.name, item.kind, item.domain, resolve);
+}
+
+/**
+ * Find an item matching a bare `name` query. The query carries no kind/domain, so it matches BOTH
+ * candidate keys: an item matches when its STORED key (`storedGroceryKey`) equals `resolve(name)` OR
+ * `normalizeName(name)`. This finds a food target across surface forms and a non-food target without
+ * knowing foodness upfront. The existing item is keyed on its STORED `normalized_name` (not a fresh
+ * re-derivation); only the QUERY side derives its key. `resolve` defaults to `normalizeName`, so an
+ * un-threaded caller keeps today's behavior (both candidate keys collapse to `normalizeName(name)`).
  */
 function findIndex(items: GroceryItem[], name: string, resolve: (n: string) => string = normalizeName): number {
   const resolved = resolve(name);
   const plain = normalizeName(name);
   return items.findIndex((it) => {
-    const key = groceryKey(it.name, it.kind, it.domain, resolve);
+    const key = storedGroceryKey(it, resolve);
     return key === resolved || key === plain;
   });
 }
@@ -142,8 +185,16 @@ export interface AddResult {
 }
 
 /**
- * Add an item, or merge into an existing same-name entry (union for_recipes;
- * take the new quantity/note/source when provided). Returns the next item list.
+ * Add an item, or merge into an existing entry (union for_recipes; take the new
+ * quantity/note/source when provided). Returns the next item list.
+ *
+ * Keying has two modes. Add-BY-ID (`input.id` set): the id is an already-canonical key — the row
+ * keys on it DIRECTLY (no `resolve`) and dedups against any existing row with that stored key, and
+ * the created row carries the caller-supplied `display_name`. Add-by-NAME (no `id`): today's
+ * behavior — the key is `groceryKey(name, …)` (food → `resolve`, non-food → `normalizeName`), the
+ * add's foodness gating the injected resolver so a NON-food add never touches the capturing resolver
+ * (decision #5). On a merge the surviving row keeps its existing display (`name`/`display_name`/
+ * `normalized_name` all ride `...existing`) — C3 keep-first, so a merge never fragments the label.
  */
 export function addToGroceryList(
   items: GroceryItem[],
@@ -152,16 +203,24 @@ export function addToGroceryList(
   resolve: (n: string) => string = normalizeName,
 ): AddResult {
   const next = items.map((it) => ({ ...it, for_recipes: [...it.for_recipes] }));
-  // The add's foodness is known from the input — a NON-food add must never touch the
-  // capturing resolver (decision #5: non-food stays on normalizeName and never enters the
-  // identity graph), so gate the injected resolver by the food guard before matching.
-  const keyResolve = isFoodItem(input.kind, input.domain) ? resolve : normalizeName;
-  const idx = findIndex(next, input.name, keyResolve);
+  const name = (input.name ?? "").trim();
+
+  let idx: number;
+  let storedKey: string;
+  if (input.id !== undefined) {
+    // Add-by-id: key on the already-canonical id directly; dedup against any row with that stored key.
+    storedKey = input.id;
+    idx = next.findIndex((it) => storedGroceryKey(it, resolve) === storedKey);
+  } else {
+    const keyResolve = isFoodItem(input.kind, input.domain) ? resolve : normalizeName;
+    idx = findIndex(next, name, keyResolve);
+    storedKey = groceryKey(name, input.kind, input.domain, keyResolve);
+  }
 
   if (idx >= 0) {
     const existing = next[idx];
     const merged: GroceryItem = {
-      ...existing,
+      ...existing, // keep-first: name / display_name / normalized_name survive unchanged
       quantity: input.quantity ?? existing.quantity,
       kind: input.kind ?? existing.kind,
       domain: input.domain ?? existing.domain,
@@ -174,7 +233,9 @@ export function addToGroceryList(
   }
 
   const created: GroceryItem = {
-    name: input.name.trim(),
+    name,
+    normalized_name: storedKey,
+    display_name: input.display_name ?? null,
     quantity: input.quantity ?? "1",
     kind: input.kind ?? "grocery",
     domain: input.domain ?? "grocery",

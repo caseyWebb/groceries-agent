@@ -197,7 +197,7 @@ export async function computeToBuyView(
 
   const view: ToBuyView = { to_buy: lines, pantry_covered, in_cart, underived: derived.underived };
   if (!opts.enrich) return view; // the default read: byte-identical, zero Kroger
-  return enrichView(env, tenant, view, ctx);
+  return enrichView(env, tenant, view, ctx, storedByKey, list);
 }
 
 /** Precedence for the graph-derived department fallback (D6): membership parents are
@@ -221,9 +221,22 @@ function placementRow(cache: CachedMapping[], key: string, locationId: string | 
  * zero product searches, no writes. Lines gain `placement` ({} fields optional;
  * null when nothing is known) AND `substitutes` (always an array — empty for a
  * no-edge line), the view gains the resolved `location` (null when none is resolvable)
- * and `flyer_as_of` (null when no rollup was used).
+ * and `flyer_as_of` (null when no rollup was used). Each line also gains the reified
+ * `display_name` (reify-ingredient-display-names Move C, seam D): the stored row's
+ * `display_name ?? name` for a `list`/`both` line (`storedByKey`), the identity node's
+ * curated `displayName(key) ?? name` for a `plan`-derived (no stored row) line — and the
+ * same rule reifies the `pantry_covered` and `in_cart` lines (an in_cart line is always a
+ * stored row, so its display comes from `list`). All display fields are enriched-only; the
+ * default read above returns before this and stays byte-identical.
  */
-async function enrichView(env: Env, tenant: string, view: ToBuyView, ctx: IngredientContext): Promise<ToBuyView> {
+async function enrichView(
+  env: Env,
+  tenant: string,
+  view: ToBuyView,
+  ctx: IngredientContext,
+  storedByKey: Map<string, GroceryItem>,
+  list: GroceryItem[],
+): Promise<ToBuyView> {
   // Resolve the caller's primary fulfillment store + (Kroger only) its numeric
   // locationId — the ONE Locations call this whole enrichment pays. Only a Kroger
   // primary has a deterministic aisle-placement source; anything else degrades to the
@@ -289,15 +302,46 @@ async function enrichView(env: Env, tenant: string, view: ToBuyView, ctx: Ingred
         .sort((a, b) => a.id.localeCompare(b.id));
       if (ofKind.length > 0) {
         placement.department = ofKind[0].id;
+        // The parent neighbor already carries a curated `labelOf` label — render it as the
+        // department heading, keeping the raw id for grouping/keying (additive Tier 2).
+        placement.department_label = ofKind[0].label;
         break;
       }
     }
+    // The reified display (seam D): the stored row's copy for a stored line, the identity
+    // node's live curated label for a plan-derived (rowless) line; each falls back to name.
+    const stored = storedByKey.get(line.key);
+    const display_name = stored ? (stored.display_name ?? line.name) : (ctx.displayName(line.key) ?? line.name);
     return {
       ...line,
+      display_name,
       placement: Object.keys(placement).length > 0 ? placement : null,
       substitutes: substitutesByKey.get(line.key) ?? [],
     };
   });
 
-  return { ...view, to_buy, location: locationId !== null ? { id: locationId } : null, flyer_as_of };
+  // Reify pantry_covered + in_cart with the same rule (seam D). A covered line's key is its
+  // resolved name (food need); if an active stored row backs it, use its display, else the
+  // identity node's. An in_cart line is always a stored row — look it up in `list` by name
+  // (in_cart rows are not in `storedByKey`, which holds only active rows).
+  const pantry_covered = view.pantry_covered.map((line) => {
+    const key = ctx.resolve(line.name);
+    const stored = storedByKey.get(key);
+    const display_name = stored ? (stored.display_name ?? line.name) : (ctx.displayName(key) ?? line.name);
+    return { ...line, display_name };
+  });
+  const inCartByName = new Map(list.filter((it) => it.status === "in_cart").map((it) => [it.name, it] as const));
+  const in_cart = view.in_cart.map((line) => ({
+    ...line,
+    display_name: inCartByName.get(line.name)?.display_name ?? line.name,
+  }));
+
+  return {
+    ...view,
+    to_buy,
+    pantry_covered,
+    in_cart,
+    location: locationId !== null ? { id: locationId } : null,
+    flyer_as_of,
+  };
 }

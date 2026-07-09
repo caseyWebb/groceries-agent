@@ -141,6 +141,17 @@ export const SEED = {
         // intercepted, in the app suite's inline-hint spec.
         pantryHit: "cabbage::color-red",
         saleHit: { sku: "0009999012345", price: { regular: 2.5, promo: 2 } },
+        // reify-ingredient-display-names: a curated `display_name` per CONCRETE family
+        // node, distinct from the raw canonical id — so `labelOf` renders these clean
+        // labels ("Red cabbage", not "cabbage::color-red") on the inline hint, and an
+        // accepted swap materializes a grocery row carrying the clean label. The PARENT
+        // ("cabbage") deliberately gets none: its `via_label` then falls back to the base
+        // synthesis ("cabbage"), which the inline-hint relation assertion pins.
+        displayNames: {
+          "cabbage::type-napa": "Napa cabbage",
+          "cabbage::color-green": "Green cabbage",
+          "cabbage::color-red": "Red cabbage",
+        },
       },
     },
   },
@@ -594,13 +605,19 @@ export function d1Statements(now) {
   // concrete specializations satisfying the concrete base, kind `general`. Edges are
   // BORN-AUDITED (audited_at set) so the edge-audit backlog stays exactly 1.
   const fam = [diff.siblings.line, ...diff.siblings.family];
+  const dn = diff.siblings.displayNames;
   stmts.push(`DELETE FROM ingredient_edge WHERE to_id = ${q(diff.siblings.parent)};`);
   stmts.push(`DELETE FROM ingredient_identity WHERE id IN (${[diff.siblings.parent, ...fam].map(q).join(", ")});`);
+  // reify-ingredient-display-names: concrete family nodes carry a curated `display_name`
+  // (so `labelOf` yields "Red cabbage", not "cabbage::color-red"); the parent stays NULL.
   stmts.push(
-    "INSERT INTO ingredient_identity (id, base, detail, concrete, source, decided_at) VALUES " +
-      `(${q(diff.siblings.parent)}, ${q(diff.siblings.parent)}, NULL, 1, 'auto', ${now - 9 * DAY}), ` +
+    "INSERT INTO ingredient_identity (id, base, detail, display_name, concrete, source, decided_at) VALUES " +
+      `(${q(diff.siblings.parent)}, ${q(diff.siblings.parent)}, NULL, NULL, 1, 'auto', ${now - 9 * DAY}), ` +
       fam
-        .map((id) => `(${q(id)}, ${q(id.slice(0, id.indexOf("::")))}, ${q(id.slice(id.indexOf("::") + 2))}, 1, 'auto', ${now - 9 * DAY})`)
+        .map(
+          (id) =>
+            `(${q(id)}, ${q(id.slice(0, id.indexOf("::")))}, ${q(id.slice(id.indexOf("::") + 2))}, ${q(dn[id])}, 1, 'auto', ${now - 9 * DAY})`,
+        )
         .join(", ") +
       ";",
   );

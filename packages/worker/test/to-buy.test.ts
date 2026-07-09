@@ -334,6 +334,7 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
       aisle_description: "Baking",
       aisle_side: "L",
       department: "baking",
+      department_label: "baking",
     });
     // No sku row, no graph parent → an honest null placement (never a fake aisle).
     expect(byKey.get("saffron")!.placement).toBeNull();
@@ -358,7 +359,7 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
     seedSkuAisle(h, "flour", "03500520", { number: "12", description: "Baking" });
     const view = await computeToBuyView(h.env, T, { enrich: true });
     expect(view.location).toBeNull();
-    expect(view.to_buy[0].placement).toEqual({ department: "baking" });
+    expect(view.to_buy[0].placement).toEqual({ department: "baking", department_label: "baking" });
   });
 
   it("carries substitutes[] (siblings + in_pantry + on_sale_hint) and flyer_as_of alongside placement (inline-substitution-hints D1-D3/D8)", async () => {
@@ -415,5 +416,49 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
     expect(line.substitutes?.find((s) => s.id === "cabbage::color-red")!.in_pantry).toBe(true);
     expect(line.substitutes?.find((s) => s.id === "cabbage::color-green")!.on_sale_hint).toMatchObject({ sku: "F1" });
     expect(view.flyer_as_of).not.toBeNull();
+  });
+
+  it("display fields ride only on the enriched read — the default omits display_name/via_label/department_label on every line type (reify-ingredient-display-names)", async () => {
+    const h = sqliteEnv([T]);
+    seedProfile(h, { primary: "kroger", preferred_location: "03500520" });
+    seedDeptGraph(h); // flour → baking (membership): a department_label source
+    seedSiblingGraph(h); // cabbage family: substitutes carrying a via/via_label
+    seedAlias(h); // green-onion + the scallions alias: for pantry coverage
+
+    // to_buy lines
+    await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
+    await addGroceryRow(h.env, T, { name: "cabbage::type-napa" }, TODAY);
+    // an in_cart line
+    await addGroceryRow(h.env, T, { name: "olive oil" }, TODAY);
+    await updateGroceryRow(h.env, T, "olive oil", { status: "in_cart" }, TODAY);
+    // a pantry_covered line: a planned need the pantry covers
+    seedRecipe(h, "soup", ["green-onion"]);
+    seedPlan(h, "soup");
+    seedPantry(h, "Green onion", "green-onion", { quantity: "1 bunch" });
+
+    // DEFAULT read: no display fields anywhere.
+    const def = await computeToBuyView(h.env, T);
+    expect(def.to_buy.length).toBeGreaterThan(0);
+    for (const l of def.to_buy) {
+      expect("display_name" in l).toBe(false);
+      expect("placement" in l).toBe(false); // department_label lives inside placement
+      expect("substitutes" in l).toBe(false); // via_label lives inside substitutes
+    }
+    expect(def.pantry_covered.length).toBeGreaterThan(0);
+    for (const l of def.pantry_covered) expect("display_name" in l).toBe(false);
+    expect(def.in_cart.length).toBeGreaterThan(0);
+    for (const l of def.in_cart) expect("display_name" in l).toBe(false);
+
+    // ENRICHED read: display fields present on every line type.
+    const rich = await computeToBuyView(h.env, T, { enrich: true });
+    for (const l of rich.to_buy) expect(typeof l.display_name).toBe("string");
+    for (const l of rich.pantry_covered) expect(typeof l.display_name).toBe("string");
+    for (const l of rich.in_cart) expect(typeof l.display_name).toBe("string");
+    // department_label rides on the flour line's placement (membership department "baking").
+    expect(rich.to_buy.find((l) => l.key === "flour")!.placement?.department_label).toBe("baking");
+    // via_label rides on a cabbage sibling suggestion (co-child via the "cabbage" parent).
+    const napa = rich.to_buy.find((l) => l.key === "cabbage::type-napa")!;
+    const withVia = napa.substitutes?.find((s) => s.relation.via !== undefined);
+    expect(withVia?.relation.via_label).toBeDefined();
   });
 });

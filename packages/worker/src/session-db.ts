@@ -16,8 +16,9 @@
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { ToolError } from "./errors.js";
-import { normalizeName, groceryKey } from "./grocery.js";
+import { normalizeName, storedGroceryKey } from "./grocery.js";
 import { ingredientContext, emptyIngredientContext } from "./corpus-db.js";
+import { validateCanonicalId } from "./ingredient-normalize.js";
 import {
   applyPantryOperations,
   markVerified,
@@ -62,6 +63,7 @@ function parseJsonArray(value: string | null): string[] {
 interface PantryRow {
   name: string;
   normalized_name: string;
+  display_name: string | null;
   quantity: string | null;
   category: string | null;
   prepared_from: string | null;
@@ -70,9 +72,11 @@ interface PantryRow {
   notes: string | null;
 }
 
-/** Assemble a pantry item (the agent-facing shape) from a row. */
+/** Assemble a pantry item (the agent-facing shape) from a row. Carries the STORED `normalized_name`
+ *  (so the pure ops key on the stored id, never a re-derivation) and the curated `display_name`. */
 function pantryItemOf(r: PantryRow): PantryItem {
-  const item: PantryItem = { name: r.name };
+  const item: PantryItem = { name: r.name, normalized_name: r.normalized_name };
+  if (r.display_name != null) item.display_name = r.display_name;
   if (r.quantity != null) item.quantity = r.quantity;
   if (r.category != null) item.category = r.category;
   item.prepared_from = r.prepared_from; // null is meaningful (the default)
@@ -90,7 +94,7 @@ export interface PantryFilter {
 /** Read the caller's pantry rows, with optional category / prepared filters (WHERE). */
 export async function readPantry(env: Env, tenant: string, filter: PantryFilter = {}): Promise<PantryItem[]> {
   let sql =
-    "SELECT name, normalized_name, quantity, category, prepared_from, added_at, last_verified_at, notes " +
+    "SELECT name, normalized_name, display_name, quantity, category, prepared_from, added_at, last_verified_at, notes " +
     "FROM pantry WHERE tenant = ?1";
   const binds: unknown[] = [tenant];
   if (filter.category !== undefined) {
@@ -115,11 +119,11 @@ export function pantryUpsertStmt(
   const name = String(item.name);
   return db(env).prepare(
     "INSERT INTO pantry (tenant, name, normalized_name, quantity, category, prepared_from, " +
-      "added_at, last_verified_at, notes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) " +
+      "added_at, last_verified_at, notes, display_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) " +
       "ON CONFLICT(tenant, normalized_name) DO UPDATE SET " +
       "name = excluded.name, quantity = excluded.quantity, category = excluded.category, " +
       "prepared_from = excluded.prepared_from, last_verified_at = excluded.last_verified_at, " +
-      "notes = excluded.notes",
+      "notes = excluded.notes, display_name = excluded.display_name",
     tenant,
     name,
     resolve(name),
@@ -129,6 +133,7 @@ export function pantryUpsertStmt(
     item.added_at ?? null,
     item.last_verified_at ?? null,
     item.notes ?? null,
+    item.display_name ?? null,
   );
 }
 
@@ -304,6 +309,7 @@ export async function applyMealPlanRowOps(
 interface GroceryRow {
   name: string;
   normalized_name: string;
+  display_name: string | null;
   quantity: string | null;
   kind: string | null;
   domain: string | null;
@@ -318,6 +324,8 @@ interface GroceryRow {
 function groceryItemOf(r: GroceryRow): GroceryItem {
   return {
     name: r.name,
+    normalized_name: r.normalized_name,
+    display_name: r.display_name ?? null,
     quantity: r.quantity ?? "1",
     kind: (r.kind ?? "grocery") as GroceryItem["kind"],
     domain: r.domain ?? "grocery",
@@ -331,7 +339,7 @@ function groceryItemOf(r: GroceryRow): GroceryItem {
 }
 
 const GROCERY_SELECT =
-  "SELECT name, normalized_name, quantity, kind, domain, status, source, for_recipes, note, " +
+  "SELECT name, normalized_name, display_name, quantity, kind, domain, status, source, for_recipes, note, " +
   "added_at, ordered_at FROM grocery_list WHERE tenant = ?1";
 
 /** Read the caller's grocery-list rows, with an optional status filter (WHERE). */
@@ -357,15 +365,18 @@ export function groceryUpsertStmt(
 ): D1PreparedStatement {
   return db(env).prepare(
     "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, " +
-      "source, for_recipes, note, added_at, ordered_at) " +
-      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) " +
+      "source, for_recipes, note, added_at, ordered_at, display_name) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) " +
       "ON CONFLICT(tenant, normalized_name) DO UPDATE SET " +
       "name = excluded.name, quantity = excluded.quantity, kind = excluded.kind, " +
       "domain = excluded.domain, status = excluded.status, source = excluded.source, " +
-      "for_recipes = excluded.for_recipes, note = excluded.note, ordered_at = excluded.ordered_at",
+      "for_recipes = excluded.for_recipes, note = excluded.note, ordered_at = excluded.ordered_at, " +
+      "display_name = excluded.display_name",
     tenant,
     item.name,
-    groceryKey(item.name, item.kind, item.domain, resolve),
+    // Persist the STORED key the item carries (add-by-id rows key on the given id, which is NOT
+    // `resolve(name)`); fall back to the derived key for a fixture / not-yet-persisted item.
+    storedGroceryKey(item, resolve),
     item.quantity,
     item.kind,
     item.domain,
@@ -375,10 +386,21 @@ export function groceryUpsertStmt(
     item.note,
     item.added_at,
     item.ordered_at,
+    item.display_name ?? null,
   );
 }
 
-/** Add (or merge into) one grocery-list item; returns the resulting item + merged flag. */
+/**
+ * Add (or merge into) one grocery-list item; returns the resulting item + merged flag.
+ *
+ * Add-by-id: when `input.id` is supplied it is treated as an ALREADY-CANONICAL key. It is
+ * validated (`validateCanonicalId`) — NOT re-resolved through the funnel — and the row keys on it
+ * directly; the row's `display_name` is copied from the identity node (`ctx.displayName`, may be
+ * null) and its `name` is the posted name, else the curated display, else the id, so no surface
+ * ever renders a bare id. An invalid id falls back to the `name` path when a name is present, else
+ * it is a structured `validation_failed` — an unresolvable key is NEVER stored. Add-by-name is
+ * today's behavior unchanged (key = `groceryKey(name,…)`, `display_name` null).
+ */
 export async function addGroceryRow(
   env: Env,
   tenant: string,
@@ -386,8 +408,25 @@ export async function addGroceryRow(
   today: string,
 ): Promise<{ item: GroceryItem; merged: boolean }> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
+  let effective = input;
+  if (input.id !== undefined) {
+    const validId = validateCanonicalId(input.id);
+    if (validId) {
+      const display = ctx.displayName(validId) ?? null;
+      const name = input.name?.trim() || ctx.displayName(validId) || validId;
+      effective = { ...input, id: validId, name, display_name: display };
+    } else if (input.name?.trim()) {
+      // Invalid canonical id but a member name is present — fall back to the name path (drop the id).
+      effective = { ...input, id: undefined };
+    } else {
+      throw new ToolError("validation_failed", `not a canonical ingredient id: ${input.id}`, { id: input.id });
+    }
+  }
+  if (!effective.id && !effective.name?.trim()) {
+    throw new ToolError("validation_failed", "an add requires a name or a canonical id");
+  }
   const current = await readGroceryList(env, tenant);
-  const result: AddResult = addToGroceryList(current, input, today, ctx.resolve);
+  const result: AddResult = addToGroceryList(current, effective, today, ctx.resolve);
   await db(env).batch([groceryUpsertStmt(env, tenant, result.item, ctx.resolve)]);
   return { item: result.item, merged: result.merged };
 }
@@ -508,7 +547,9 @@ export async function advanceOrderedRows(
 ): Promise<void> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
+  // Key existing rows by their STORED `normalized_name` (never a re-derivation of the display),
+  // look up by the resolved line — closes coupling #2 for the ordered advance.
+  const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const stmts: D1PreparedStatement[] = [];
   for (const line of lines) {
     const existing = byKey.get(ctx.resolve(line.name));
@@ -533,10 +574,10 @@ export async function advanceInCartRows(
 ): Promise<{ inserted: string[] }> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  // Advanced lines are resolved grocery purchases (food) — key existing rows by their
-  // groceryKey (food → resolve, non-food → normalizeName) and each line by resolve so a
-  // food purchase matches its row across surface forms.
-  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
+  // Advanced lines are resolved grocery purchases (food) — key existing rows by their STORED
+  // `normalized_name` (never a re-derivation of the display) and each line by resolve so a food
+  // purchase matches its row across surface forms; a never-listed line mints a fresh row.
+  const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const stmts: D1PreparedStatement[] = [];
   const inserted: string[] = [];
   for (const line of lines) {
@@ -547,6 +588,8 @@ export async function advanceInCartRows(
       ? { ...existing, status: "in_cart" }
       : {
           name: line.name,
+          normalized_name: key,
+          display_name: null,
           quantity: "1",
           kind: "grocery",
           domain: "grocery",
@@ -580,7 +623,8 @@ export async function rollbackInCartRows(
 ): Promise<void> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  const byKey = new Map(current.map((it) => [groceryKey(it.name, it.kind, it.domain, ctx.resolve), it]));
+  // Key existing rows by their STORED `normalized_name`, mirroring the advance this compensates.
+  const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const insertedKeys = new Set(inserted);
   const stmts: D1PreparedStatement[] = [];
   for (const line of lines) {
