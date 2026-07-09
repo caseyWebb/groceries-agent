@@ -109,7 +109,9 @@ export const HELLO_WIDGET_HTML = `<!DOCTYPE html>
       });
   });
   log("view booting; sending ui/initialize\\u2026");
-  rpc("ui/initialize", { protocolVersion: "2026-01-26", clientInfo: { name: "hello-spike", version: "1.0.0" }, appCapabilities: {} })
+  // MCP Apps init params: the key is appInfo (App identification, {name,version}), NOT
+  // clientInfo — claude.ai validates this and, on failure, leaves the frame visibility:hidden.
+  rpc("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "hello-spike", version: "1.0.0" }, appCapabilities: {} })
     .then(function (res) {
       log("ui/initialize OK; host=" + JSON.stringify(res && res.hostInfo));
       send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
