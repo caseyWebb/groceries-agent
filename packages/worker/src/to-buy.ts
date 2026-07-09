@@ -222,12 +222,14 @@ function placementRow(cache: CachedMapping[], key: string, locationId: string | 
  * null when nothing is known) AND `substitutes` (always an array — empty for a
  * no-edge line), the view gains the resolved `location` (null when none is resolvable)
  * and `flyer_as_of` (null when no rollup was used). Each line also gains the reified
- * `display_name` (reify-ingredient-display-names Move C, seam D): the stored row's
- * `display_name ?? name` for a `list`/`both` line (`storedByKey`), the identity node's
- * curated `displayName(key) ?? name` for a `plan`-derived (no stored row) line — and the
- * same rule reifies the `pantry_covered` and `in_cart` lines (an in_cart line is always a
- * stored row, so its display comes from `list`). All display fields are enriched-only; the
- * default read above returns before this and stays byte-identical.
+ * `display_name` (reify-ingredient-display-names Move C) under ONE unified rule across every
+ * line type: an explicit row-level `display_name` override wins; else an id-named line
+ * (`name === key` — an add-by-id row, a legacy id-named row, or a `plan`-derived virtual line)
+ * resolves the curated node label (or its deterministic synthesis) via `ctx.idLabel`, NEVER a
+ * raw `::` id; else a typed row keeps the member's phrasing (`name`). The same rule reifies
+ * `pantry_covered` and `in_cart` (an in_cart line is always a stored row, keyed on its stored
+ * id). All display fields are enriched-only; the default read above returns before this and
+ * stays byte-identical.
  */
 async function enrichView(
   env: Env,
@@ -308,10 +310,12 @@ async function enrichView(
         break;
       }
     }
-    // The reified display (seam D): the stored row's copy for a stored line, the identity
-    // node's live curated label for a plan-derived (rowless) line; each falls back to name.
+    // The reified display (seam D), ONE unified rule across every line type: an explicit row-level
+    // `display_name` override wins; else an id-named line (`name === key` — an add-by-id row, a
+    // legacy id-named row, or a plan-derived virtual line) resolves the curated node label (or its
+    // synthesis) via `idLabel`, NEVER a raw `::` id; else a typed row keeps the member's phrasing.
     const stored = storedByKey.get(line.key);
-    const display_name = stored ? (stored.display_name ?? line.name) : (ctx.displayName(line.key) ?? line.name);
+    const display_name = stored?.display_name ?? (line.name === line.key ? ctx.idLabel(line.key) : line.name);
     return {
       ...line,
       display_name,
@@ -320,21 +324,23 @@ async function enrichView(
     };
   });
 
-  // Reify pantry_covered + in_cart with the same rule (seam D). A covered line's key is its
-  // resolved name (food need); if an active stored row backs it, use its display, else the
-  // identity node's. An in_cart line is always a stored row — look it up in `list` by name
-  // (in_cart rows are not in `storedByKey`, which holds only active rows).
+  // Reify pantry_covered + in_cart with the SAME unified rule. A covered line's key is its resolved
+  // name (food need); an active stored row that backs it supplies an override, else an id-named line
+  // resolves via `idLabel`. An in_cart line is always a stored row — look it up in `list` by name
+  // (in_cart rows are not in `storedByKey`, which holds only active rows) and key on its stored id.
   const pantry_covered = view.pantry_covered.map((line) => {
     const key = ctx.resolve(line.name);
     const stored = storedByKey.get(key);
-    const display_name = stored ? (stored.display_name ?? line.name) : (ctx.displayName(key) ?? line.name);
+    const display_name = stored?.display_name ?? (line.name === key ? ctx.idLabel(key) : line.name);
     return { ...line, display_name };
   });
   const inCartByName = new Map(list.filter((it) => it.status === "in_cart").map((it) => [it.name, it] as const));
-  const in_cart = view.in_cart.map((line) => ({
-    ...line,
-    display_name: inCartByName.get(line.name)?.display_name ?? line.name,
-  }));
+  const in_cart = view.in_cart.map((line) => {
+    const stored = inCartByName.get(line.name);
+    const key = stored?.normalized_name ?? ctx.resolve(line.name);
+    const display_name = stored?.display_name ?? (line.name === key ? ctx.idLabel(key) : line.name);
+    return { ...line, display_name };
+  });
 
   return {
     ...view,

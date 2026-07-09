@@ -79,6 +79,7 @@ function fakeContext(over: { toId?: Record<string, string>; ids?: string[] } = {
     base: (id) => id,
     searchTerm: (id) => id,
     displayName: () => undefined,
+    idLabel: (id) => id,
     satisfiesAmong: async () => [],
   };
 }

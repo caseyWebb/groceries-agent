@@ -142,9 +142,10 @@ export const groceryArea = new Hono<ApiEnv>()
   // Add — canonical-id upsert: a re-added name MERGES into its row (replay-safe). Also
   // the MATERIALIZE write for a derived (plan-origin) view line: same canonical key, so
   // the stored row and the derived need merge in every later read (D6). An optional `id`
-  // materializes an accepted sibling swap: it is an ALREADY-CANONICAL key (validated, not
-  // re-resolved in addGroceryRow), the row's display comes from the identity node, and its
-  // `name` is the posted `name` (e.g. the sibling's label) — so name OR id is required.
+  // materializes an accepted sibling swap: it is an ALREADY-CANONICAL key (validated as a live
+  // survivor, not re-resolved in addGroceryRow) that becomes BOTH the row's key and its stored
+  // `name`; the posted `name` is ignored and the human label resolves at read from the identity
+  // node — so name OR id is required.
   .post("/grocery/items", requireSession, async (c) => {
     const tenant = c.get("tenant");
     const body = await jsonBody<Record<string, unknown>>(c);

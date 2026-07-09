@@ -128,9 +128,10 @@ describe("addToGroceryList", () => {
 });
 
 describe("add-by-id + keep-first merge (reify-ingredient-display-names, coupling #2)", () => {
-  it("dedups an add-by-id row on its stored id even though the display ≠ resolve(name)", () => {
-    // An add-by-id row keys on the canonical id; resolve("Red cabbage") is "red cabbage" (≠ the id),
-    // so keying on a re-derivation of the display would MISS the row and duplicate it.
+  it("keys AND names an add-by-id row on the id (display_name null), dedups a second add on that stored id", () => {
+    // Add-by-id stores the id as BOTH name and key, display_name null — the human label is resolved
+    // at READ, never copied here. A second add-by-id dedups on the STORED id (coupling #2), not a
+    // re-derivation of the posted surface form; the posted name/display are ignored.
     const first = addToGroceryList(
       [],
       { id: "cabbage::color-red", name: "Red cabbage", display_name: "Red cabbage" },
@@ -139,7 +140,8 @@ describe("add-by-id + keep-first merge (reify-ingredient-display-names, coupling
     );
     expect(first.merged).toBe(false);
     expect(first.item.normalized_name).toBe("cabbage::color-red");
-    expect(first.item.display_name).toBe("Red cabbage");
+    expect(first.item.name).toBe("cabbage::color-red"); // the id, NOT the posted name
+    expect(first.item.display_name).toBeNull(); // resolved at read, never copied here
 
     const second = addToGroceryList(
       first.items,
@@ -150,8 +152,8 @@ describe("add-by-id + keep-first merge (reify-ingredient-display-names, coupling
     expect(second.merged).toBe(true); // matched the STORED id, not resolve("red cabbage")
     expect(second.items).toHaveLength(1);
     // Keep-first: the surviving row keeps its original name / display_name / key.
-    expect(second.item.name).toBe("Red cabbage");
-    expect(second.item.display_name).toBe("Red cabbage");
+    expect(second.item.name).toBe("cabbage::color-red");
+    expect(second.item.display_name).toBeNull();
     expect(second.item.normalized_name).toBe("cabbage::color-red");
     expect(second.item.for_recipes).toEqual(["slaw"]);
   });

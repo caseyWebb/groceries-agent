@@ -393,13 +393,15 @@ export function groceryUpsertStmt(
 /**
  * Add (or merge into) one grocery-list item; returns the resulting item + merged flag.
  *
- * Add-by-id: when `input.id` is supplied it is treated as an ALREADY-CANONICAL key. It is
- * validated (`validateCanonicalId`) — NOT re-resolved through the funnel — and the row keys on it
- * directly; the row's `display_name` is copied from the identity node (`ctx.displayName`, may be
- * null) and its `name` is the posted name, else the curated display, else the id, so no surface
- * ever renders a bare id. An invalid id falls back to the `name` path when a name is present, else
- * it is a structured `validation_failed` — an unresolvable key is NEVER stored. Add-by-name is
- * today's behavior unchanged (key = `groceryKey(name,…)`, `display_name` null).
+ * Add-by-id: when `input.id` is supplied it is treated as an ALREADY-CANONICAL key. It is accepted
+ * only when it is well-formed (`validateCanonicalId`) AND a LIVE survivor in the current resolver
+ * (`ctx.resolver.ids` — a well-formed but never-minted / merged-away-loser id must NOT be stored as
+ * a key). When accepted, the row keys on the id directly (NOT re-resolved through the funnel) and
+ * stores the id as its `name`, with `display_name` null — the human label resolves at READ from the
+ * identity node (so it converges as the node's `display_name` backfills). A rejected id (malformed
+ * or non-survivor) falls back to the `name` path when a name is present, else it is a structured
+ * `validation_failed` — an unresolvable key is NEVER stored. Add-by-name is today's behavior
+ * unchanged (key = `groceryKey(name,…)`, `display_name` null).
  */
 export async function addGroceryRow(
   env: Env,
@@ -411,15 +413,14 @@ export async function addGroceryRow(
   let effective = input;
   if (input.id !== undefined) {
     const validId = validateCanonicalId(input.id);
-    if (validId) {
-      const display = ctx.displayName(validId) ?? null;
-      const name = input.name?.trim() || ctx.displayName(validId) || validId;
-      effective = { ...input, id: validId, name, display_name: display };
+    if (validId && ctx.resolver.ids.has(validId)) {
+      // A live survivor: key AND name on the id; the label resolves at read (display_name null).
+      effective = { ...input, id: validId, name: validId, display_name: null };
     } else if (input.name?.trim()) {
-      // Invalid canonical id but a member name is present — fall back to the name path (drop the id).
+      // Malformed / non-survivor id but a member name is present — fall back to the name path (drop the id).
       effective = { ...input, id: undefined };
     } else {
-      throw new ToolError("validation_failed", `not a canonical ingredient id: ${input.id}`, { id: input.id });
+      throw new ToolError("validation_failed", `not a live canonical ingredient id: ${input.id}`, { id: input.id });
     }
   }
   if (!effective.id && !effective.name?.trim()) {

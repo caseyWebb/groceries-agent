@@ -602,6 +602,22 @@ describe("ingredient display_name (reify-ingredient-display-names)", () => {
     expect(ctx.displayName("cabbage::color-green")).toBeUndefined(); // no base/detail synthesis here
   });
 
+  it("idLabel returns the curated display_name, else the base (detail)/base synthesis — never a raw id", async () => {
+    const h = sqliteEnv();
+    seedNode(h, { id: "cabbage::color-red", base: "cabbage", detail: "color-red", display_name: "Red cabbage" });
+    seedNode(h, { id: "cabbage::color-green", base: "cabbage", detail: "color-green", display_name: null });
+    seedNode(h, { id: "flour", base: "flour" });
+
+    const ctx = await ingredientContext(h.env);
+    expect(ctx.idLabel("cabbage::color-red")).toBe("Red cabbage"); // the curated value wins
+    expect(ctx.idLabel("cabbage::color-green")).toBe("cabbage (color-green)"); // null → base (detail)
+    expect(ctx.idLabel("cabbage::color-green")).not.toContain("::");
+    expect(ctx.idLabel("flour")).toBe("flour"); // a bare base → the base itself
+    // An unseeded id still synthesizes a clean label — never the raw `::` id.
+    expect(ctx.idLabel("kale::type-lacinato")).toBe("kale (type-lacinato)");
+    expect(ctx.idLabel("kale::type-lacinato")).not.toContain("::");
+  });
+
   it("labelOf prefers the stored display_name and falls back to base (detail)/base when null", async () => {
     const h = sqliteEnv();
     seedNode(h, { id: "cabbage", base: "cabbage" });

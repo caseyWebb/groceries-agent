@@ -425,7 +425,7 @@ describe("grocery list → D1 rows", () => {
 });
 
 describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", () => {
-  it("a valid id keys the row on the id and takes display_name from the node; a second add-by-id dedups", async () => {
+  it("a valid id keys AND names the row on the id, display_name null (resolved at read); a second add-by-id dedups", async () => {
     const { env, tables } = fakeD1({
       tables: {
         ingredient_identity: [
@@ -440,16 +440,42 @@ describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", 
     expect(tables.grocery_list).toHaveLength(1);
     const row = tables.grocery_list[0];
     expect(row.normalized_name).toBe("cabbage::color-red"); // the validated id, NOT resolve(name)
-    expect(row.display_name).toBe("Red cabbage"); // copied from the identity node
-    expect(row.name).toBe("Red cabbage"); // no posted name → the curated display, never the bare id
+    expect(row.name).toBe("cabbage::color-red"); // the stored name IS the id — so normalized_name === resolve(name)
+    expect(row.display_name).toBeNull(); // NOT copied — the human label resolves at read from the node
 
-    // A second add-by-id dedups on the id (not a re-derivation of the surface form).
+    // A second add-by-id dedups on the id (not a re-derivation of the surface form); the posted
+    // name is ignored (the id remains the stored name).
     const second = await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
     expect(second.merged).toBe(true);
     expect(tables.grocery_list).toHaveLength(1);
+    expect(tables.grocery_list[0].name).toBe("cabbage::color-red");
   });
 
-  it("an invalid id WITH a name falls back to the name path and never persists an unresolvable key", async () => {
+  it("a well-formed but NON-SURVIVOR id (no live node) is rejected: falls back to name, else validation_failed", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+      },
+    });
+    // Well-formed id but no live node backs it (a never-minted or merged-away-loser id) → with a
+    // name, drop the id and key on the name; the non-survivor id is never a stored key.
+    const res = await addGroceryRow(env, "everett", { id: "kale::color-purple", name: "Purple kale" }, TODAY);
+    expect(res.merged).toBe(false);
+    expect(tables.grocery_list[0].normalized_name).toBe("purple kale");
+    expect(tables.grocery_list[0].normalized_name).not.toBe("kale::color-purple");
+
+    // The same non-survivor id with NO name is a structured validation_failed — never store an unbacked key.
+    await expect(addGroceryRow(env, "everett", { id: "kale::color-purple" }, TODAY)).rejects.toMatchObject({
+      code: "validation_failed",
+    });
+    expect(tables.grocery_list).toHaveLength(1); // only the fallback row above
+  });
+
+  it("a malformed id WITH a name falls back to the name path and never persists an unresolvable key", async () => {
     const { env, tables } = fakeD1({
       tables: { ingredient_identity: [], ingredient_alias: [], novel_ingredient_terms: [] },
     });

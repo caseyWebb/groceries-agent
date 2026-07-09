@@ -58,10 +58,12 @@ The row gains a genuinely new `display_name` column; `name` keeps its current ro
 
 ### Fork 3 — Typed-add display = C3 (hybrid)
 
-Preserve the member's phrasing for typed adds (store it in the row's display); use the curated identity `display_name` only where **no** member phrasing exists — add-by-id and plan-derived lines. Render resolution:
+Preserve the member's phrasing for typed adds (stored as `name`); for **id-named** rows — add-by-id, plan-derived, and legacy — the human label is resolved at read from the reified node. A row is id-named when its stored `name` equals its canonical key. Render resolution:
 
 ```
-display = row.display_name (member phrasing, if any)  ??  identity.display_name(key)  ??  labelOf(key)
+display = row.display_name (explicit override, rare)
+       ?? (row.name === row.key ? ctx.idLabel(key) : row.name)   // id-named → node label; typed → member phrasing
+   where ctx.idLabel(key) = identity.display_name(key) ?? base(detail) synthesis   (never a raw id)
 ```
 
 *Why:* the two ugly cases are exactly the no-phrasing cases; typed adds already render fine member voice. *Alternatives rejected:* preserve-always (add-by-id/plan lines still need a fallback, and two spellings of one id diverge on the list); canonicalize-always (erases member voice — "scallions" → "Green onions" jars).
@@ -77,9 +79,9 @@ display = row.display_name (member phrasing, if any)  ??  identity.display_name(
 
 *Alternatives rejected:* reconcile-derived-only (no classifier change, weaker on irregular names like "80/20 ground beef", "half and half"); human/vault-only (leaves most of the graph on `labelOf` synthesis indefinitely; the identity graph has no vault surface — `src/vocab.js` is recipe-facet vocab only). **Not the recipe projection** — it reads the resolver read-only and never writes identity rows.
 
-### Open seam D (resolved) — write-time copy vs read-time lookup of the curated display
+### Open seam D (resolved) — read-time resolution over write-time copy
 
-For an add-by-id row, the curated `identity.display_name` is **copied onto the row's `display_name` at write** (join-free hot path for the default/stored reads; convergence handled by the reconcile if the label later improves), and the already-joining **enriched** `read_to_buy` may **look it up at read** so its labels are always current. This keeps the agent-facing default read cheap and the member-facing enriched read fresh. Staleness of a stored copy is acceptable because the repo's convergence rule already mandates reconcile-driven healing over hand-edits; a follow-up reconcile touch-up of stored row displays is possible but out of scope here.
+An add-by-id row stores `name` = the **canonical id** (the resolver input: `resolve(id) === id` for a live survivor — no alias rewrite, and `captureIfNovel` skips known ids, so nothing is captured), and its `display_name` column is left **null**. Storing the id as `name` means the whole set-algebra (`computeToBuy`), advance/rollback, the matcher (which searches and scores identity-relevance on the node's `search_term`, not the raw input), and `sku_cache` all key correctly with **no extra changes** — the only failure mode was storing the *display* as `name`, which breaks `resolve(name) === key`. The human label is resolved at **read time** via `ctx.idLabel(key) = identity.display_name(key) ?? base(detail) synthesis` for any line whose stored `name` equals its canonical key (add-by-id, plan-derived, and legacy id-named rows alike). This converges automatically as the reconcile backfills the node's `display_name` — no per-row touch-up, no staleness — and satisfies the acceptance fixture (the legacy `cabbage::color-red` row renders "Red cabbage" once its node is backfilled, with zero row edits). The grocery/pantry `display_name` column is retained as an **optional explicit per-row override** (highest read precedence; usually null). The default `read_to_buy` (agent-facing) leaves `to_buy[].name` byte-identical; the reified label rides the enriched read and `read_grocery_list`'s consumers.
 
 ### Open seam (resolved) — MCP `add_to_grocery_list` gets the explicit-`id` param too
 

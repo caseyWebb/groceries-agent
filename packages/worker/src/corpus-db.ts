@@ -148,6 +148,14 @@ export interface IngredientContext {
    */
   displayName(id: string): string | undefined;
   /**
+   * The RENDERED human label for an id: the curated `display_name` when the node stores one, else a
+   * deterministic synthesis (`base (detail)` / `base`) — NEVER a raw `::` id. This is `labelOf`
+   * exposed at the context level, the read-time face of `displayName` (which returns the raw stored
+   * value or `undefined`). Read surfaces rendering a bare id (an add-by-id / legacy id-named row, a
+   * plan-derived line) resolve the label through this; keys/joins never do.
+   */
+  idLabel(id: string): string;
+  /**
    * §3.4 read path — the satisfies-edges AMONG a given id set: only edges where BOTH
    * endpoints, resolved through the representative pointer, are in the set. Lazy: the
    * `ingredient_edge` table is loaded (and memoized) on the first call, never when the
@@ -263,6 +271,15 @@ function contextFromResolver(
     },
     displayName(id: string): string | undefined {
       return resolver.displayNames[id];
+    },
+    idLabel(id: string): string {
+      const stored = resolver.displayNames[id];
+      if (stored) return stored;
+      // No curated label → the deterministic synthesis (`labelOf`'s fallback): base (detail) / base,
+      // never the raw `::` id.
+      const base = baseOf(id);
+      const detail = id.includes("::") ? id.slice(base.length + 2) : null;
+      return detail ? `${base} (${detail})` : base;
     },
     async satisfiesAmong(ids: string[]): Promise<SatisfiesEdge[]> {
       const { resolve, edges } = await loadEdges();

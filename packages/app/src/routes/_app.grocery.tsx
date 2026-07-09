@@ -72,13 +72,14 @@ async function refreshGrocery(qc: QueryClient): Promise<void> {
 }
 
 /**
- * MATERIALIZE a derived (plan-origin) line as an explicit `source:"menu"` row (D6): the
- * standard add upsert under the same canonical key, carrying the derived `for_recipes` —
- * so the stored row and the derived need merge (`origin:"both"` on the next read).
- * Class (b): the registry's grocery-add variables.
+ * MATERIALIZE a derived (plan-origin) line as an explicit `source:"menu"` row (D6): route through
+ * add-by-id on the line's canonical `key` so the row keys on it EXACTLY (a qualified plan line's
+ * `name` is a raw canonical id — posting it as `name` would re-resolve; posting `id` pins the key and
+ * the server resolves the human label at read). Carries the derived `for_recipes` so the stored row
+ * and the derived need merge (`origin:"both"` on the next read). Class (b): grocery-add variables.
  */
-function materializeVars(line: ToBuyLine): { name: string; source: string; for_recipes: string[] } {
-  return { name: line.name, source: "menu", for_recipes: line.for_recipes };
+function materializeVars(line: ToBuyLine): { id: string; name: string; source: string; for_recipes: string[] } {
+  return { id: line.key, name: line.display_name ?? line.name, source: "menu", for_recipes: line.for_recipes };
 }
 
 /** A grouped rendering of the to-buy lines: label + optional department sub-groups. */
@@ -211,10 +212,10 @@ function GroceryPage() {
    *  original, applied at the eventual `place_order` — the plan itself is untouched. */
   async function swapSibling(line: ToBuyLine, sib: SiblingSuggestion, rowKey: string) {
     const origin = line.origin;
-    // The replacement lands as an explicit row carrying the mock's provenance note. Post
-    // the canonical `id` (exact-resolve key, validated not re-resolved) AND the clean
-    // display as `name` (`sib.label` is the curated label): the row keys on the id and
-    // renders the label, not the raw id — reify-ingredient-display-names.
+    // The replacement lands as an explicit row via add-by-id on the canonical `id` (validated as a
+    // live survivor, not re-resolved): the server keys AND names the row on the id and resolves the
+    // human label at read, so no surface renders a raw id. `name` is posted for the fallback path
+    // (an unknown/non-survivor id) but ignored for a live id — reify-ingredient-display-names.
     const added = await api.api.grocery.items
       .$post({ json: { id: sib.id, name: sib.label, note: `swapped from ${line.name}` } })
       .catch(() => null);
