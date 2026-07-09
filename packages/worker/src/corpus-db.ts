@@ -453,6 +453,66 @@ export async function readIdentityNeighbors(env: Env, ids: string[]): Promise<Ma
 }
 
 /**
+ * Capture-first taste-substitution edge write (D6/D7) — the DETERMINISTIC, agent-side capture
+ * trigger. Called when a member ACCEPTS a purchasable swap: an `add_to_grocery_list` annotated with
+ * `substitutes_for` (the recipe ingredient the added item stands in for). `wantedTerm` is the
+ * replaced ingredient X (`substitutes_for`); `addedTerm` is the added item Y. Both resolve through
+ * the SAME `IngredientContext` funnel the add used, then — by PURE SET LOGIC against the identity
+ * graph, no classifier — a candidate `substitution` edge X → Y is recorded ONLY when Y crosses a
+ * canonical-id boundary that is not already an identity relation: X and Y resolve to DISTINCT
+ * survivors AND Y is not a factual neighbor of X (`satisfiedBy` ∪ `satisfies` ∪ `coChildren`, all
+ * representative-resolved — the exact neighbor sets `readIdentityNeighbors` returns). A same-id or
+ * already-neighbor swap is a product/price swap, not a taste substitution, and mints nothing.
+ *
+ * The edge is operator-global like the rest of the identity graph, so observations from different
+ * members accrue to one edge: it is born a weight-1 CANDIDATE and its `weight` increments on each
+ * repeat (`ON CONFLICT … weight = weight + 1`), promoting at `SUBSTITUTION_PROMOTE_MIN` — at which
+ * point the depth-1 walk surfaces it. A single idiosyncratic swap stays an unsurfaced weight-1
+ * candidate until a second observation promotes it, mirroring the capture pass's candidate→confirm
+ * discipline. BEST-EFFORT: every failure (resolution, read, or write) is swallowed, so a capture
+ * miss can NEVER fail the grocery add it rides alongside.
+ */
+export async function captureSubstitution(
+  env: Env,
+  ctx: IngredientContext,
+  wantedTerm: string,
+  addedTerm: string,
+): Promise<void> {
+  try {
+    const x0 = ctx.resolve(wantedTerm);
+    const y0 = ctx.resolve(addedTerm);
+    if (!x0 || !y0 || x0 === y0) return; // empty or trivially identical — nothing to capture
+    // One read gives BOTH the survivor ids AND X's factual neighbor sets (representative-resolved).
+    const neighbors = await readIdentityNeighbors(env, [x0, y0]);
+    const nx = neighbors.get(x0);
+    const ny = neighbors.get(y0);
+    const sx = nx ? nx.id : x0;
+    const sy = ny ? ny.id : y0;
+    if (sx === sy) return; // same surviving identity — a product/price swap, not a taste sub
+    // Pure set logic: Y already an identity neighbor of X (synonym / containment / membership
+    // sibling) → the graph already relates them, so this is identity, not a taste substitution.
+    if (nx && [...nx.satisfiedBy, ...nx.satisfies, ...nx.coChildren].some((n) => n.id === sy)) return;
+    // Upsert the candidate substitution edge X → Y: born weight 1, +1 per repeat observation
+    // (candidate → promoted at SUBSTITUTION_PROMOTE_MIN). audited_at is left NULL — substitution
+    // edges are EXCLUDED (by kind) from the edge-audit reads, so they are never selected or deleted.
+    await db(env).run(
+      "INSERT INTO ingredient_edge (from_id, to_id, kind, source, decided_at, weight) " +
+        "VALUES (?1, ?2, ?3, ?4, ?5, 1) " +
+        "ON CONFLICT(from_id, to_id, kind) DO UPDATE SET weight = ingredient_edge.weight + 1",
+      sx,
+      sy,
+      SUBSTITUTION_KIND,
+      "auto",
+      Date.now(),
+    );
+  } catch (err) {
+    // Best-effort: a capture failure MUST NOT fail the grocery add it rides alongside.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[corpus-db] substitution capture failed for "${wantedTerm}" → "${addedTerm}":`, msg);
+  }
+}
+
+/**
  * Add alias mappings (variant → canonical id), upserting each by variant as a HUMAN edit
  * (source='human', which the auto capture pass never overwrites). Ensures the target id
  * exists as a base-level identity node. Returns the count written. Empty entries skipped.
@@ -617,7 +677,11 @@ export async function readReconfirmBatch(env: Env, limit: number): Promise<Recon
         "WHERE source = 'auto' AND concrete = 1 AND representative IS NULL AND reconfirmed_at IS NULL " +
         "ORDER BY decided_at",
     ),
-    d.all<{ from_id: string; to_id: string }>("SELECT from_id, to_id FROM ingredient_edge"),
+    // Substitution edges are excluded: they are NOT factual connectivity, so a node whose only
+    // edge is a substitution one is still (correctly) edgeless for the re-confirm eligibility test.
+    d.all<{ from_id: string; to_id: string }>(
+      "SELECT from_id, to_id FROM ingredient_edge WHERE kind != 'substitution'",
+    ),
   ]);
   const hasEdge = new Set<string>();
   for (const e of edges) {
@@ -665,7 +729,11 @@ async function filterCommittableEdges(
   if (edges.length === 0) return { kept: [], skipped: [] };
   const [identities, existing] = await Promise.all([
     d.all<{ id: string; representative: string | null }>("SELECT id, representative FROM ingredient_identity"),
-    d.all<{ from_id: string; to_id: string }>("SELECT from_id, to_id FROM ingredient_edge"),
+    // Substitution edges are excluded: they are not satisfies-reachable, so they must never trip
+    // the reverse-pair 2-cycle guard against a factual edge commit.
+    d.all<{ from_id: string; to_id: string }>(
+      "SELECT from_id, to_id FROM ingredient_edge WHERE kind != 'substitution'",
+    ),
   ]);
   const resolve = representativeResolver(identities);
   const key = (from: string, to: string) => `${from}\u0000${to}`;
@@ -1072,7 +1140,11 @@ export interface EdgeRow extends EdgeAuditRow {
  *  `decided_at` first, bounded. Human edges are never selected. */
 export async function readEdgeAuditBatch(env: Env, limit: number): Promise<EdgeAuditRow[]> {
   return db(env).all<EdgeAuditRow>(
-    "SELECT from_id, to_id, kind FROM ingredient_edge WHERE source = 'auto' AND audited_at IS NULL " +
+    // `kind != 'substitution'`: substitution edges are NOT factual satisfies edges, so the edge
+    // re-audit (which validates FROM→TO direction and DELETES edges that fail) must never select
+    // one — a captured taste substitution is not a mis-directed satisfies edge to correct.
+    "SELECT from_id, to_id, kind FROM ingredient_edge " +
+      "WHERE source = 'auto' AND audited_at IS NULL AND kind != 'substitution' " +
       "ORDER BY decided_at LIMIT ?1",
     limit,
   );
@@ -1081,7 +1153,9 @@ export async function readEdgeAuditBatch(env: Env, limit: number): Promise<EdgeA
 /** The full edge table (with `source`) — the edge audit's reverse-pair lookup set. */
 export async function readAllEdges(env: Env): Promise<EdgeRow[]> {
   const rows = await db(env).all<{ from_id: string; to_id: string; kind: string; source: string | null; audited_at: number | null }>(
-    "SELECT from_id, to_id, kind, source, audited_at FROM ingredient_edge",
+    // Substitution edges are excluded: the edge audit's reverse-pair lookup could otherwise delete
+    // one as a factual edge's 2-cycle loser. A substitution edge is never audit input OR output.
+    "SELECT from_id, to_id, kind, source, audited_at FROM ingredient_edge WHERE kind != 'substitution'",
   );
   return rows.map((r) => ({ from_id: r.from_id, to_id: r.to_id, kind: r.kind, source: normSource(r.source), audited_at: r.audited_at }));
 }

@@ -16,8 +16,8 @@
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { ToolError } from "./errors.js";
-import { normalizeName, groceryKey } from "./grocery.js";
-import { ingredientContext, emptyIngredientContext } from "./corpus-db.js";
+import { normalizeName, groceryKey, isFoodItem } from "./grocery.js";
+import { ingredientContext, emptyIngredientContext, captureSubstitution } from "./corpus-db.js";
 import {
   applyPantryOperations,
   markVerified,
@@ -389,6 +389,13 @@ export async function addGroceryRow(
   const current = await readGroceryList(env, tenant);
   const result: AddResult = addToGroceryList(current, input, today, ctx.resolve);
   await db(env).batch([groceryUpsertStmt(env, tenant, result.item, ctx.resolve)]);
+  // Best-effort taste-substitution capture (D6/D7): a FOOD add annotated with the recipe ingredient
+  // it stands in for records/strengthens a candidate `substitution` edge in the identity graph.
+  // Runs AFTER the add write and is throw-free by construction (`captureSubstitution` swallows every
+  // failure), so it can never fail the grocery add. A non-food add never enters the identity graph.
+  if (input.substitutes_for && isFoodItem(input.kind, input.domain)) {
+    await captureSubstitution(env, ctx, input.substitutes_for, input.name);
+  }
   return { item: result.item, merged: result.merged };
 }
 

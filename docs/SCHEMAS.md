@@ -724,7 +724,19 @@ human-involved pairs, mixed-concreteness pairs, and 3+-survivor forms are skippe
 the job summary's `lexicalTwinMerged`/`lexicalTwinSkipped`). Alias +
 edge rows written by capture/re-confirm/the guarantee/the replay are born-stamped (`audited_at`
 set at write time), and the edge audit's drop rows are born-marked `replayed_at`; human rows are
-never selected by any audit.
+never selected by any audit. A **`substitution` edge** is born differently — not by the capture
+cron but by the **agent-side capture trigger**: `add_to_grocery_list`'s `substitutes_for` on a food
+add resolves the replaced ingredient X and the added item Y through the same funnel and, by pure set
+logic (Y crosses a canonical-id boundary not already an identity neighbor of X, no classifier),
+records a candidate `substitution` edge X → Y (`captureSubstitution`, `src/corpus-db.ts`). It is
+operator-global: born `weight = 1` (a candidate) and incremented `+1` per repeat observation across
+members, promoting past `SUBSTITUTION_PROMOTE_MIN` (2), and only promoted edges surface (the depth-1
+walk). Because a substitution is a taste judgment, not identity, it is **EXCLUDED by kind from every
+edge-audit read** (`readEdgeAuditBatch`, `readAllEdges`, `filterCommittableEdges`, the re-confirm
+edgeless probe, and the Normalize/Nodes orphan + `satisfies`-count lenses and the audit backlog
+count) — so the satisfies re-audit never selects or deletes it, it never trips the reverse-pair
+2-cycle guard, and a concrete node's ORPHAN signal is never masked behind one. `audited_at` stays
+NULL for it (it is never audited); the exclusion, not a stamp, keeps it out of the backlog.
 
 ```sql
 -- ingredient_identity — canonical nodes. PRIMARY KEY (id).

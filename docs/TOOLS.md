@@ -503,6 +503,9 @@ Add an item (ingredient/product level, no SKU). Keyed by normalized `name` — r
 - `source` (optional): `ad_hoc | menu | pantry_low | stockup`
 - `for_recipes` (array of slugs, optional)
 - `note` (string or null, optional) — one-off brand request / occasion
+- `substitutes_for` (string, optional) — the recipe ingredient this added item **stands in for**, when the add is a taste swap the member accepted (`add_to_grocery_list("greek yogurt", substitutes_for: "sour cream")`). A capture signal only: it never affects the row (key, quantity, merge, or return). It's honored for a **food** add only (a non-food row never enters the identity graph) and a same-ingredient product/price swap needs none.
+
+**Substitution capture (best-effort):** when `substitutes_for` is present on a food add, the write path resolves both the replaced ingredient X and the added item Y through the ingredient-identity funnel and — by pure set logic against the graph, no classifier — records a candidate `substitution` edge X → Y when Y crosses a canonical-id boundary that isn't already an identity neighbor of X (X ≠ Y and Y is not a synonym/containment/membership neighbor). The edge accrues `weight` on repeat (candidate → promoted) and later surfaces as a labeled suggestion via the depth-1 walk (never a satisfies match). Capture is **best-effort**: any failure is swallowed and never fails the grocery add. See `docs/ARCHITECTURE.md` → *the ingredient-normalization capture*.
 
 **Returns:**
 - `{ item, merged }` — D1-backed, no `commit_sha`

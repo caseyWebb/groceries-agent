@@ -133,6 +133,9 @@ export function fakeD1(
     if (/reconfirmed_at IS NULL/i.test(sql)) out = out.filter((r) => r.reconfirmed_at == null);
     // Re-audit eligibility (alias/edge backlog: un-stamped rows only).
     if (/audited_at IS NULL/i.test(sql)) out = out.filter((r) => r.audited_at == null);
+    // Substitution edges are excluded from the factual/edge-audit `ingredient_edge` reads
+    // (converge-meal-planning-surfaces): the `kind != 'substitution'` literal on those SELECTs.
+    if (/kind\s*(?:!=|<>)\s*'substitution'/i.test(sql)) out = out.filter((r) => r.kind !== "substitution");
     // Edge-drop replay selection (normalization-audit-calibration).
     if (/\boutcome = \?1/i.test(sql)) eq("outcome", 1);
     // The unreplayed-drop gauge probe (audit-admin): the SQL mirror of the replay mark —

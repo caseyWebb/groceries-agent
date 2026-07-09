@@ -18,3 +18,9 @@ The shared depth-1 substitution annotator (`annotateSubstitutes`) SHALL surface 
 
 - **WHEN** `y` itself has outgoing substitution edges
 - **THEN** they are not followed — only `x`'s depth-1 substitution targets are surfaced
+
+#### Scenario: Accepting a surfaced substitution records the edge
+
+- **WHEN** the narrower accepts a surfaced substitution (or any other taste swap) and adds the replacement via `add_to_grocery_list(item, substitutes_for: <replaced ingredient>)`
+- **THEN** the agent-side write path records the `substitution` edge through the shared capture (the `ingredient-normalization` capability) — the accept feeds the same graph that surfaced it; the member web app's one-tap accept is a future trigger onto that same `substitutes_for` path
+
