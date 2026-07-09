@@ -48,5 +48,5 @@
 
 ## 7. Validate
 
-- [ ] 7.1 `openspec validate reify-ingredient-display-names --strict` passes.
-- [ ] 7.2 `aubr typecheck` and `aubr test` green; `/verify` drives the swap flow end-to-end.
+- [x] 7.1 `openspec validate reify-ingredient-display-names --strict` passes.
+- [x] 7.2 `aubr typecheck` and `aubr test` green (2124 passed); the app Playwright swap spec drives the swap flow end-to-end.
