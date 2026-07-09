@@ -8,6 +8,7 @@ import {
   applyMealPlanRowOps,
   mealPlanDeleteStmt,
   readGroceryList,
+  readGroceryListReified,
   addGroceryRow,
   updateGroceryRow,
   removeGroceryRow,
@@ -425,7 +426,7 @@ describe("grocery list → D1 rows", () => {
 });
 
 describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", () => {
-  it("a valid id keys AND names the row on the id, display_name null (resolved at read); a second add-by-id dedups", async () => {
+  it("a valid id keys the row on the id but names it with the node's idLabel (display_name null); a second add-by-id dedups", async () => {
     const { env, tables } = fakeD1({
       tables: {
         ingredient_identity: [
@@ -435,20 +436,41 @@ describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", 
         novel_ingredient_terms: [],
       },
     });
+    // No posted name → the row's display is the node's curated idLabel ("Red cabbage"), never the id.
     const first = await addGroceryRow(env, "everett", { id: "cabbage::color-red" }, TODAY);
     expect(first.merged).toBe(false);
     expect(tables.grocery_list).toHaveLength(1);
     const row = tables.grocery_list[0];
-    expect(row.normalized_name).toBe("cabbage::color-red"); // the validated id, NOT resolve(name)
-    expect(row.name).toBe("cabbage::color-red"); // the stored name IS the id — so normalized_name === resolve(name)
-    expect(row.display_name).toBeNull(); // NOT copied — the human label resolves at read from the node
+    expect(row.normalized_name).toBe("cabbage::color-red"); // the validated id is the key, NOT resolve(name)
+    expect(row.name).toBe("Red cabbage"); // the node's idLabel — a clean display, never the raw id
+    expect(row.name).not.toContain("::");
+    expect(row.display_name).toBeNull(); // no explicit override — the row's `name` carries the display
 
-    // A second add-by-id dedups on the id (not a re-derivation of the surface form); the posted
-    // name is ignored (the id remains the stored name).
-    const second = await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
+    // A second add-by-id dedups on the STORED id (not a re-derivation of the surface form); keep-first
+    // preserves the surviving display.
+    const second = await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Ruby cabbage" }, TODAY);
     expect(second.merged).toBe(true);
     expect(tables.grocery_list).toHaveLength(1);
-    expect(tables.grocery_list[0].name).toBe("cabbage::color-red");
+    expect(tables.grocery_list[0].name).toBe("Red cabbage"); // keep-first — the first display survives
+    expect(tables.grocery_list[0].normalized_name).toBe("cabbage::color-red");
+  });
+
+  it("a posted name is stored as the add-by-id row's DISPLAY (the id remains the key)", async () => {
+    const { env, tables } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+      },
+    });
+    const res = await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
+    expect(res.merged).toBe(false);
+    expect(tables.grocery_list[0].name).toBe("Red cabbage"); // the posted display
+    expect(tables.grocery_list[0].name).not.toContain("::");
+    expect(tables.grocery_list[0].normalized_name).toBe("cabbage::color-red"); // still keyed on the id
+    expect(tables.grocery_list[0].display_name).toBeNull();
   });
 
   it("a well-formed but NON-SURVIVOR id (no live node) is rejected: falls back to name, else validation_failed", async () => {
@@ -504,5 +526,60 @@ describe("grocery list add-by-id → D1 rows (reify-ingredient-display-names)", 
     await addGroceryRow(env, "everett", { name: "Olive Oil" }, TODAY);
     expect(tables.grocery_list[0].normalized_name).toBe("olive oil");
     expect(tables.grocery_list[0].display_name).toBeNull();
+  });
+});
+
+describe("readGroceryListReified — legacy id-named rows (reify-ingredient-display-names Move D)", () => {
+  it("reifies a legacy row (name === normalized_name) to the curated node label; leaves a typed row and an override untouched", async () => {
+    const { env } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+          { id: "kale::type-lacinato", base: "kale", detail: "type-lacinato", representative: null, display_name: null, source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+        grocery_list: [
+          // A legacy id-named row (name IS the raw id) with a curated node → reify to "Red cabbage".
+          { tenant: "everett", name: "cabbage::color-red", normalized_name: "cabbage::color-red", display_name: null, quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "menu", for_recipes: "[]", note: null, added_at: TODAY, ordered_at: null },
+          // A legacy id-named row with NO curated display → the deterministic base/detail synthesis.
+          { tenant: "everett", name: "kale::type-lacinato", normalized_name: "kale::type-lacinato", display_name: null, quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "menu", for_recipes: "[]", note: null, added_at: TODAY, ordered_at: null },
+          // A typed row (member phrasing) — its name is not an id, so it is untouched.
+          { tenant: "everett", name: "Olive Oil", normalized_name: "olive oil", display_name: null, quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "ad_hoc", for_recipes: "[]", note: null, added_at: TODAY, ordered_at: null },
+          // An id-named row that ALSO carries an explicit override — the override wins, never overwritten.
+          { tenant: "everett", name: "carrot", normalized_name: "carrot", display_name: "Rainbow carrots", quantity: "1", kind: "grocery", domain: "grocery", status: "active", source: "menu", for_recipes: "[]", note: null, added_at: TODAY, ordered_at: null },
+        ],
+      },
+    });
+    const items = await readGroceryListReified(env, "everett");
+    const byKey = new Map(items.map((it) => [it.normalized_name, it]));
+    // Legacy id-named rows: display resolved from the node (curated, else synthesis), never a raw id.
+    expect(byKey.get("cabbage::color-red")!.display_name).toBe("Red cabbage");
+    expect(byKey.get("kale::type-lacinato")!.display_name).toBe("kale (type-lacinato)");
+    for (const it of items) expect(it.display_name ?? "").not.toContain("::");
+    // A typed row (name ≠ id) is a no-op — its member phrasing renders directly, display_name stays null.
+    expect(byKey.get("olive oil")!.display_name).toBeNull();
+    expect(byKey.get("olive oil")!.name).toBe("Olive Oil");
+    // An explicit override is preserved, never re-derived.
+    expect(byKey.get("carrot")!.display_name).toBe("Rainbow carrots");
+  });
+
+  it("is a no-op passthrough when no row is id-named (a NEW add-by-id row already carries a display name)", async () => {
+    const { env } = fakeD1({
+      tables: {
+        ingredient_identity: [
+          { id: "cabbage::color-red", base: "cabbage", detail: "color-red", representative: null, display_name: "Red cabbage", source: "auto" },
+        ],
+        ingredient_alias: [],
+        novel_ingredient_terms: [],
+      },
+    });
+    // A real add-by-id write stores the display as `name` (name ≠ normalized_name), so the reify pass
+    // leaves it null — the row already renders its own clean `name`.
+    await addGroceryRow(env, "everett", { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
+    const items = await readGroceryListReified(env, "everett");
+    expect(items).toHaveLength(1);
+    expect(items[0].name).toBe("Red cabbage");
+    expect(items[0].display_name).toBeNull(); // not reified — name already carries the display
   });
 });

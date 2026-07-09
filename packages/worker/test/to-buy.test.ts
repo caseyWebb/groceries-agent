@@ -249,21 +249,24 @@ describe("computeToBuyView", () => {
 });
 
 describe("computeToBuyView — add-by-id rows (reify-ingredient-display-names blocker regression)", () => {
-  // The Wave-3 mis-key stored the display label as `name`, so an add-by-id row's `name` no longer
-  // equaled its stored id — the set-algebra (keyed on groceryKey(name)) missed it, causing a
-  // double-buy / a missed pantry subtraction / a duplicate plan line. Under the pivot the row's
-  // `name` IS the id, so `normalized_name === resolve(name) === id` and the algebra is correct with
-  // no change. These regressions exercise a REAL add-by-id row end to end through computeToBuyView.
+  // A REAL add-by-id row: `name` is the human DISPLAY ("Red cabbage") and `normalized_name` is the
+  // canonical id ("cabbage::color-red"), the two stored SEPARATELY. Because the display does NOT
+  // resolve back to the id (no alias), the set-algebra MUST key on the STORED id (`storedGroceryKey`)
+  // — re-deriving `groceryKey(name)` would mint a garbage key ("red cabbage") and miss the row,
+  // causing a double-buy / a missed pantry subtraction / a duplicate plan line. These regressions
+  // exercise a real add-by-id row end to end and MUST fail if the key threading is removed. They also
+  // assert the row renders its clean display, never a raw `::` id.
 
   it("(a) a pantry row on the same canonical id cancels an add-by-id row — pantry_covered, not to_buy", async () => {
     const h = sqliteEnv([T]);
     seedNode(h, "cabbage::color-red", "Red cabbage");
-    await addGroceryRow(h.env, T, { id: "cabbage::color-red" }, TODAY);
+    await addGroceryRow(h.env, T, { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
     seedPantry(h, "Red cabbage", "cabbage::color-red");
 
     const view = await computeToBuyView(h.env, T);
-    expect(view.to_buy).toHaveLength(0); // the pantry subtracts it
-    expect(view.pantry_covered.map((l) => l.name)).toEqual(["cabbage::color-red"]);
+    expect(view.to_buy).toHaveLength(0); // the pantry on the SAME id (keys on cabbage::color-red) subtracts it
+    expect(view.pantry_covered.map((l) => l.name)).toEqual(["Red cabbage"]); // renders the display
+    expect(view.pantry_covered[0].name).not.toContain("::");
   });
 
   it("(b) a plan need on the same id MERGES with an add-by-id row into one line (no duplicate)", async () => {
@@ -271,12 +274,14 @@ describe("computeToBuyView — add-by-id rows (reify-ingredient-display-names bl
     seedNode(h, "cabbage::color-red", "Red cabbage");
     seedRecipe(h, "slaw", ["cabbage::color-red"]);
     seedPlan(h, "slaw");
-    await addGroceryRow(h.env, T, { id: "cabbage::color-red" }, TODAY);
+    await addGroceryRow(h.env, T, { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
 
     const view = await computeToBuyView(h.env, T);
     expect(view.to_buy).toHaveLength(1); // one merged line, never a duplicate
-    expect(view.to_buy[0].key).toBe("cabbage::color-red");
+    expect(view.to_buy[0].key).toBe("cabbage::color-red"); // keyed on the STORED id
     expect(view.to_buy[0].origin).toBe("both"); // stored row ∪ derived need
+    expect(view.to_buy[0].name).toBe("Red cabbage"); // renders the display
+    expect(view.to_buy[0].name).not.toContain("::");
   });
 
   it("(c) an in-flight (in_cart) add-by-id row suppresses its derived need — no double-buy", async () => {
@@ -284,12 +289,14 @@ describe("computeToBuyView — add-by-id rows (reify-ingredient-display-names bl
     seedNode(h, "cabbage::color-red", "Red cabbage");
     seedRecipe(h, "slaw", ["cabbage::color-red", "carrot"]);
     seedPlan(h, "slaw");
-    await addGroceryRow(h.env, T, { id: "cabbage::color-red" }, TODAY);
+    await addGroceryRow(h.env, T, { id: "cabbage::color-red", name: "Red cabbage" }, TODAY);
+    // The row keys on the id, so the update finds it by the id (its display does not resolve back).
     await updateGroceryRow(h.env, T, "cabbage::color-red", { status: "in_cart" }, TODAY);
 
     const view = await computeToBuyView(h.env, T);
-    expect(view.to_buy.map((l) => l.key)).toEqual(["carrot"]); // the cabbage need is suppressed
-    expect(view.in_cart.map((i) => i.name)).toEqual(["cabbage::color-red"]);
+    expect(view.to_buy.map((l) => l.key)).toEqual(["carrot"]); // the cabbage need is suppressed (keyed on the id)
+    expect(view.in_cart.map((i) => i.name)).toEqual(["Red cabbage"]); // renders the display
+    expect(view.in_cart[0].name).not.toContain("::");
   });
 });
 
@@ -535,12 +542,19 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
     seedNode(h, "cabbage::color-green", "Green cabbage");
     seedNode(h, "onion::color-yellow", "Yellow onion");
 
-    // to_buy: an add-by-id row — name === key === the id, display_name null (resolved at read).
-    await addGroceryRow(h.env, T, { id: "cabbage::color-red" }, TODAY);
-    // in_cart: an add-by-id row advanced in flight.
-    await addGroceryRow(h.env, T, { id: "cabbage::color-green" }, TODAY);
-    await updateGroceryRow(h.env, T, "cabbage::color-green", { status: "in_cart" }, TODAY);
-    // pantry_covered: a plan need on a curated id the pantry covers.
+    // to_buy: a PLAN-derived virtual line — its `name` IS the canonical id (name === key), so the
+    // enriched read reifies it via idLabel to the node's curated label (never the raw id).
+    seedRecipe(h, "slaw", ["cabbage::color-red"]);
+    seedPlan(h, "slaw");
+    // in_cart: a LEGACY id-named row (name === normalized_name === the id, display_name null) advanced
+    // in flight — the enriched read reifies its label from the node, converging without a row edit.
+    h.raw
+      .prepare(
+        "INSERT INTO grocery_list (tenant, name, normalized_name, display_name, quantity, kind, domain, status, source, for_recipes, note, added_at, ordered_at) " +
+          "VALUES (?, 'cabbage::color-green', 'cabbage::color-green', NULL, '1', 'grocery', 'grocery', 'in_cart', 'menu', '[]', NULL, ?, NULL)",
+      )
+      .run(T, TODAY);
+    // pantry_covered: a plan need on a curated id the pantry covers (also name === key).
     seedRecipe(h, "soup", ["onion::color-yellow"]);
     seedPlan(h, "soup");
     seedPantry(h, "onion::color-yellow", "onion::color-yellow");

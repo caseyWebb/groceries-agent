@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { runTool } from "./errors.js";
 import { type GroceryItem, type GroceryAddInput, type GroceryUpdateInput } from "./grocery.js";
-import { readGroceryList, addGroceryRow, updateGroceryRow, removeGroceryRow } from "./session-db.js";
+import { readGroceryListReified, addGroceryRow, updateGroceryRow, removeGroceryRow } from "./session-db.js";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -33,7 +33,7 @@ export function registerGroceryListTools(
     },
     () =>
       runTool(async () => {
-        const items = await readGroceryList(env, username);
+        const items = await readGroceryListReified(env, username);
         return { items };
       }),
   );
@@ -42,7 +42,7 @@ export function registerGroceryListTools(
     "add_to_grocery_list",
     {
       description:
-        "Add an item to the grocery list (ingredient/product level, no SKU). Supply `name` (the member's surface form) and/or `id` — at least one is required. Re-adding an existing name merges into it (union for_recipes, reconcile quantity) rather than duplicating; a merge keeps the surviving row's existing display. New items start status=active. A PLANNED recipe's ingredient needs NO add — the to-buy set derives them from the meal plan automatically (`read_to_buy`); adding one anyway MATERIALIZES/pins it as an explicit row (do this to carry a quantity annotation or note, e.g. a double-batch scaling) — it upserts under the same canonical id, so the row and the derived need merge into one line, never a duplicate. `id` is an ALREADY-CANONICAL ingredient id (e.g. accepting a graph-sibling swap): when supplied it is treated as a canonical key — validated as a LIVE survivor, NOT re-resolved through the funnel — the row keys and dedups on it directly AND stores the id as its `name`; the human label is resolved from the identity node's `display_name` at READ (not stored on the row), so it converges as the node's label backfills. Any posted `name` is ignored for the stored key; an invalid or non-survivor id falls back to resolving `name`. It is food-only (a canonical id implies food). `domain` (default 'grocery') is the kind of store it's bought at (grocery | home-improvement | garden | pharmacy | …) — set it for a non-grocery item (e.g. '2x4 lumber' → 'home-improvement').",
+        "Add an item to the grocery list (ingredient/product level, no SKU). Supply `name` (the member's surface form) and/or `id` — at least one is required. Re-adding an existing name merges into it (union for_recipes, reconcile quantity) rather than duplicating; a merge keeps the surviving row's existing display. New items start status=active. A PLANNED recipe's ingredient needs NO add — the to-buy set derives them from the meal plan automatically (`read_to_buy`); adding one anyway MATERIALIZES/pins it as an explicit row (do this to carry a quantity annotation or note, e.g. a double-batch scaling) — it upserts under the same canonical id, so the row and the derived need merge into one line, never a duplicate. `id` is an ALREADY-CANONICAL ingredient id (e.g. accepting a graph-sibling swap): when supplied it is treated as a canonical key — validated as a LIVE survivor, NOT re-resolved through the funnel — the row keys and dedups on it directly, and stores a clean human DISPLAY as its `name` (the posted `name` when present, else the identity node's curated label — never the raw id); the key and the display are stored separately, so the row keys on the id while rendering a clean name. An invalid or non-survivor id falls back to resolving `name`. It is food-only (a canonical id implies food). `domain` (default 'grocery') is the kind of store it's bought at (grocery | home-improvement | garden | pharmacy | …) — set it for a non-grocery item (e.g. '2x4 lumber' → 'home-improvement').",
       inputSchema: {
         name: z.string().optional(),
         id: z.string().optional(),

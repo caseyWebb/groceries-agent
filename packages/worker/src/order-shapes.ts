@@ -30,6 +30,14 @@ export interface CandidateView {
 
 export interface ResolvedLine {
   name: string;
+  /**
+   * The line's canonical dedup/join key — the `grocery_list.normalized_name` this line advances under
+   * (reify-ingredient-display-names Move C): carried from the to-buy line's `key` so advance/rollback
+   * key on the STORED id (never a re-derivation of the now-independent display `name`) and the
+   * `sku_cache` append keys on the canonical id (byte-identical to `normalize(name)` for a typed row,
+   * de-fragmenting the cache for an add-by-id row whose `name` is a display, not the id).
+   */
+  key: string;
   sku: string;
   brand: string;
   size: string | null;

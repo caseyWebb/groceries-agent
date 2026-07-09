@@ -354,6 +354,29 @@ export async function readGroceryList(env: Env, tenant: string, status?: string)
   return rows.map(groceryItemOf);
 }
 
+/**
+ * Read the grocery list with LEGACY id-named rows reified for display (reify-ingredient-display-names
+ * Move D): the shared read behind `read_grocery_list` (MCP) and `GET /api/grocery`. A legacy row
+ * stored before the display/key split has `name === normalized_name` (the raw canonical id) and no
+ * display; for such a row (and only such a row) the curated node label is resolved at READ into
+ * `display_name` (`ctx.idLabel`, never a raw `::` id), converging as the node's `display_name`
+ * backfills — no per-row edit. A NEW add-by-id row already stores a clean display `name`, and a typed
+ * row's `name` is the member's phrasing, so both are no-ops here; a row with an explicit
+ * `display_name` override is left untouched. The resolver read is capture-off (a read never enqueues)
+ * and degrades to the empty context on a blip, so it never fails the list read.
+ */
+export async function readGroceryListReified(env: Env, tenant: string, status?: string): Promise<GroceryItem[]> {
+  const items = await readGroceryList(env, tenant, status);
+  // Fast path: nothing to reify unless a row is stored under its own id as `name` (a legacy row).
+  if (!items.some((it) => it.display_name == null && it.name === it.normalized_name)) return items;
+  const ctx = await ingredientContext(env, { capture: false }).catch(() => emptyIngredientContext(env));
+  return items.map((it) =>
+    it.display_name == null && it.name === it.normalized_name
+      ? { ...it, display_name: ctx.idLabel(it.normalized_name as string) }
+      : it,
+  );
+}
+
 /** An UPSERT statement for one grocery-list item. `normalized_name` keys on the canonical id
  *  (`resolve`) for a FOOD row and `normalizeName` for a non-food row (`groceryKey`'s guard) —
  *  the SAME function `computeToBuy` / the pure ops use, so the store never corrupts. */
@@ -396,12 +419,14 @@ export function groceryUpsertStmt(
  * Add-by-id: when `input.id` is supplied it is treated as an ALREADY-CANONICAL key. It is accepted
  * only when it is well-formed (`validateCanonicalId`) AND a LIVE survivor in the current resolver
  * (`ctx.resolver.ids` — a well-formed but never-minted / merged-away-loser id must NOT be stored as
- * a key). When accepted, the row keys on the id directly (NOT re-resolved through the funnel) and
- * stores the id as its `name`, with `display_name` null — the human label resolves at READ from the
- * identity node (so it converges as the node's `display_name` backfills). A rejected id (malformed
- * or non-survivor) falls back to the `name` path when a name is present, else it is a structured
- * `validation_failed` — an unresolvable key is NEVER stored. Add-by-name is today's behavior
- * unchanged (key = `groceryKey(name,…)`, `display_name` null).
+ * a key). When accepted, the row keys on the id directly (NOT re-resolved through the funnel) as its
+ * `normalized_name`, and stores a clean human DISPLAY as its `name` — the member's posted phrasing
+ * when present, else the node's `idLabel` (a curated label or its deterministic synthesis, NEVER the
+ * raw id) — with `display_name` null. Key and display are stored separately, so the row keys on the
+ * id while every surface renders `name` natively. A rejected id (malformed or non-survivor) falls
+ * back to the `name` path when a name is present, else it is a structured `validation_failed` — an
+ * unresolvable key is NEVER stored. Add-by-name is today's behavior unchanged
+ * (key = `groceryKey(name,…)`, `display_name` null).
  */
 export async function addGroceryRow(
   env: Env,
@@ -414,8 +439,10 @@ export async function addGroceryRow(
   if (input.id !== undefined) {
     const validId = validateCanonicalId(input.id);
     if (validId && ctx.resolver.ids.has(validId)) {
-      // A live survivor: key AND name on the id; the label resolves at read (display_name null).
-      effective = { ...input, id: validId, name: validId, display_name: null };
+      // A live survivor: key on the id, name = the display (posted phrasing, else the node's clean
+      // idLabel — never the raw id); display_name null. The key and the display are stored separately.
+      const display = input.name?.trim() || ctx.idLabel(validId);
+      effective = { ...input, id: validId, name: display, display_name: null };
     } else if (input.name?.trim()) {
       // Malformed / non-survivor id but a member name is present — fall back to the name path (drop the id).
       effective = { ...input, id: undefined };
@@ -543,17 +570,18 @@ export async function readGroceryKeyIndex(
 export async function advanceOrderedRows(
   env: Env,
   tenant: string,
-  lines: { name: string }[],
+  lines: { name: string; key?: string }[],
   today: string,
 ): Promise<void> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
   // Key existing rows by their STORED `normalized_name` (never a re-derivation of the display),
-  // look up by the resolved line — closes coupling #2 for the ordered advance.
+  // look up by the caller's explicit stored key (add-by-id rows, satellite receipt) or, absent one,
+  // the resolved line name — closes coupling #2 for the ordered advance.
   const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const stmts: D1PreparedStatement[] = [];
   for (const line of lines) {
-    const existing = byKey.get(ctx.resolve(line.name));
+    const existing = byKey.get(line.key ?? ctx.resolve(line.name));
     if (!existing) continue; // update-only — never mint a row on the ordered advance
     stmts.push(groceryUpsertStmt(env, tenant, { ...existing, status: "ordered", ordered_at: today }, ctx.resolve));
   }
@@ -570,19 +598,21 @@ export async function advanceOrderedRows(
 export async function advanceInCartRows(
   env: Env,
   tenant: string,
-  lines: { name: string }[],
+  lines: { name: string; key?: string }[],
   today: string,
 ): Promise<{ inserted: string[] }> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
   // Advanced lines are resolved grocery purchases (food) — key existing rows by their STORED
-  // `normalized_name` (never a re-derivation of the display) and each line by resolve so a food
-  // purchase matches its row across surface forms; a never-listed line mints a fresh row.
+  // `normalized_name` (never a re-derivation of the display) and each line by its explicit stored key
+  // (place_order's `ResolvedLine.key`, the satellite receipt's issued id) or, absent one, resolve(name)
+  // so a food purchase still matches its row across surface forms; a never-listed line mints a fresh
+  // row under that same key.
   const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const stmts: D1PreparedStatement[] = [];
   const inserted: string[] = [];
   for (const line of lines) {
-    const key = ctx.resolve(line.name);
+    const key = line.key ?? ctx.resolve(line.name);
     const existing = byKey.get(key);
     if (!existing) inserted.push(key);
     const next: GroceryItem = existing
@@ -619,17 +649,18 @@ export async function advanceInCartRows(
 export async function rollbackInCartRows(
   env: Env,
   tenant: string,
-  lines: { name: string }[],
+  lines: { name: string; key?: string }[],
   inserted: string[] = [],
 ): Promise<void> {
   const ctx = await ingredientContext(env).catch(() => emptyIngredientContext(env));
   const current = await readGroceryList(env, tenant);
-  // Key existing rows by their STORED `normalized_name`, mirroring the advance this compensates.
+  // Key existing rows by their STORED `normalized_name`, mirroring the advance this compensates —
+  // look up by the line's explicit stored key (place_order's `ResolvedLine.key`) or resolve(name).
   const byKey = new Map(current.map((it) => [storedGroceryKey(it, ctx.resolve), it]));
   const insertedKeys = new Set(inserted);
   const stmts: D1PreparedStatement[] = [];
   for (const line of lines) {
-    const key = ctx.resolve(line.name);
+    const key = line.key ?? ctx.resolve(line.name);
     const existing = byKey.get(key);
     if (!existing || existing.status !== "in_cart") continue;
     stmts.push(

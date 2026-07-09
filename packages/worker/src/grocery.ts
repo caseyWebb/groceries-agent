@@ -22,12 +22,10 @@ export interface GroceryItem {
    */
   normalized_name?: string;
   /**
-   * The human-facing label rendered to the member, stored independently of both `name` (the
-   * resolver input / surface form) and `normalized_name` (the key). Null → the rendered label is
-   * resolved at READ: a typed add leaves it null so the member's own phrasing (`name`) renders (C3
-   * preserve-phrasing), and an add-by-id row leaves it null too — its `name` IS the canonical id, so
-   * the enriched read resolves the human label from the identity node (converging as the node's
-   * `display_name` backfills). A row-level value, when explicitly supplied, wins at read.
+   * An OPTIONAL explicit per-row display override, stored independently of both `name` (the member's
+   * display / surface form) and `normalized_name` (the key). Null → the rendered label is `name`
+   * itself for a typed or add-by-id row (both store a clean human `name`), or, for a LEGACY id-named
+   * row (`name === normalized_name`), the identity node's label resolved at read. A value here wins.
    */
   display_name?: string | null;
   quantity: string;
@@ -51,23 +49,23 @@ export interface GroceryItem {
  *  `name` / `id` must be supplied. */
 export interface GroceryAddInput {
   /**
-   * The member's surface form. Optional: an add MAY be keyed by `id` alone (add-by-id), in which
-   * case the stored `name` IS the canonical id (the resolver input) and any posted `name` is
-   * ignored — the human label is resolved at READ from the identity node, so no surface renders a
-   * bare id.
+   * The member's surface form for a typed add (the resolver input). For an add-by-id (`id` set) this
+   * is the human DISPLAY stored on the row — the key comes from `id`, not from `name`, so the two are
+   * kept separate. Optional only in that an add MAY be keyed by `id`; the add-by-id caller
+   * (`addGroceryRow`) always supplies a clean display here (the posted phrasing, else the node label).
    */
   name?: string;
   /**
    * An explicit ALREADY-CANONICAL ingredient id (add-by-id). When set, the row keys on this id
-   * DIRECTLY — the id is validated (a live survivor), NOT re-resolved through the funnel — and is
-   * ALSO stored as the row's `name` so `normalized_name === resolve(name) === id`. Dedups against
-   * any existing row with that stored key. Food-only: a canonical id implies food.
+   * DIRECTLY — the id is validated (a live survivor), NOT re-resolved through the funnel — and stored
+   * as `normalized_name` only; the row's `name` is the human DISPLAY (kept separate from the key).
+   * Dedups against any existing row with that stored key. Food-only: a canonical id implies food.
    */
   id?: string;
   /**
-   * An explicit curated display to store on the row — rarely used. An add-by-id row leaves this
-   * null (the label resolves at read from the identity node) and a typed add leaves it null (the
-   * member's phrasing in `name` renders); a value supplied here wins at read.
+   * An explicit curated display override to store on the row — rarely used. Both a typed add and an
+   * add-by-id normally leave this null (the row's `name` carries the display); a value supplied here
+   * wins at read.
    */
   display_name?: string | null;
   quantity?: string;
@@ -193,14 +191,14 @@ export interface AddResult {
  * quantity/note/source when provided). Returns the next item list.
  *
  * Keying has two modes. Add-BY-ID (`input.id` set): the id is an already-canonical key — the row
- * keys on it DIRECTLY (no `resolve`), stores the id as BOTH `name` and `normalized_name` (so the
- * set-algebra keys on it exactly and the read resolves the human label from the identity node), sets
- * `display_name` null, and dedups against any existing row with that stored key; any posted `name`
- * is ignored. Add-by-NAME (no `id`): today's behavior — the key is `groceryKey(name, …)` (food →
- * `resolve`, non-food → `normalizeName`), the add's foodness gating the injected resolver so a
- * NON-food add never touches the capturing resolver (decision #5). On a merge the surviving row
- * keeps its existing display (`name`/`display_name`/`normalized_name` all ride `...existing`) — C3
- * keep-first, so a merge never fragments the label.
+ * keys on it DIRECTLY (no `resolve`), storing the id as `normalized_name` and the caller-supplied
+ * human display as `name` (the two are stored separately, so the row keys on the id while rendering a
+ * clean `name`); `display_name` is an optional explicit override (usually null); dedups against any
+ * existing row with that stored key. Add-by-NAME (no `id`): today's behavior — the key is
+ * `groceryKey(name, …)` (food → `resolve`, non-food → `normalizeName`), the add's foodness gating the
+ * injected resolver so a NON-food add never touches the capturing resolver (decision #5). On a merge
+ * the surviving row keeps its existing display (`name`/`display_name`/`normalized_name` all ride
+ * `...existing`) — C3 keep-first, so a merge never fragments the label.
  */
 export function addToGroceryList(
   items: GroceryItem[],
@@ -216,13 +214,14 @@ export function addToGroceryList(
   let createdName: string;
   let createdDisplay: string | null;
   if (input.id !== undefined) {
-    // Add-by-id: the id is the already-canonical key AND the stored `name` (the resolver input), so
-    // `normalized_name === resolve(name) === id` and the whole set-algebra keys on it exactly. Any
-    // posted `name` is ignored; `display_name` stays null (the human label resolves at READ from the
-    // identity node). Dedup against any row with that stored key.
+    // Add-by-id: the id is the already-canonical KEY; the caller supplies the human DISPLAY as `name`
+    // (a clean label — the member's posted phrasing or the node's `idLabel`, NEVER the raw id). The
+    // key is stored (as `normalized_name`) separately from the display (`name`), so the set-algebra
+    // keys on the id while the row renders `name` natively. `display_name` is an optional explicit
+    // override (usually null). Dedup against any row with that stored key.
     storedKey = input.id;
-    createdName = input.id;
-    createdDisplay = null;
+    createdName = name;
+    createdDisplay = input.display_name ?? null;
     idx = next.findIndex((it) => storedGroceryKey(it, resolve) === storedKey);
   } else {
     const keyResolve = isFoodItem(input.kind, input.domain) ? resolve : normalizeName;

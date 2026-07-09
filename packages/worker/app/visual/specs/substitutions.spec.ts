@@ -62,6 +62,7 @@ function alt(over: Partial<SubstitutionAlternative> & { sku: string; reasons: Su
 function resolvedLine(name: string, over: Partial<PlaceOrderOutcome["resolved"][number]> = {}) {
   return {
     name,
+    key: name,
     sku: `000${name.length}`,
     brand: "Store Brand",
     size: "12 oz",
@@ -252,8 +253,8 @@ test("accepting an inline hint on an explicit row is the real add+remove; on a v
 // ── Accepting a swap materializes a row that RENDERS the clean label, never the raw canonical id
 // (reify-ingredient-display-names 6.6). The sibling is a REAL seeded identity node whose curated
 // `display_name` differs from its id, so the accept exercises the real add-by-id write end to end:
-// `swapSibling` POSTs `{ id: sib.id, name: sib.label }`; the server keys AND names the row on the
-// canonical id (the posted name is ignored) and resolves the human label at read. ──
+// `swapSibling` POSTs `{ id: sib.id, name: sib.label }`; the server keys the row on the canonical id
+// and stores the posted label as the row's DISPLAY `name` (key and display stored separately). ──
 test("accepting a sibling swap materializes a row rendering the curated display label, never the raw canonical id", async ({
   page,
   groceryPage,
@@ -297,19 +298,20 @@ test("accepting a sibling swap materializes a row rendering the curated display 
   const probe = groceryPage.subRow("napa cabbage");
   await expect(groceryPage.subLabel(probe)).toHaveText(sibLabel);
 
-  // Accept → the REAL add-by-id write. The stored row keys AND names on the CANONICAL id (the
-  // posted `name` is ignored), display_name null — so `normalized_name === resolve(name) === id`
-  // and the human label is resolved at read, never stored on the row.
+  // Accept → the REAL add-by-id write. The stored row keys on the CANONICAL id (`normalized_name`)
+  // and stores the posted display as its `name` (key and display stored separately), display_name
+  // null — so the row keys on the id while rendering the clean label.
   await groceryPage.acceptSub(probe);
   await expect.poll(() => groceryPage.rowStatus(sibId)).toBe("active");
   const stored = await groceryPage.row(sibId);
-  expect(stored?.name).toBe(sibId);
-  expect(stored?.normalized_name).toBe(sibId);
+  expect(stored?.name).toBe(sibLabel); // the posted display, not the raw id
+  expect(stored?.name).not.toContain("::");
+  expect(stored?.normalized_name).toBe(sibId); // the canonical id is the key
   expect(stored?.display_name).toBeNull();
 
   // Drop the interception and reload: the REAL enriched derivation renders the materialized row's
-  // label via `display_name ?? name` → `idLabel(id)` → the curated node label. The raw id rides
-  // only the data-name attribute (keying); it is NEVER shown to the member as text.
+  // label via `display_name ?? name` — here the row's own `name` (the posted display). The raw id
+  // rides only the data-name attribute (keying); it is NEVER shown to the member as text.
   await page.unroute("**/api/grocery/to-buy**");
   await groceryPage.goto();
   const rendered = groceryPage.anyItem(sibId); // located by its canonical id (data-name)

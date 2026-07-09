@@ -380,10 +380,12 @@ export async function handleOrderReceipt(request: Request, env: Env, now: number
     // FRESH index so it reflects any `in_cart` advance the intake just performed in this same call.
     if (req.mark_placed) {
       const idx = await readGroceryKeyIndex(env, row.tenant);
-      const lines: { name: string }[] = [];
+      const lines: { name: string; key: string }[] = [];
       for (const id of orderList.itemIds) {
         const g = idx.get(id);
-        if (g && g.status === "in_cart") lines.push({ name: g.name });
+        // Thread the issued canonical id as `key` so the ordered advance keys on the stored id (an
+        // add-by-id row's `name` is a display, not the id); `name` rides the row's display.
+        if (g && g.status === "in_cart") lines.push({ name: g.name, key: id });
       }
       if (lines.length > 0) await advanceOrderedRows(env, row.tenant, lines, isoDay(now));
     }

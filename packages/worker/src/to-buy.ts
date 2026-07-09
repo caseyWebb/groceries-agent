@@ -13,7 +13,7 @@
 
 import type { Env } from "./env.js";
 import { computeToBuy, type MenuNeed } from "./order.js";
-import { normalizeName, groceryKey, type GroceryItem } from "./grocery.js";
+import { normalizeName, storedGroceryKey, type GroceryItem } from "./grocery.js";
 import { readGroceryList, readMealPlan, readPantryByKey, readPantryNames } from "./session-db.js";
 import { recipeIngredientsFull } from "./recipe-index.js";
 import {
@@ -97,7 +97,7 @@ export function dropInFlightNeeds(
   const inFlight = new Set(
     list
       .filter((it) => it.status !== "active")
-      .map((it) => groceryKey(it.name, it.kind, it.domain, resolve)),
+      .map((it) => storedGroceryKey(it, resolve)),
   );
   if (inFlight.size === 0) return needs;
   return needs.filter((n) => !inFlight.has(resolve(n.name)));
@@ -150,11 +150,12 @@ export async function computeToBuyView(
 
   // Post-partition (computeToBuy itself is unchanged): a line whose key matches a stored
   // ACTIVE row is list-origin (or both, when the plan also needs it); no stored row = a
-  // virtual plan line. Keys are the rows' stored normalized_name (food-guarded groceryKey).
+  // virtual plan line. Keys are the rows' STORED `normalized_name` (`storedGroceryKey`), so an
+  // add-by-id row (whose `name` is a display) partitions on its id, not a re-derived display key.
   const storedByKey = new Map(
     list
       .filter((it) => it.status === "active")
-      .map((it) => [groceryKey(it.name, it.kind, it.domain, resolve), it] as const),
+      .map((it) => [storedGroceryKey(it, resolve), it] as const),
   );
   const planKeys = new Set(needs.map((n) => resolve(n.name)));
 
