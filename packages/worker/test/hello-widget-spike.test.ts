@@ -43,6 +43,11 @@ describe("hello-widget-spike (MCP Apps diagnostic wiring)", () => {
       expect(item.text).toBe(HELLO_WIDGET_HTML);
       expect(item.text).toContain("ui/initialize");
       expect(item.text).toContain("ui/notifications/tool-result");
+      // Regression guard for the bug this iteration fixed: the ui/initialize params key is
+      // `appInfo` (App identification), NOT `clientInfo` — claude.ai rejects the latter and
+      // never un-hides the frame (leaves the wrapper visibility:hidden).
+      expect(item.text).toContain("appInfo:");
+      expect(item.text).not.toContain("clientInfo:");
     });
   });
 
