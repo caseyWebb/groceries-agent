@@ -5,7 +5,9 @@ import {
   registerWriteTools,
 } from "../src/write-tools.js";
 import { applyPantryOperations, markVerified, type PantryItem } from "../src/pantry-write.js";
+import { ToolError } from "../src/errors.js";
 import { serializeMarkdown } from "../src/serialize.js";
+import { validateFile } from "../src/validate.js";
 import { parseMarkdown } from "../src/parse.js";
 import { createR2CorpusStore, type CorpusStore } from "../src/corpus-store.js";
 import { fakeR2 } from "./fake-r2.js";
@@ -161,6 +163,30 @@ describe("buildRecipeUpdate", () => {
     expect(frontmatter.perishable_ingredients).toEqual(["cilantro", "lime"]);
   });
 
+  it("accepts a novel duplicate_of field through the pass-through frontmatter (the merge flow's write path)", async () => {
+    // recipe-dedup: the agent-guided merge marks the duplicate `duplicate_of: <survivor>`
+    // via update_recipe — a pass-through field, so an otherwise-compliant recipe stays
+    // valid under the merged-content contract check (validateFile) and the marker rides
+    // through to the serialized frontmatter.
+    const compliant = serializeMarkdown(
+      {
+        title: "Homemade Pasta Dough",
+        source: null,
+        time_total: 45,
+        dietary: [],
+        pairs_with: [],
+        requires_equipment: [],
+      },
+      "## Ingredients\n- flour\n\n## Instructions\n1. knead\n",
+    );
+    const store = storeWith({ "recipes/homemade-pasta-dough.md": compliant });
+    const file = await buildRecipeUpdate(store, env, "homemade-pasta-dough", { duplicate_of: "fresh-pasta" });
+    expect(() => validateFile(file.path, file.content)).not.toThrow();
+    const { frontmatter } = parseMarkdown(file.content);
+    expect(frontmatter.duplicate_of).toBe("fresh-pasta");
+    expect(frontmatter.title).toBe("Homemade Pasta Dough"); // untouched
+  });
+
   it("rejects a malformed slug as not_found", async () => {
     const store = storeWith({});
     await expect(buildRecipeUpdate(store, env, "Not A Slug", {})).rejects.toMatchObject({ code: "not_found" });
@@ -198,6 +224,20 @@ describe("readyToEatManager", () => {
     expect(() => mgr.update("ghost", { reject: true })).toThrowError(/not.*found|ghost/i);
   });
 
+  it("an unknown slug is not_found even when the patch also carries protected keys", () => {
+    // The slug lookup runs FIRST: the caller addressed a nonexistent item, and that
+    // is the more actionable error than what the patch happened to contain.
+    const mgr = readyToEatManager([{ name: "Lasagna", slug: "lasagna", meal: "dinner" }]);
+    try {
+      mgr.update("ghost", { slug: "renamed" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as ToolError).code).toBe("not_found");
+    }
+    expect(mgr.touched()).toBe(false);
+  });
+
   it("favorite and reject are mutually exclusive on update", () => {
     const existing = [{ name: "Lasagna", slug: "lasagna", meal: "dinner", reject: true }];
     const mgr = readyToEatManager(existing);
@@ -208,6 +248,71 @@ describe("readyToEatManager", () => {
   it("touched() is false when nothing was changed", () => {
     const mgr = readyToEatManager([]);
     expect(mgr.touched()).toBe(false);
+  });
+
+  it("update accepts every documented mutable field in place", () => {
+    const existing = [{ name: "Lasagna", slug: "lasagna", meal: "dinner", category: null, brand: null, notes: null }];
+    const mgr = readyToEatManager(existing);
+    mgr.update("lasagna", {
+      name: "Frozen Lasagna",
+      category: "frozen",
+      brand: "Kroger",
+      notes: "425F for 50 min",
+      favorite: true,
+    });
+    expect(mgr.touched()).toBe(true);
+    expect(mgr.items()[0]).toMatchObject({
+      slug: "lasagna",
+      meal: "dinner",
+      name: "Frozen Lasagna",
+      category: "frozen",
+      brand: "Kroger",
+      notes: "425F for 50 min",
+      favorite: true,
+    });
+  });
+
+  it("update rejects identity/provenance keys with validation_failed listing the offenders", () => {
+    const existing = [{ name: "Lasagna", slug: "lasagna", meal: "dinner", discovery_source: "kroger-flyer" }];
+    const mgr = readyToEatManager(existing);
+    try {
+      mgr.update("lasagna", {
+        slug: "renamed",
+        meal: "lunch",
+        discovery_source: "hand-edit",
+        added_at: "2026-01-01",
+        discovered_at: "2026-01-01",
+      });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as ToolError).code).toBe("validation_failed");
+      expect((e as ToolError).context.fields).toEqual([
+        "slug",
+        "meal",
+        "discovery_source",
+        "added_at",
+        "discovered_at",
+      ]);
+    }
+    // Nothing committed: the item is untouched and the manager reports no change.
+    expect(mgr.touched()).toBe(false);
+    expect(mgr.items()[0]).toMatchObject({ slug: "lasagna", meal: "dinner", discovery_source: "kroger-flyer" });
+  });
+
+  it("update rejects a mixed patch (allowed + protected keys) wholesale — nothing committed", () => {
+    const existing = [{ name: "Lasagna", slug: "lasagna", meal: "dinner" }];
+    const mgr = readyToEatManager(existing);
+    try {
+      mgr.update("lasagna", { name: "Better Lasagna", slug: "better-lasagna" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as ToolError).code).toBe("validation_failed");
+      expect((e as ToolError).context.fields).toEqual(["slug"]); // only the offenders are listed
+    }
+    expect(mgr.touched()).toBe(false);
+    expect(mgr.items()[0].name).toBe("Lasagna"); // the allowed edit did NOT partially apply
   });
 });
 

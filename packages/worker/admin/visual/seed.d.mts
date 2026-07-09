@@ -70,6 +70,12 @@ export interface SeedLiterals {
       readonly addA: { readonly id: string; readonly vibe: string };
       readonly addB: { readonly id: string; readonly vibe: string };
       readonly prune: { readonly id: string; readonly target: string };
+      readonly merge: {
+        readonly id: string;
+        readonly target: string;
+        readonly titles: readonly [string, string];
+        readonly rationale: string;
+      };
     };
     readonly note: { readonly body: string; readonly tag: string };
     readonly tasteLead: string;
@@ -110,6 +116,8 @@ export interface SeedLiterals {
         readonly line: string;
         readonly family: readonly string[];
         readonly parent: string;
+        readonly pantryHit: string;
+        readonly saleHit: { readonly sku: string; readonly price: { readonly regular: number; readonly promo: number } };
       };
     };
   };

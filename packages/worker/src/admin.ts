@@ -60,7 +60,7 @@ export const TENANT_TABLES = [
   "night_vibes", // per-member night-vibe palette (migration 0025)
   "night_vibe_derived", // per-member night-vibe embeddings (migration 0025)
   "pending_proposals", // per-member profile-reconciliation queue (migration 0027)
-  "webauthn_credentials", // enrolled passkeys (migration 0042)
+  "webauthn_credentials", // enrolled passkeys (migration 0046)
 ] as const;
 export const AUTHOR_TABLES = ["recipe_notes", "store_notes"] as const;
 

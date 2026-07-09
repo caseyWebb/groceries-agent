@@ -1,4 +1,4 @@
--- 0042_webauthn_credentials — enrolled WebAuthn passkeys, one row per device
+-- 0046_webauthn_credentials — enrolled WebAuthn passkeys, one row per device
 -- (webauthn-passkey-auth / passkey-auth capability). A member (tenant = person) MAY hold
 -- several credentials (one per device); the credential id is the primary key and `tenant`
 -- is the isolation column, so the enrolled-credentials set is per-tenant relational data

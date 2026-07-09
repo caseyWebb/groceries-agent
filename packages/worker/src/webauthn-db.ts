@@ -1,5 +1,5 @@
 // D1 data layer for enrolled WebAuthn passkeys (webauthn-passkey-auth / passkey-auth).
-// One row per device in `webauthn_credentials` (migration 0042), keyed by credential id
+// One row per device in `webauthn_credentials` (migration 0046), keyed by credential id
 // with a `tenant` isolation column. This is the SINGLE place those rows are read/written,
 // over src/db.ts (so a D1 failure surfaces as a structured `storage_error`, keeping the
 // auth path throw-free). Deletion on member revocation is handled by the admin
