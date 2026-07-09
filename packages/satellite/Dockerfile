@@ -35,6 +35,7 @@ COPY packages/worker/package.json packages/worker/package.json
 COPY packages/app/package.json packages/app/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY packages/admin-app/package.json packages/admin-app/package.json
+COPY packages/widgets/package.json packages/widgets/package.json
 RUN mise exec -- aube ci
 
 # --- source -------------------------------------------------------------------

@@ -67,7 +67,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=satellite-v$version" >> "$GITHUB_OUTPUT"
           echo "contract=$contract" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/groceries-satellite" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/yamp-satellite" >> "$GITHUB_OUTPUT"
 
       - name: Skip if this version is already published
         id: guard
