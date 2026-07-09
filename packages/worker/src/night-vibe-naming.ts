@@ -8,6 +8,7 @@
 // candidate rather than breaking the derivation pass.
 
 import type { Env } from "./env.js";
+import { runAi } from "./ai.js";
 import { slugify } from "./discovery.js";
 import { WEATHER_BUCKETS, type WeatherCategory } from "./weather.js";
 
@@ -44,14 +45,19 @@ export async function nameCluster(
   const user = `These recipes are all in one group a member cooks:\n${sample.map((d) => `- ${d}`).join("\n")}\n\nName the vibe, then classify its weather label.`;
   let res: TextGenResponse;
   try {
-    res = (await env.AI.run(NAME_MODEL, {
-      messages: [
-        { role: "system", content: CLUSTER_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 32,
-      temperature: 0.3,
-    })) as unknown as TextGenResponse;
+    res = await runAi<TextGenResponse>(
+      env,
+      { activity: "nightvibe-name", trigger: "cron", calls: 1 },
+      NAME_MODEL,
+      {
+        messages: [
+          { role: "system", content: CLUSTER_SYSTEM },
+          { role: "user", content: user },
+        ],
+        max_tokens: 32,
+        temperature: 0.3,
+      },
+    );
   } catch {
     return null; // fail soft — a naming hiccup skips one candidate, never the whole pass
   }
@@ -92,14 +98,19 @@ export async function starterVibesFromTaste(env: Env, tasteText: string | null):
   if (!text) return [];
   let res: TextGenResponse;
   try {
-    res = (await env.AI.run(NAME_MODEL, {
-      messages: [
-        { role: "system", content: STARTER_SYSTEM },
-        { role: "user", content: `Taste notes:\n${text}\n\nPropose the vibes.` },
-      ],
-      max_tokens: 120,
-      temperature: 0.4,
-    })) as unknown as TextGenResponse;
+    res = await runAi<TextGenResponse>(
+      env,
+      { activity: "nightvibe-name", trigger: "cron", calls: 1 },
+      NAME_MODEL,
+      {
+        messages: [
+          { role: "system", content: STARTER_SYSTEM },
+          { role: "user", content: `Taste notes:\n${text}\n\nPropose the vibes.` },
+        ],
+        max_tokens: 120,
+        temperature: 0.4,
+      },
+    );
   } catch {
     return [];
   }

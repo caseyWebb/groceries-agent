@@ -124,7 +124,7 @@ export async function runDerivation(env: Env, tenant: string, seed: number, maxS
       ...missingPaletteVibes.map((v) => v.vibe),
     ]),
   ];
-  const embedded = toEmbed.length ? await embedTextsCached(env, toEmbed) : [];
+  const embedded = toEmbed.length ? await embedTextsCached(env, { activity: "embed-search", trigger: "request" }, toEmbed) : [];
   const vecOf = new Map<string, number[]>();
   toEmbed.forEach((t, i) => vecOf.set(t, embedded[i]));
 
