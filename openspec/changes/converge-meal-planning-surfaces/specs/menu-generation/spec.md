@@ -66,3 +66,22 @@ The distilled ephemeral vibe set SHALL be diverse — the vibes implied by the r
 
 - **WHEN** the returned proposal omits a recipe the agent judges a good fit
 - **THEN** the agent adds or widens a vibe (or re-seeds) and re-invokes `propose_meal_plan`, rather than composing the week by hand
+
+### Requirement: Menu-generation smoke-test validation
+
+The meal-plan flow SHALL be validated by a scripted smoke test of three seeded requests — open-ended ("make me a menu"), recipe-seeded ("let's make chicken and rice this week"), and freeform-constraint ("something comforting, I'm feeling lazy") — each run from a fresh conversation against live data, with a per-seed rubric of required behaviors. The flow is considered correct when each seed's response satisfies its rubric, the user can iterate with a revision, and agreement lands planned rows in the D1 meal plan (via `update_meal_plan`) whose ingredient needs appear in the derived to-buy read — with only open-world-side ingredients, extras, and materializations written as grocery rows, and the cart untouched. The open-ended and freeform rubrics require that composition is driven by `propose_meal_plan` over a distilled ephemeral vibe set — **not** by the agent hand-selecting mains over a retrieved union.
+
+#### Scenario: Recipe-seeded smoke test passes its rubric
+
+- **WHEN** the recipe-seeded seed "let's make chicken and rice this week" is run
+- **THEN** the response resolves the dish with a vibe-less `search_recipes({ specs: [{ facets: { query: "chicken rice", include_unmakeable: true } }] })`, enumerates all genuine matches including the exact-title recipe, disambiguates before verifying the pantry, then `lock`s the chosen dish into `propose_meal_plan` and authors the remaining nights' vibes rather than hand-composing
+
+#### Scenario: Open-ended smoke test drives the engine over an ephemeral vibe set
+
+- **WHEN** the open-ended seed "make me a menu" is run
+- **THEN** the response distills a bounded ephemeral vibe set (not a whole-corpus dump), folds the `list_new_for_me` discoveries in by authoring, and calls `propose_meal_plan` to compose the week — it does NOT hand-select mains over a retrieved union or poll/import discovery sources in-flow
+
+#### Scenario: Capture-not-flush holds across all seeds
+
+- **WHEN** any smoke-test seed reaches agreement
+- **THEN** planned rows land in the meal plan, the derived to-buy read reflects their needs, only open-world-side/extra/materialization items are written via `add_to_grocery_list`, and the Kroger cart is not written

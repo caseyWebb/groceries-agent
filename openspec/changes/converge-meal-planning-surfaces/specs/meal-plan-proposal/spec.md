@@ -6,6 +6,8 @@
 
 The ephemeral set SHALL respect the existing embedding budget: its phrases join the single batched embedding call that already covers `nudges.freeform` and `slots[].vibe` overrides (the `Off-hot-path composition and legibility` requirement), so a request whose ephemeral phrases are all cache-served makes no additional AI call, and a request supplying no ephemeral set and no override/freeform text makes no AI call at all. The ephemeral set SHALL NOT bypass the hard gate (diet / reject / makeability) or the diversify pass — it supplies slot intent, not selection.
 
+The `new_for_me` force-placement tier (defined for the palette path in `weather-bucket-planning`) SHALL be **inert when an ephemeral vibe set drives the week**: because the authored entries — not the cadence sampler — are the week's slots, the caller SHALL place accepted new-for-me discoveries explicitly, by authoring an ephemeral entry that describes a discovery or by pinning it with `lock`. On the palette path (no ephemeral set) `new_for_me` SHALL force-place accepted discoveries as `weather-bucket-planning` specifies.
+
 #### Scenario: An authored ephemeral vibe set shapes the week
 
 - **WHEN** `propose_meal_plan` is called with an ephemeral vibe set of three entries and no saved-palette dependence
@@ -25,3 +27,8 @@ The ephemeral set SHALL respect the existing embedding budget: its phrases join 
 
 - **WHEN** an ephemeral entry's vibe would rank a recipe the diet / reject / makeability gate excludes
 - **THEN** that recipe is not admitted — the ephemeral set supplies slot intent, and selection still runs through the hard gate and the MMR diversify
+
+#### Scenario: New-for-me force-placement is inert under an ephemeral set
+
+- **WHEN** `propose_meal_plan` is called with both an ephemeral vibe set and a `new_for_me` list
+- **THEN** the ephemeral entries shape the week and the `new_for_me` seeds force-place nothing — the caller places accepted discoveries by authoring them into the ephemeral set or by locking them — whereas on the palette path (no ephemeral set) the same `new_for_me` list force-places them
