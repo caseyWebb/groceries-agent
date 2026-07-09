@@ -15,7 +15,7 @@ import {
   type LocalReject,
   type SatelliteBatch,
   type RecipeItem,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

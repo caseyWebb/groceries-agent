@@ -7,7 +7,7 @@ import {
   SelectGroup,
   SelectLabel,
   SelectSeparator,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function Open() {
   return (

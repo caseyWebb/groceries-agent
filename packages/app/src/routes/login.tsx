@@ -7,7 +7,7 @@
 // code exists); a dismissed/absent passkey is a neutral non-event, never a crash.
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate, type SearchSchemaInput } from "@tanstack/react-router";
-import { Button, IconBook, Input, Label } from "@grocery-agent/ui";
+import { Button, IconBook, Input, Label } from "@yamp/ui";
 import { api, apiError } from "../lib/api";
 import { enrollPasskey, passkeyLogin } from "../lib/passkey";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
@@ -161,7 +161,7 @@ function LoginPage() {
             <IconBook />
           </span>
           <div>
-            <div className="brand-name">Cookbook</div>
+            <div className="brand-name">yamp</div>
             <div className="brand-tag">your kitchen, with the agent</div>
           </div>
         </div>

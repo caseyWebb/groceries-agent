@@ -34,13 +34,13 @@ function RootLayout(): React.ReactElement {
   useSparklineTips();
 
   React.useEffect(() => {
-    document.title = `${areaOf(pathname).label} · grocery-agent admin`;
+    document.title = `${areaOf(pathname).label} · yamp admin`;
   }, [pathname]);
 
   return (
     <>
       <div className={wide ? "wrap wrap-wide" : "wrap"}>
-        <h1>grocery-agent admin</h1>
+        <h1>yamp admin</h1>
         <nav className="nav">
           {AREAS.map((a) => (
             <Link

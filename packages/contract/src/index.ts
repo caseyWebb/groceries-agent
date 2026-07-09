@@ -1,4 +1,4 @@
-// @grocery-agent/contract — the runtime-agnostic code shared by the Worker
+// @yamp/contract — the runtime-agnostic code shared by the Worker
 // (workerd) and the home-network satellite (Node): the recipe-parse spine and the
 // ingest wire contract. Nothing here may depend on a workerd-only API
 // (HTMLRewriter) or a Node-only API (fs/Buffer) — layer-1 HTML extraction stays

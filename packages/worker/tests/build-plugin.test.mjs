@@ -94,23 +94,23 @@ test('flow marker: name + needs + multi-line description; body drops heading + m
 
 // --- reference-loading ---------------------------------------------------
 
-test('loaderLine references grocery-core only for a core-only flow', () => {
+test('loaderLine references yamp-core only for a core-only flow', () => {
   const line = loaderLine([]);
-  assert.match(line, /read the `grocery-core` skill/);
+  assert.match(line, /read the `yamp-core` skill/);
   assert.match(line, /if you haven't already this session/i);
-  assert.doesNotMatch(line, /grocery-cart|grocery-corpus/);
+  assert.doesNotMatch(line, /yamp-cart|yamp-corpus/);
 });
 
 test('loaderLine lists core + needed depth', () => {
   const line = loaderLine(['cart', 'corpus']);
-  assert.match(line, /`grocery-core`, `grocery-cart` and `grocery-corpus` skills/);
+  assert.match(line, /`yamp-core`, `yamp-cart` and `yamp-corpus` skills/);
 });
 
 test('renderWorkflowSkill prepends the loader and does NOT inline tier content', () => {
   const { flows } = parseInstructions(DOC);
   const md = renderWorkflowSkill(flows[0]);
   assert.match(md, /^---\nname: menu-request\ndescription: "/);
-  assert.match(md, /> \*\*Prerequisite\*\* — if you haven't already this session, read the `grocery-core`, `grocery-cart` and `grocery-corpus` skills/);
+  assert.match(md, /> \*\*Prerequisite\*\* — if you haven't already this session, read the `yamp-core`, `yamp-cart` and `yamp-corpus` skills/);
   assert.match(md, /\n# Menu request\n/);
   assert.match(md, /Do the menu thing/);
   // tier content lives in the library skills, not inlined here.
@@ -122,7 +122,7 @@ test('renderWorkflowSkill prepends the loader and does NOT inline tier content',
 
 test('renderLibrarySkill emits a grocery-<tier> skill with a near-empty description', () => {
   const md = renderLibrarySkill('cart', parseInstructions(DOC).persona.cart);
-  assert.match(md, /^---\nname: grocery-cart\ndescription: "/);
+  assert.match(md, /^---\nname: yamp-cart\ndescription: "/);
   assert.match(md, /Not invoked on its own/);
   // hidden from user slash-command discovery, still model-loadable by reference.
   assert.match(md, /\nuser-invocable: false\n/);
@@ -207,15 +207,15 @@ test('yamlQuote escapes embedded quotes and backslashes', () => {
 
 test('renderMcpConfig bakes the given worker url into the connector', () => {
   const cfg = JSON.parse(renderMcpConfig('https://example.test/mcp'));
-  assert.equal(cfg.mcpServers['grocery-mcp'].type, 'http');
-  assert.equal(cfg.mcpServers['grocery-mcp'].url, 'https://example.test/mcp');
+  assert.equal(cfg.mcpServers['yamp'].type, 'http');
+  assert.equal(cfg.mcpServers['yamp'].url, 'https://example.test/mcp');
 });
 
 test('isHttpUrl: http(s) only, no sentinels (gates the no-real-URL warning)', () => {
   // Real connector URLs pass; the placeholder and CI sentinels (e.g. __ci__) do not,
   // so a throwaway/local build warns that the connector will not resolve. The deploy
   // always passes a real --mcp-url, so the published bundle carries a working connector.
-  assert.equal(isHttpUrl('https://groceries-mcp.caseywebb.xyz/mcp'), true);
+  assert.equal(isHttpUrl('https://yamp.cooking/mcp'), true);
   assert.equal(isHttpUrl('http://localhost:8787/mcp'), true);
   assert.equal(isHttpUrl('__ci__'), false);
   assert.equal(isHttpUrl(''), false);
@@ -227,7 +227,7 @@ test('renderPluginManifest: no userConfig (claude.ai ignores it); version is opt
   // main() from git; the pure renderer omits it unless asked, so throwaway/no-git
   // builds ship none.
   const bare = JSON.parse(renderPluginManifest());
-  assert.equal(bare.name, 'grocery-agent');
+  assert.equal(bare.name, 'yamp');
   assert.equal(bare.userConfig, undefined);
   assert.equal(bare.version, undefined);
   const versioned = JSON.parse(renderPluginManifest({ version: '0.0.42' }));
@@ -258,9 +258,9 @@ test('buildPluginFiles emits library tiers + workflow skills + manifest + connec
     [
       '.claude-plugin/plugin.json',
       '.mcp.json',
-      'skills/grocery-core/SKILL.md',
-      'skills/grocery-cart/SKILL.md',
-      'skills/grocery-corpus/SKILL.md',
+      'skills/yamp-core/SKILL.md',
+      'skills/yamp-cart/SKILL.md',
+      'skills/yamp-corpus/SKILL.md',
       'skills/menu-request/SKILL.md',
       'skills/sale-check/SKILL.md',
     ].sort(),
@@ -286,11 +286,11 @@ test('a flow can declare needs: discovery against a discovery persona block', ()
   assert.deepEqual(validateParsed(parsed).errors, []);
   assert.deepEqual(parsed.flows[0].needs, ['cart', 'corpus', 'discovery']);
   const files = buildPluginFiles(parsed, { mcpUrl: 'https://x' });
-  assert.ok(files.has('skills/grocery-discovery/SKILL.md'), 'missing grocery-discovery library skill');
-  assert.match(files.get('skills/grocery-discovery/SKILL.md'), /Triage then import/);
+  assert.ok(files.has('skills/yamp-discovery/SKILL.md'), 'missing yamp-discovery library skill');
+  assert.match(files.get('skills/yamp-discovery/SKILL.md'), /Triage then import/);
   assert.match(
     files.get('skills/menu-request/SKILL.md'),
-    /`grocery-core`, `grocery-cart`, `grocery-corpus` and `grocery-discovery` skills/,
+    /`yamp-core`, `yamp-cart`, `yamp-corpus` and `yamp-discovery` skills/,
   );
 });
 
@@ -395,8 +395,8 @@ test('AGENT_INSTRUCTIONS.md: workflows with expected needs + library tiers', asy
     'grocery-sale-check',
     'cooking-retrospective',
     'shop-groceries',
-    'configure-grocery-profile',
-    'report-grocery-agent-bug',
+    'configure-yamp-profile',
+    'report-yamp-bug',
   ]);
   const needs = Object.fromEntries(parsed.flows.map((f) => [f.name, f.needs]));
   assert.deepEqual(needs['meal-plan'], ['cart', 'corpus', 'discovery']); // discovery-first retrieval flow
@@ -410,12 +410,12 @@ test('AGENT_INSTRUCTIONS.md: workflows with expected needs + library tiers', asy
   // Library tiers emitted; workflows reference, don't inline.
   const files = buildPluginFiles(parsed, { mcpUrl: 'https://x' });
   for (const tier of ['core', 'cart', 'corpus', 'discovery']) {
-    assert.ok(files.has(`skills/grocery-${tier}/SKILL.md`), `missing grocery-${tier}`);
+    assert.ok(files.has(`skills/yamp-${tier}/SKILL.md`), `missing yamp-${tier}`);
   }
   // the meal-plan flow now loads the discovery tier (discovery-first) alongside cart + corpus.
-  assert.match(files.get('skills/meal-plan/SKILL.md'), /`grocery-core`, `grocery-cart`, `grocery-corpus` and `grocery-discovery`/);
-  assert.match(files.get('skills/import-recipe/SKILL.md'), /`grocery-core`, `grocery-corpus` and `grocery-discovery`/);
-  assert.match(files.get('skills/grocery-sale-check/SKILL.md'), /read the `grocery-core` skill before/);
+  assert.match(files.get('skills/meal-plan/SKILL.md'), /`yamp-core`, `yamp-cart`, `yamp-corpus` and `yamp-discovery`/);
+  assert.match(files.get('skills/import-recipe/SKILL.md'), /`yamp-core`, `yamp-corpus` and `yamp-discovery`/);
+  assert.match(files.get('skills/grocery-sale-check/SKILL.md'), /read the `yamp-core` skill before/);
 
   // shop-groceries has 4 reference files extracted.
   assert.ok(files.has('skills/shop-groceries/references/kroger-online.md'), 'missing kroger-online.md');
@@ -423,8 +423,8 @@ test('AGENT_INSTRUCTIONS.md: workflows with expected needs + library tiers', asy
   assert.ok(files.has('skills/shop-groceries/references/instore-walk.md'), 'missing instore-walk.md');
   assert.ok(files.has('skills/shop-groceries/references/map-store.md'), 'missing map-store.md');
   // SKILL.md body has pointers, not inline branch content.
-  assert.match(files.get('skills/shop-groceries/SKILL.md'), /read the `grocery-core` and `grocery-cart` skills/);
+  assert.match(files.get('skills/shop-groceries/SKILL.md'), /read the `yamp-core` and `yamp-cart` skills/);
   assert.doesNotMatch(files.get('skills/shop-groceries/SKILL.md'), /Stale-cart check/);
   // cart prerequisite present.
-  assert.match(files.get('skills/shop-groceries/SKILL.md'), /grocery-cart/);
+  assert.match(files.get('skills/shop-groceries/SKILL.md'), /yamp-cart/);
 });

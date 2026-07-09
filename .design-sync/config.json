@@ -1,5 +1,5 @@
 {
-  "pkg": "@grocery-agent/ui",
+  "pkg": "@yamp/ui",
   "globalName": "GroceryAgentUI",
   "projectId": "76ffa1d0-b4bc-4e60-b696-ab3a7227af90",
   "shape": "package",

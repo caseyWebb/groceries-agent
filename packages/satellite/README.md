@@ -1,12 +1,12 @@
-# @grocery-agent/satellite — the home-network satellite
+# @yamp/satellite — the home-network satellite
 
-A satellite is an operator-run node that orbits the grocery-mcp Worker: it holds sessions the
+A satellite is an operator-run node that orbits the yamp Worker: it holds sessions the
 Worker can't, does bounded observation on the LAN, and reports home over an outbound-only link.
 Its one capability today is **`recipe-scrape`** — a small daemon you run **on your own network**
 (not in the cloud, not in the Worker) to feed recipes from **paid recipe sites you subscribe to**
-into your grocery-agent. One machine holds **one ingest key** and can be configured with **many
+into your yamp. One machine holds **one ingest key** and can be configured with **many
 sources**. For each source it authenticates with **your own subscription session**, extracts only
-the **functional recipe facts**, and POSTs them per-source to your grocery-mcp Worker's
+the **functional recipe facts**, and POSTs them per-source to your yamp Worker's
 `POST <connector>/admin/api/ingest`. The Worker feeds those pushes into its discovery sweep.
 
 ## Legal / ethical posture
@@ -84,7 +84,7 @@ The image is built on the Playwright base, so Chromium (browser tier + `login`) 
 `login` needs a display — on a headless server use **cookie-import** or attach a noVNC/X sidecar.
 
 Each `satellite-v*` release publishes a prebuilt **multi-arch** image (`linux/amd64` + `linux/arm64`)
-to GHCR at `ghcr.io/<owner>/groceries-satellite`, so an Apple-Silicon home host runs it natively
+to GHCR at `ghcr.io/<owner>/yamp-satellite`, so an Apple-Silicon home host runs it natively
 without emulation — reference that tag in place of the compose `build:` block to skip building.
 
 ## CLI verbs

@@ -14,9 +14,6 @@ importers:
 
   packages/admin-app:
     dependencies:
-      '@grocery-agent/ui':
-        specifier: workspace:*
-        version: 0.1.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
@@ -32,6 +29,9 @@ importers:
       '@types/node':
         specifier: ^20.19.0 || >=22.12.0
         version: 22.20.0
+      '@yamp/ui':
+        specifier: workspace:*
+        version: 0.1.0
       esbuild:
         specifier: ^0.27.0 || ^0.28.0
         version: 0.28.1
@@ -63,9 +63,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260621.1
         version: 4.20260701.1
-      '@grocery-agent/worker':
-        specifier: workspace:*
-        version: 0.1.0
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -81,6 +78,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.3
         version: 6.0.3(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7)(rolldown@1.1.4)(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
+      '@yamp/worker':
+        specifier: workspace:*
+        version: 0.1.0
       oxlint:
         specifier: ^1.73.0
         version: 1.73.0
@@ -99,9 +99,6 @@ importers:
 
   packages/app:
     dependencies:
-      '@grocery-agent/ui':
-        specifier: workspace:*
-        version: 0.1.0
       '@rolldown/plugin-babel':
         specifier: ^0.1.7 || ^0.2.0
         version: 0.2.3(@babel/core@7.29.7)(rolldown@1.1.4)(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -120,6 +117,9 @@ importers:
       '@types/node':
         specifier: ^20.19.0 || >=22.12.0
         version: 22.20.0
+      '@yamp/ui':
+        specifier: workspace:*
+        version: 0.1.0
       esbuild:
         specifier: ^0.27.0 || ^0.28.0
         version: 0.28.1
@@ -160,9 +160,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260621.1
         version: 4.20260701.1
-      '@grocery-agent/worker':
-        specifier: workspace:*
-        version: 0.1.0
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -178,6 +175,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.3
         version: 6.0.3(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7)(rolldown@1.1.4)(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
+      '@yamp/worker':
+        specifier: workspace:*
+        version: 0.1.0
       oxlint:
         specifier: ^1.73.0
         version: 1.73.0
@@ -206,12 +206,12 @@ importers:
 
   packages/satellite:
     dependencies:
-      '@grocery-agent/contract':
-        specifier: workspace:*
-        version: 0.1.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
+      '@yamp/contract':
+        specifier: workspace:*
+        version: 0.1.0
       fast-xml-parser:
         specifier: ^5.9.3
         version: 5.9.3
@@ -313,9 +313,6 @@ importers:
       '@cloudflare/workers-oauth-provider':
         specifier: ^0.8.1
         version: 0.8.1
-      '@grocery-agent/contract':
-        specifier: workspace:*
-        version: 0.1.0
       '@modelcontextprotocol/ext-apps':
         specifier: ^1.7.4
         version: 1.7.4(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(react@19.2.7)(react-dom@19.2.7(react@19.2.7))(zod@4.4.3)
@@ -331,6 +328,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0 || ^22.0.0 || >=24.0.0
         version: 22.20.0
+      '@yamp/contract':
+        specifier: workspace:*
+        version: 0.1.0
       agents:
         specifier: ^0.17.1
         version: 0.17.3(ai@6.0.217(zod@4.4.3))(react@19.2.7)(vite@8.1.3(@types/node@22.20.0)(esbuild@0.28.1))(zod@4.4.3)

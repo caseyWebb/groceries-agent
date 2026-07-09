@@ -1,4 +1,4 @@
-import { NightsStepper } from "@grocery-agent/ui";
+import { NightsStepper } from "@yamp/ui";
 
 export function FourNights() {
   return (

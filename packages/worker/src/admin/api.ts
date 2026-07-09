@@ -60,7 +60,7 @@ import { canonicalizeUrl } from "../url.js";
 import { readNormalizationPage, readNodesPage } from "../normalize-admin.js";
 import { readReconcileObservability } from "../reconcile-admin.js";
 import { readAuditObservability, readAuditSurface } from "../audit-admin.js";
-import { CONTRACT_VERSION } from "@grocery-agent/contract";
+import { CONTRACT_VERSION } from "@yamp/contract";
 import { getDiscoveryConfig, putDiscoveryConfig, analyzeDiscovery, dryRunDiscovery, testFeed, getOperatorConfig, putOperatorConfig, listCorpus, addCorpus, deleteCorpus } from "./config-api.js";
 
 /** The injectable surface the member-lifecycle operations close over (real bindings here). */

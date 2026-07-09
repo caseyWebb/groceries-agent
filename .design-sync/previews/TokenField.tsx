@@ -1,4 +1,4 @@
-import { TokenField, Button, IconPlus } from "@grocery-agent/ui";
+import { TokenField, Button, IconPlus } from "@yamp/ui";
 
 export function Dietary() {
   return (

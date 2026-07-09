@@ -1,4 +1,4 @@
-import { Progress } from "@grocery-agent/ui";
+import { Progress } from "@yamp/ui";
 
 export function PantryVerification() {
   return (

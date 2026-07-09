@@ -1,4 +1,4 @@
-import { Textarea } from "@grocery-agent/ui";
+import { Textarea } from "@yamp/ui";
 
 export function Default() {
   return <Textarea placeholder="Describe the vibe for this night…" style={{ maxWidth: 360 }} />;

@@ -12,7 +12,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Alert, AlertDescription, AlertTitle } from "@grocery-agent/ui";
+import { Alert, AlertDescription, AlertTitle } from "@yamp/ui";
 import {
   StatCardGrid,
   StatCard,

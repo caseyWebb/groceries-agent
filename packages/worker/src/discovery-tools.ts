@@ -190,7 +190,7 @@ export function registerDiscoveryTools(
     "update_discovery_sources",
     {
       description:
-        "Add trusted sources to the SHARED inbound-newsletter allowlist. `members` = friend-group personal addresses (anything they forward to groceries-agent@ gets indexed) — address only, no label. `senders` = newsletter From addresses (auto-forwarded mail from them gets indexed), with an optional `name` for the NEWSLETTER (e.g. \"Serious Eats\") — never a person's name. Use when a member sets up a forward or wants a newsletter indexed. Dedups by address — existing entries are untouched. Anyone trusted with this MCP is trusted to widen intake.",
+        "Add trusted sources to the SHARED inbound-newsletter allowlist. `members` = friend-group personal addresses (anything they forward to yamp@ gets indexed) — address only, no label. `senders` = newsletter From addresses (auto-forwarded mail from them gets indexed), with an optional `name` for the NEWSLETTER (e.g. \"Serious Eats\") — never a person's name. Use when a member sets up a forward or wants a newsletter indexed. Dedups by address — existing entries are untouched. Anyone trusted with this MCP is trusted to widen intake.",
       inputSchema: {
         members: z.array(z.object({ address: z.string() })).optional(),
         senders: z.array(z.object({ address: z.string(), name: z.string().optional() })).optional(),

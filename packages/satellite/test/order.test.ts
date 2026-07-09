@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OrderListResponse, OrderReceiptRequest, OrderReceiptResponse } from "@grocery-agent/contract";
+import type { OrderListResponse, OrderReceiptRequest, OrderReceiptResponse } from "@yamp/contract";
 import { fetchOrderList, postReceipt } from "../src/order.js";
 import type { FetchImpl } from "../src/push.js";
 

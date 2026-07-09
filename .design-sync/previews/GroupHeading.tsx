@@ -1,4 +1,4 @@
-import { GroupHeading } from "@grocery-agent/ui";
+import { GroupHeading } from "@yamp/ui";
 
 export function PantrySection() {
   return <GroupHeading>Pantry items</GroupHeading>;

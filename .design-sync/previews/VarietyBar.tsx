@@ -1,4 +1,4 @@
-import { VarietyBar } from "@grocery-agent/ui";
+import { VarietyBar } from "@yamp/ui";
 
 export function Default() {
   return (

@@ -1,4 +1,4 @@
-import { WeatherNoLocation } from "@grocery-agent/ui";
+import { WeatherNoLocation } from "@yamp/ui";
 
 export function Default() {
   return (

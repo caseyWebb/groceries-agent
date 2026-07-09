@@ -46,7 +46,7 @@ When `recipe_display_v0` is available, the skill SHALL build and emit one card s
 
 ### Requirement: Guard the widget and degrade to the text walk
 
-Because `recipe_display_v0` is a claude.ai built-in and not part of the grocery-mcp, the skill SHALL guard the emit on the widget being present in the exposed tool set. When the widget is NOT available, the skill SHALL fall back to the plain-text one-step-at-a-time walkthrough (paced prep then cook, advancing on "next"/"done") instead of emitting a card. The text walk SHALL be retained as this fallback branch.
+Because `recipe_display_v0` is a claude.ai built-in and not part of the yamp, the skill SHALL guard the emit on the widget being present in the exposed tool set. When the widget is NOT available, the skill SHALL fall back to the plain-text one-step-at-a-time walkthrough (paced prep then cook, advancing on "next"/"done") instead of emitting a card. The text walk SHALL be retained as this fallback branch.
 
 #### Scenario: Widget present
 

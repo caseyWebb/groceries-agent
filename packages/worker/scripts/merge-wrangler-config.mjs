@@ -100,8 +100,8 @@ export function mergeWranglerConfig(code, operator) {
   // concern; the binding itself simply propagates here.)
   if (code.r2_buckets !== undefined) out.r2_buckets = code.r2_buckets;
 
-  // analytics_engine_datasets: the AE history-tier dataset bindings — `USAGE_AE`/`grocery_usage`
-  // (usage-trends, per-job) and `TOOL_AE`/`grocery_tool` (tool-usage-trends, per-tool-call). A
+  // analytics_engine_datasets: the AE history-tier dataset bindings — `USAGE_AE`/`yamp_usage`
+  // (usage-trends, per-job) and `TOOL_AE`/`yamp_tool` (tool-usage-trends, per-tool-call). A
   // binding TYPE — like `ai`/`assets`/`r2_buckets` it carries no operator-owned id and no secret
   // (AE datasets are account-scoped automatically), so the WHOLE array propagates verbatim from
   // code, keyed by type rather than by binding name — a SECOND dataset rides through with no extra

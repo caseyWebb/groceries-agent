@@ -4,10 +4,10 @@
 // the equivalent for Node: a regex sweep for every <script type="application/ld+json">
 // block, JSON.parse each (with the same minimal entity-decode fallback the Worker uses),
 // collecting the parsed objects into unknown[]. From there we hand off to the shared,
-// runtime-agnostic parse (findRecipe + normalizeRecipe from @grocery-agent/contract) so
+// runtime-agnostic parse (findRecipe + normalizeRecipe from @yamp/contract) so
 // the satellite and the Worker can never disagree on what a recipe page means.
 
-import { findRecipe, normalizeRecipe, type RecipeItem } from "@grocery-agent/contract";
+import { findRecipe, normalizeRecipe, type RecipeItem } from "@yamp/contract";
 import { toRecipeItem } from "./strip.js";
 
 /**

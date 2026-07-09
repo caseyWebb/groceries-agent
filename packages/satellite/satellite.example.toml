@@ -3,12 +3,12 @@
 # This machine holds ONE ingest key (supplied via the INGEST_API_KEY environment variable,
 # NOT this file) and is configured with MANY sources. It authenticates to each paid site
 # with YOUR OWN subscription session (captured out-of-band; see the README), extracts only
-# the functional recipe facts, and POSTs them per-source to your grocery-mcp Worker.
+# the functional recipe facts, and POSTs them per-source to your yamp Worker.
 #
 # Copy this to <configDir>/satellite.toml (the mounted volume, default /config) and edit.
 
-# Your grocery-mcp connector base URL. "/admin/api/ingest" is appended for the push.
-connector_url = "https://grocery-mcp.<your-account>.workers.dev"
+# Your yamp connector base URL. "/admin/api/ingest" is appended for the push.
+connector_url = "https://yamp.<your-account>.workers.dev"
 
 # Optional: a mounted directory of operator-authored adapter modules (loaded at runtime,
 # no image rebuild). Each *.mjs/*.js/*.ts file default-exports a factory (sdk) => SourceAdapter,

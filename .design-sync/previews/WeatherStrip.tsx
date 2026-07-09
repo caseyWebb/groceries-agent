@@ -1,4 +1,4 @@
-import { WeatherStrip } from "@grocery-agent/ui";
+import { WeatherStrip } from "@yamp/ui";
 
 export function WeekForecast() {
   return (

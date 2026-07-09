@@ -37,14 +37,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: 'https://github.com/caseyWebb/groceries-agent/blob/main/CLA.md'
+          path-to-document: 'https://github.com/caseyWebb/yet-another-meal-planner/blob/main/CLA.md'
           path-to-signatures: 'signatures/version1/cla.json'
           # Dedicated, unprotected branch — `main` is ruleset-protected and rejects the bot's push.
           branch: 'cla-signatures'
           # The maintainer and bots never sign. `*[bot]` covers Dependabot and friends.
           allowlist: 'caseyWebb,*[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          custom-notsigned-prcomment: 'Thanks for the contribution! Before it can be merged, please read the [Contributor License Agreement](https://github.com/caseyWebb/groceries-agent/blob/main/CLA.md) and sign it by posting a comment with exactly:<br/><br/>`I have read the CLA Document and I hereby sign the CLA`<br/><br/>You only need to do this once — it covers your future contributions too.'
+          custom-notsigned-prcomment: 'Thanks for the contribution! Before it can be merged, please read the [Contributor License Agreement](https://github.com/caseyWebb/yet-another-meal-planner/blob/main/CLA.md) and sign it by posting a comment with exactly:<br/><br/>`I have read the CLA Document and I hereby sign the CLA`<br/><br/>You only need to do this once — it covers your future contributions too.'
           custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'
           # Keep signature commits out of CI — they touch only the signatures file.
           create-file-commit-message: 'chore(cla): initialize signature store [skip ci]'

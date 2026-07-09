@@ -9,7 +9,7 @@ import {
   Button,
   Badge,
   IconHeart,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function RecipeCard() {
   return (

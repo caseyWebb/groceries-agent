@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BatchResponse } from "@grocery-agent/contract";
+import type { BatchResponse } from "@yamp/contract";
 import { runTick, type TickDeps } from "../src/scheduler.js";
 import type { SatelliteConfig, SourceConfig } from "../src/config.js";
 import { BUILTIN_ADAPTERS } from "../src/adapter.js";

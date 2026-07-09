@@ -64,15 +64,15 @@ test("logout leaves no member data at rest (member-app-offline D9)", async ({ lo
   // Plant a propose session + a theme preference: the purge removes member data
   // (session) but keeps the device preference (theme).
   await page.evaluate(() => {
-    localStorage.setItem("cookbook:propose-session", JSON.stringify({ seed: 1, nights: 3 }));
-    localStorage.setItem("cookbook:theme", "dark");
+    localStorage.setItem("yamp:propose-session", JSON.stringify({ seed: 1, nights: 3 }));
+    localStorage.setItem("yamp:theme", "dark");
   });
   await shellPage.logout();
   await loginPage.landmark();
   await expectNoPersistedMemberData(page);
-  expect(await page.evaluate(() => localStorage.getItem("cookbook:tenant"))).toBeNull();
-  expect(await page.evaluate(() => localStorage.getItem("cookbook:propose-session"))).toBeNull();
-  expect(await page.evaluate(() => localStorage.getItem("cookbook:theme"))).toBe("dark");
+  expect(await page.evaluate(() => localStorage.getItem("yamp:tenant"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("yamp:propose-session"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("yamp:theme"))).toBe("dark");
 });
 
 // A different-tenant login closes the cross-tenant replay window (member-app-offline D9

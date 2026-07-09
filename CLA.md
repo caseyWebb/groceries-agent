@@ -1,6 +1,6 @@
 # Contributor License Agreement
 
-Thank you for contributing to grocery-agent (the "Project"). This Contributor License Agreement (the "Agreement") sets the terms under which intellectual property is contributed to the Project, and lets the Project be offered under more than one license (see [Section 3](#3-relicensing-dual-licensing-grant)). It protects You, the Maintainer, and everyone who relies on the Project.
+Thank you for contributing to yamp (the "Project"). This Contributor License Agreement (the "Agreement") sets the terms under which intellectual property is contributed to the Project, and lets the Project be offered under more than one license (see [Section 3](#3-relicensing-dual-licensing-grant)). It protects You, the Maintainer, and everyone who relies on the Project.
 
 By submitting a Contribution to the Project — for example, by opening a pull request — You accept and agree to this Agreement for Your present and future Contributions. If You do not agree, do not submit a Contribution.
 

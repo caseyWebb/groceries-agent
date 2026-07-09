@@ -23,7 +23,7 @@ import {
   toast,
   type ProposeSlotView,
   type SlotPanel,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { useIndex, usePlan, useProfile, useVibes, type PlanOp } from "../lib/data";
 import { usePlanOps } from "../lib/mutations";
 import { useOnline } from "../lib/online";

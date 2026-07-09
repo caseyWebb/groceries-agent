@@ -7,7 +7,7 @@ import {
   AlertDialogFooter,
   AlertDialogAction,
   AlertDialogCancel,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function RemoveRecipe() {
   return (

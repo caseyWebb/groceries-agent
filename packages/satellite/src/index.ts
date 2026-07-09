@@ -1,10 +1,10 @@
-// @grocery-agent/satellite — the home-network satellite. Public surface:
+// @yamp/satellite — the home-network satellite. Public surface:
 // the config loader, the Node layer-1 JSON-LD extractor + shared parse, fact-stripping, the
 // session helpers, the tiered fetch, the adapter plugin model + generic adapter, the push
 // layer, the dedup cursor, and the scheduler's `runTick`. The CLI (src/cli.ts, the `bin`)
 // wires these together for the operator verbs.
 
-export const SATELLITE_PACKAGE = "@grocery-agent/satellite";
+export const SATELLITE_PACKAGE = "@yamp/satellite";
 
 // config
 export {

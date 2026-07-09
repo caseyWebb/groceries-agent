@@ -60,7 +60,7 @@ pairs_with: []
 const tmp = mkdtempSync(join(tmpdir(), "app-seed-"));
 const mdPath = join(tmp, "recipe.md");
 writeFileSync(mdPath, recipeMd);
-sh("npx", ["wrangler", "r2", "object", "put", `grocery-corpus/recipes/${SEED.recipe.slug}.md`, "--file", mdPath, "--local"]);
+sh("npx", ["wrangler", "r2", "object", "put", `yamp-corpus/recipes/${SEED.recipe.slug}.md`, "--file", mdPath, "--local"]);
 
 sh("npx", [
   "wrangler",

@@ -2,8 +2,8 @@ import * as React from "react";
 import * as AllIcons from "../../packages/ui/src/components/icons";
 
 /**
- * The full @grocery-agent/ui icon set, shown together for reference. In real code,
- * import each icon individually by name — e.g. `import { IconCart, IconHeart } from "@grocery-agent/ui"`.
+ * The full @yamp/ui icon set, shown together for reference. In real code,
+ * import each icon individually by name — e.g. `import { IconCart, IconHeart } from "@yamp/ui"`.
  * Every icon is an SVG component accepting standard `React.SVGProps<SVGSVGElement>`
  * (width/height/className/color via currentColor).
  */

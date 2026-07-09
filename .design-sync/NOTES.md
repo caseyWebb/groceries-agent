@@ -1,10 +1,10 @@
-# design-sync notes — @grocery-agent/ui
+# design-sync notes — @yamp/ui
 
 Repo-specific gotchas for future syncs. Read this first.
 
 ## Build setup (package shape, no dist)
 
-- `@grocery-agent/ui` ships **raw TypeScript** — no `dist/`, no build script, `exports["."] = "./src/index.ts"`.
+- `@yamp/ui` ships **raw TypeScript** — no `dist/`, no build script, `exports["."] = "./src/index.ts"`.
   The converter esbuilds the source entry directly: pass `--entry ./packages/ui/src/index.ts`.
 - `--node-modules packages/ui/node_modules` (the package's own — it has react 19.2.7, @radix-ui/*, cva, clsx, tailwind-merge).
 - Prop extraction works well from source via ts-morph (CVA `variant`/`size` etc. resolve correctly) — `[DTS] parsed 0 .d.ts files` is expected (synth-from-source), NOT a problem.

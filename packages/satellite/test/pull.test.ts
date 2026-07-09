@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runPullTick, type PullDeps } from "../src/pull.js";
 import { validateSaleEmit, runScanAdapter, type ScanSdk, type SaleScanAdapter } from "../src/sale-adapter.js";
-import { SALE_SCAN_KIND, type SaleObservation, type TaskEnvelope } from "@grocery-agent/contract";
+import { SALE_SCAN_KIND, type SaleObservation, type TaskEnvelope } from "@yamp/contract";
 import type { SatelliteConfig } from "../src/config.js";
 import type { FetchTier } from "../src/fetch.js";
 

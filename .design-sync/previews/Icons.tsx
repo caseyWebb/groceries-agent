@@ -1,4 +1,4 @@
-import { Icons } from "@grocery-agent/ui";
+import { Icons } from "@yamp/ui";
 
 export function AllIcons() {
   return <Icons />;

@@ -1,5 +1,5 @@
 // The page-object base (POM): every admin area's page object extends AdminPage, which owns the
-// shell contract — the `<h1>grocery-agent admin</h1>` heading, the area nav, the global health
+// shell contract — the `<h1>yamp admin</h1>` heading, the area nav, the global health
 // dock — and the review-screenshot capture. Subclasses own their route, their area-unique
 // landmark, and their sub-surface accessors; specs consume page objects via fixtures.ts and
 // never address routes or shell markup directly.
@@ -40,7 +40,7 @@ export abstract class AdminPage {
 
   /** The shared shell: the persistent title heading (nav/dock asserted where a spec needs them). */
   async expectShell(): Promise<void> {
-    await expect(this.page.getByRole("heading", { name: "grocery-agent admin" })).toBeVisible();
+    await expect(this.page.getByRole("heading", { name: "yamp admin" })).toBeVisible();
   }
 
   /** The persistent deployed-build footer (rendered in the shell on every area; the harness

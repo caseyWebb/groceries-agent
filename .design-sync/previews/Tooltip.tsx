@@ -4,7 +4,7 @@ import {
   TooltipContent,
   Button,
   IconAlert,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function WeatherAware() {
   return (

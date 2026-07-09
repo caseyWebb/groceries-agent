@@ -10,7 +10,7 @@
 
 import { db } from "./db.js";
 import type { Env } from "./env.js";
-import { CONTRACT_VERSION, type PushResult } from "@grocery-agent/contract";
+import { CONTRACT_VERSION, type PushResult } from "@yamp/contract";
 import { countPushedOutcomesSince } from "./discovery-db.js";
 import { readSourceQuality, type SourceQuality } from "./satellite-audit-db.js";
 

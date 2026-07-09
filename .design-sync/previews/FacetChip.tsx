@@ -1,4 +1,4 @@
-import { FacetChip } from "@grocery-agent/ui";
+import { FacetChip } from "@yamp/ui";
 
 export function ProteinAndCuisine() {
   return (

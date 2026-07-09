@@ -6,7 +6,7 @@
 // one. `tools_hint` from the parse is a classifier hint for the Worker, not a wire fact,
 // so it is dropped here too.
 
-import type { NormalizedRecipe, RecipeItem } from "@grocery-agent/contract";
+import type { NormalizedRecipe, RecipeItem } from "@yamp/contract";
 
 /**
  * Strip a normalized recipe to the wire-contract functional facts.

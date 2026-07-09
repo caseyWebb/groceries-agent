@@ -1,4 +1,4 @@
-import { Button, IconSparkle, IconDice, IconPlus, IconCart } from "@grocery-agent/ui";
+import { Button, IconSparkle, IconDice, IconPlus, IconCart } from "@yamp/ui";
 
 export function Variants() {
   return (

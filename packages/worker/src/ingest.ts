@@ -6,14 +6,14 @@
 // the admin app's access middleware, and scoped to exactly POST /admin/api/ingest.
 //
 // It validates the batch envelope + each observation item against the shared
-// @grocery-agent/contract wire types (accepting BOTH the v2 capability-tagged batch and a
+// @yamp/contract wire types (accepting BOTH the v2 capability-tagged batch and a
 // legacy v1 recipe batch, normalized inward to one recipe-intake path), dedups on arrival
 // (corpus / rejections / settled-log / in-flight inbox, with the walled-park supersede
 // exception), persists accepted candidates to ingest_candidates, and returns the
 // { received, accepted, deduped, rejected, results } summary. The classify/match/import
 // pipeline runs later in the background sweep — never synchronously here.
 
-import { parseSatelliteEnvelope, parseObservationItem, type BatchResponse, type ItemResult } from "@grocery-agent/contract";
+import { parseSatelliteEnvelope, parseObservationItem, type BatchResponse, type ItemResult } from "@yamp/contract";
 import type { Env } from "./env.js";
 import {
   lookupIngestKey,

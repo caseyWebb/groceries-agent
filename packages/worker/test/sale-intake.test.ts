@@ -7,7 +7,7 @@ import { fakeD1 } from "./fake-d1.js";
 import type { KvStore } from "../src/kroger-user.js";
 import type { Env } from "../src/env.js";
 import type { KrogerCandidate } from "../src/kroger.js";
-import type { SaleObservation } from "@grocery-agent/contract";
+import type { SaleObservation } from "@yamp/contract";
 
 // The `sale` arm of the shared raw-observation intake (satellite-sale-scan): Worker-side
 // plausibility (validateSale), re-derivation, per-item dispatch, arrival dedup, and the

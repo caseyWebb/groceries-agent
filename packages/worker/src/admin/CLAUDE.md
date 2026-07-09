@@ -95,7 +95,7 @@ never fork the design in this repo instead of updating it upstream.
 - **Generic primitives come from `packages/ui`** — the vendored shadcn/ui components both
   apps share (Button, Card, Input, Badge, Alert, Table, Dialog, AlertDialog, DropdownMenu,
   Select/NativeSelect, Switch, Slider, Progress, Tooltip, Empty, Pagination) — styled by the
-  shared Tailwind v4 theme tokens (`@grocery-agent/ui/theme.css`). Don't re-derive bespoke
+  shared Tailwind v4 theme tokens (`@yamp/ui/theme.css`). Don't re-derive bespoke
   markup for these.
 - **The operator theme is a layer, not a fork**: `packages/admin-app/src/admin.css` imports
   the shared tokens, then overrides (`--primary` → the orange accent, the `--c-*` palette

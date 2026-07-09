@@ -1,4 +1,4 @@
-import { RerollButton } from "@grocery-agent/ui";
+import { RerollButton } from "@yamp/ui";
 
 export function Enabled() {
   return (

@@ -10,7 +10,7 @@ import {
   IconSwap,
   IconLock,
   IconTrash,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function SlotActions() {
   return (

@@ -1,4 +1,4 @@
-import { Alert, AlertTitle, AlertDescription, IconAlert } from "@grocery-agent/ui";
+import { Alert, AlertTitle, AlertDescription, IconAlert } from "@yamp/ui";
 
 export function Default() {
   return (

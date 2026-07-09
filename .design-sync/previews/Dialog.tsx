@@ -6,7 +6,7 @@ import {
   DialogDescription,
   DialogFooter,
   Button,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function EditProfile() {
   return (

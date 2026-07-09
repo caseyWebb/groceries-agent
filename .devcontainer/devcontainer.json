@@ -1,5 +1,5 @@
 {
-  "name": "grocery-agent",
+  "name": "yamp",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
     "ghcr.io/devcontainers-extra/features/mise:latest": {}

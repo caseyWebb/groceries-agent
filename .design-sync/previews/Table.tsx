@@ -6,7 +6,7 @@ import {
   TableHead,
   TableCell,
   TableCaption,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function WeekPlan() {
   return (

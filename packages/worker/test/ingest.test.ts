@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { handleIngest } from "../src/ingest.js";
 import { mintIngestKey, readSatelliteLiveness, revokeIngestKey, FRESH_WINDOW_MS } from "../src/ingest-db.js";
-import { CONTRACT_VERSION, MAX_BATCH_ITEMS, type BatchResponse } from "@grocery-agent/contract";
+import { CONTRACT_VERSION, MAX_BATCH_ITEMS, type BatchResponse } from "@yamp/contract";
 import { fakeD1 } from "./fake-d1.js";
 
 // POST /admin/api/ingest (recipe-ingestion). Exercised end-to-end over the in-memory D1

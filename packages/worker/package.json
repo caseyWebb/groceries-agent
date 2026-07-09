@@ -1,9 +1,9 @@
 {
-  "name": "@grocery-agent/worker",
+  "name": "@yamp/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "grocery-mcp: the Cloudflare Worker (MCP server + operator admin panel) and the plugin/vault build tooling that data repos run via reusable CI workflows.",
+  "description": "yamp: the Cloudflare Worker (MCP server + operator admin panel) and the plugin/vault build tooling that data repos run via reusable CI workflows.",
   "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=22"
@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.1",
-    "@grocery-agent/contract": "workspace:*",
+    "@yamp/contract": "workspace:*",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@simplewebauthn/server": "^13.3.2",

@@ -12,7 +12,7 @@ import type { InferResponseType } from "hono/client";
 import { api, apiError, apiErrorOf, unwrap } from "../../lib/api";
 import { corpusQuery, queryClient, type CorpusData } from "../../lib/queries";
 import { assertNever } from "../../lib/assert";
-import { Input } from "@grocery-agent/ui";
+import { Input } from "@yamp/ui";
 import { Button, ErrorBanner, RemoveButton } from "../../components/kit";
 
 export interface AddField {

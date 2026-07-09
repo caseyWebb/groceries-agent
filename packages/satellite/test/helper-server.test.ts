@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHelper, type Helper } from "../src/helper/server.js";
 import type { FetchImpl } from "../src/push.js";
-import type { OrderListResponse, OrderObservation, OrderReceiptResponse } from "@grocery-agent/contract";
+import type { OrderListResponse, OrderObservation, OrderReceiptResponse } from "@yamp/contract";
 
 // The localhost cart-fill helper SERVER (satellite-order-cart-fill): loopback bind, session-token +
 // CSRF gates, and the full drive → receipt round-trip driven over real HTTP against a loopback port,

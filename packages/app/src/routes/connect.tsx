@@ -8,7 +8,7 @@
 // wrangler.jsonc's run_worker_first.
 import { useEffect, useState } from "react";
 import { createFileRoute, redirect, type SearchSchemaInput } from "@tanstack/react-router";
-import { Button, IconBook } from "@grocery-agent/ui";
+import { Button, IconBook } from "@yamp/ui";
 import { api } from "../lib/api";
 import { approveConnection, fetchPendingApproval, type PendingApproval } from "../lib/passkey";
 import { ThemeFab } from "./_app";
@@ -92,7 +92,7 @@ function ConnectPage() {
             <IconBook />
           </span>
           <div>
-            <div className="brand-name">Cookbook</div>
+            <div className="brand-name">yamp</div>
             <div className="brand-tag">connect a device</div>
           </div>
         </div>
@@ -108,7 +108,7 @@ function ConnectPage() {
             <div className="brand-name">Connect to Claude?</div>
             <p className="login-note" style={{ marginTop: "0.35rem" }}>
               <strong data-testid="connect-client">{view.approval.clientName}</strong> is asking to
-              connect to your Cookbook account. Check that this code matches the one on the connection
+              connect to your yamp account. Check that this code matches the one on the connection
               screen before you approve.
             </p>
             <div className="connect-code" data-testid="connect-code">

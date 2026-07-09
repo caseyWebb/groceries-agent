@@ -6,7 +6,7 @@ import {
   PaginationPrevious,
   PaginationNext,
   PaginationEllipsis,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function RecipeBrowser() {
   return (

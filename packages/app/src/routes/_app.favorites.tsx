@@ -2,7 +2,7 @@
 // to the cached cookbook index — the design bundle's favorites page, with its empty
 // state for a heartless overlay.
 import { createFileRoute } from "@tanstack/react-router";
-import { EmptyState, IconHeart, PageHead } from "@grocery-agent/ui";
+import { EmptyState, IconHeart, PageHead } from "@yamp/ui";
 import { RecipeList } from "../components/recipe-list";
 import { useIndex, useOverlay } from "../lib/data";
 

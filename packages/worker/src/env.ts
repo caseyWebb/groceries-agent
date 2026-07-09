@@ -107,7 +107,7 @@ export interface Env {
    * account-wide KV-operation and Workers-AI-neuron usage from the GraphQL Analytics API. Secret,
    * OPTIONAL — set via `wrangler secret`, never committed (the repo is public). When unset, the
    * Usage view reports "not configured". Reads only; it can mutate nothing. The Usage **trends**
-   * panel reuses this same token for the Analytics Engine SQL API (it reads the `grocery_usage`
+   * panel reuses this same token for the Analytics Engine SQL API (it reads the `yamp_usage`
    * dataset); confirm the token's scope also grants AE SQL read on a connected account.
    */
   CF_ANALYTICS_TOKEN?: string;
@@ -127,7 +127,7 @@ export interface Env {
 
   // --- Usage trends (usage-trends). Code-level binding, no operator config. ---
   /**
-   * Workers Analytics Engine dataset (`grocery_usage`) the background jobs emit one
+   * Workers Analytics Engine dataset (`yamp_usage`) the background jobs emit one
    * tenant-clean data point to per run (the **history** tier, complementing the `job_health`
    * D1 **liveness** tier) — job name, outcome, duration, and summary counts, never a per-tenant
    * id. Read back by the Usage trends panel via the AE SQL API (`src/usage.ts`). OPTIONAL: an
@@ -141,7 +141,7 @@ export interface Env {
 
   // --- Tool usage trends (tool-usage-trends). Code-level binding, no operator config. ---
   /**
-   * Workers Analytics Engine dataset (`grocery_tool`) every MCP tool call emits one
+   * Workers Analytics Engine dataset (`yamp_tool`) every MCP tool call emits one
    * tenant-clean data point to — the request-path **history** tier (per-tool frequency +
    * performance), sibling to the per-job `USAGE_AE`. Carries the tool name, the call outcome
    * (`ok`/`error`), and the call duration, never a tenant id or call arguments. Emitted once

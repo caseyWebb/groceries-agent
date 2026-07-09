@@ -1,16 +1,16 @@
 # agent-bug-reporting Specification
 
 ## Purpose
-Defines how the agent files bug reports for the user: the `report_bug` tool records attributed reports into the D1 `bug_reports` table (the operator reviews them in the Cloudflare Access-gated `/admin` panel), and the `report-grocery-agent-bug` skill that decides when to file and informs the user it did.
+Defines how the agent files bug reports for the user: the `report_bug` tool records attributed reports into the D1 `bug_reports` table (the operator reviews them in the Cloudflare Access-gated `/admin` panel), and the `report-yamp-bug` skill that decides when to file and informs the user it did.
 ## Requirements
 ### Requirement: Agent reports friction on errors or repeated correction
 
-The system SHALL provide a `report-grocery-agent-bug` skill that the agent uses when the grocery-mcp server returns an unworkable error, when the user has repeatedly corrected or redirected the agent on the same point, or when the user explicitly asks to report a problem. The skill SHALL compose a specific, reproducible report (what was attempted, the failure or correction pattern, the tools/inputs involved), call `report_bug`, and then **inform the user** that it filed the report (the tool returns `{ filed: true }` — there is no URL to relay). The shared `grocery-core` SHALL reference this skill so the trigger is available in every flow.
+The system SHALL provide a `report-yamp-bug` skill that the agent uses when the yamp server returns an unworkable error, when the user has repeatedly corrected or redirected the agent on the same point, or when the user explicitly asks to report a problem. The skill SHALL compose a specific, reproducible report (what was attempted, the failure or correction pattern, the tools/inputs involved), call `report_bug`, and then **inform the user** that it filed the report (the tool returns `{ filed: true }` — there is no URL to relay). The shared `yamp-core` SHALL reference this skill so the trigger is available in every flow.
 
 #### Scenario: An unworkable tool error is auto-reported
 
-- **WHEN** a grocery-mcp tool returns an error the agent cannot work around during a flow
-- **THEN** the agent uses the `report-grocery-agent-bug` skill to file an attributed report and tells the user it flagged the problem for the maintainer
+- **WHEN** a yamp tool returns an error the agent cannot work around during a flow
+- **THEN** the agent uses the `report-yamp-bug` skill to file an attributed report and tells the user it flagged the problem for the maintainer
 
 #### Scenario: Repeated correction triggers a report
 
@@ -19,7 +19,7 @@ The system SHALL provide a `report-grocery-agent-bug` skill that the agent uses 
 
 ### Requirement: At most one report per distinct problem per session
 
-The `report-grocery-agent-bug` skill SHALL file at most one report per distinct problem within a conversation — if it has already reported a given problem, it SHALL NOT refile it. File-and-inform is the behavior; the skill SHALL NOT block on asking the user's permission before filing.
+The `report-yamp-bug` skill SHALL file at most one report per distinct problem within a conversation — if it has already reported a given problem, it SHALL NOT refile it. File-and-inform is the behavior; the skill SHALL NOT block on asking the user's permission before filing.
 
 #### Scenario: The same problem is not filed twice
 

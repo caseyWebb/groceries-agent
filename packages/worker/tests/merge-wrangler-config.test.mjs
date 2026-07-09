@@ -13,7 +13,7 @@ import {
 
 // The maintainer's (code repo) config — carries real ids/vars that must NOT propagate.
 const code = {
-  name: "grocery-mcp",
+  name: "yamp",
   main: "src/index.ts",
   workers_dev: false,
   compatibility_date: "2025-06-01",
@@ -28,7 +28,7 @@ const code = {
     { binding: "OAUTH_KV", id: "MAINTAINER_OAUTH" },
   ],
   d1_databases: [
-    { binding: "DB", database_name: "grocery-mcp", migrations_dir: "migrations/d1", database_id: "MAINTAINER_DB" },
+    { binding: "DB", database_name: "yamp", migrations_dir: "migrations/d1", database_id: "MAINTAINER_DB" },
   ],
   triggers: { crons: ["*/5 * * * *"] },
   observability: { enabled: true },
@@ -59,10 +59,10 @@ const code = {
       "/source",
     ],
   },
-  r2_buckets: [{ binding: "CORPUS", bucket_name: "grocery-corpus" }],
+  r2_buckets: [{ binding: "CORPUS", bucket_name: "yamp-corpus" }],
   analytics_engine_datasets: [
-    { binding: "USAGE_AE", dataset: "grocery_usage" },
-    { binding: "TOOL_AE", dataset: "grocery_tool" },
+    { binding: "USAGE_AE", dataset: "yamp_usage" },
+    { binding: "TOOL_AE", dataset: "yamp_tool" },
   ],
 };
 
@@ -113,7 +113,7 @@ test("the Workers Static Assets binding propagates verbatim from code (member SP
 
 test("the R2 corpus bucket binding propagates verbatim from code (the silent-drop trap)", () => {
   const out = mergeWranglerConfig(code, operator); // operator declares no `r2_buckets`
-  assert.deepEqual(out.r2_buckets, [{ binding: "CORPUS", bucket_name: "grocery-corpus" }]);
+  assert.deepEqual(out.r2_buckets, [{ binding: "CORPUS", bucket_name: "yamp-corpus" }]);
 });
 
 test("both Analytics Engine dataset bindings propagate verbatim from code (the silent-drop trap)", () => {
@@ -122,8 +122,8 @@ test("both Analytics Engine dataset bindings propagate verbatim from code (the s
   // and `env.TOOL_AE` (per-tool-call) are undefined and every operator's points vanish.
   const out = mergeWranglerConfig(code, operator); // operator declares no analytics_engine_datasets
   assert.deepEqual(out.analytics_engine_datasets, [
-    { binding: "USAGE_AE", dataset: "grocery_usage" },
-    { binding: "TOOL_AE", dataset: "grocery_tool" },
+    { binding: "USAGE_AE", dataset: "yamp_usage" },
+    { binding: "TOOL_AE", dataset: "yamp_tool" },
   ]);
 });
 
@@ -290,7 +290,7 @@ test("bindingIdsChanged (KV): true when an id changes", () => {
 test("D1: the binding + code metadata propagate, id-less, when the operator declares none", () => {
   const out = mergeWranglerConfig(code, operator); // operator declares no D1
   assert.deepEqual(out.d1_databases, [
-    { binding: "DB", database_name: "grocery-mcp", migrations_dir: "migrations/d1" },
+    { binding: "DB", database_name: "yamp", migrations_dir: "migrations/d1" },
   ]);
   // The maintainer's database_id must NOT appear.
   assert.ok(!JSON.stringify(out).includes("MAINTAINER_DB"));
@@ -304,13 +304,13 @@ test("D1: operator database_id wins and the code repo's id never appears", () =>
   const db = out.d1_databases.find((d) => d.binding === "DB");
   assert.equal(db.database_id, "OPERATOR_DB");
   // code metadata is still carried from the code repo
-  assert.equal(db.database_name, "grocery-mcp");
+  assert.equal(db.database_name, "yamp");
   assert.equal(db.migrations_dir, "migrations/d1");
   assert.ok(!JSON.stringify(out).includes("MAINTAINER_DB"));
 });
 
 test("D1: pinD1Ids patches a provisioned id into the operator config, creating d1_databases", () => {
-  const deployed = { d1_databases: [{ binding: "DB", database_name: "grocery-mcp", database_id: "PROV_DB" }] };
+  const deployed = { d1_databases: [{ binding: "DB", database_name: "yamp", database_id: "PROV_DB" }] };
   const out = pinD1Ids(deployed, operator); // operator has no d1_databases
   assert.deepEqual(out.d1_databases, [{ binding: "DB", database_id: "PROV_DB" }]);
   assert.deepEqual(out.vars, { OPERATOR_VAR: "op" });

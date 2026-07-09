@@ -1,5 +1,5 @@
 {
-	// grocery-mcp — custom MCP server for the grocery agent.
+	// yamp — custom MCP server for the meal-planning agent.
 	// Secrets are NOT in this file; set them out-of-band and they persist across deploys:
 	//   wrangler secret put KROGER_CLIENT_ID
 	//   wrangler secret put KROGER_CLIENT_SECRET
@@ -7,7 +7,7 @@
 	//   wrangler secret put KROGER_OAUTH_CLIENT_SECRET  (optional)
 	//   wrangler secret put NTFY_URL                    (optional; Worker-side failure push to an ntfy topic)
 	//   wrangler secret put NTFY_TOKEN                  (optional; bearer for a protected ntfy topic)
-	"name": "grocery-mcp",
+	"name": "yamp",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-06-01",
 	// Required by the `agents` SDK internals (mimetext / node:diagnostics_channel).
@@ -47,7 +47,7 @@
 	// strips any id committed here). SQL schema migrations live under `migrations/d1/`
 	// (applied by `wrangler d1 migrations apply`).
 	"d1_databases": [
-		{ "binding": "DB", "database_name": "grocery-mcp", "migrations_dir": "migrations/d1" }
+		{ "binding": "DB", "database_name": "yamp", "migrations_dir": "migrations/d1" }
 	],
 	// Workers AI (semantic-meal-plan). `AI` runs embedding models in-Cloudflare —
 	// `@cf/baai/bge-base-en-v1.5` (768-dim) for the query embedding on the recipe
@@ -57,20 +57,20 @@
 	"ai": { "binding": "AI" },
 	// Workers Analytics Engine (usage-trends): the per-run usage history tier. Each
 	// background job emits ONE tenant-clean data point per run (job name, outcome,
-	// duration, counts) to the `grocery_usage` dataset — complementing the `job_health`
+	// duration, counts) to the `yamp_usage` dataset — complementing the `job_health`
 	// D1 liveness row, read back by the Usage trends panel via the AE SQL API. AE writes
 	// are non-blocking and cost NO KV/D1 budget. Code-level binding (no operator-owned id,
 	// like `ai`/`assets`): the deploy merge propagates it (merge-wrangler-config.mjs
 	// allowlist) — a NEW binding TYPE, so the merge needs an explicit allowlist line or it
 	// is silently dropped from every operator's deploy.
 	// A SECOND dataset (tool-usage-trends): one tenant-clean point per MCP tool call
-	// (tool name, ok/error, duration) to `grocery_tool` — the request-path history tier,
+	// (tool name, ok/error, duration) to `yamp_tool` — the request-path history tier,
 	// read back by the Usage tool panel via the AE SQL API. The merge copies this whole
 	// array verbatim, so a second instance of the type propagates with no extra allowlist
 	// line (a regression test pins that both bindings survive).
 	"analytics_engine_datasets": [
-		{ "binding": "USAGE_AE", "dataset": "grocery_usage" },
-		{ "binding": "TOOL_AE", "dataset": "grocery_tool" }
+		{ "binding": "USAGE_AE", "dataset": "yamp_usage" },
+		{ "binding": "TOOL_AE", "dataset": "yamp_tool" }
 	],
 	// Static assets (member-app-shell + operator-admin): ONE merged, gitignored build root
 	// (./assets) carrying the member SPA at / (index.html + hashed chunks; deep links fall
@@ -120,7 +120,7 @@
 	// `ai`/`assets` — the `bucket_name` is account-unique but carries no operator-owned
 	// secret, and each operator provisions its own bucket of that name in their account.
 	"r2_buckets": [
-		{ "binding": "CORPUS", "bucket_name": "grocery-corpus" }
+		{ "binding": "CORPUS", "bucket_name": "yamp-corpus" }
 	],
 	// workers.dev is OFF so the only route in is the operator's Access-protected custom
 	// domain — closing the *.workers.dev bypass of the /admin Access app. Operator-owned

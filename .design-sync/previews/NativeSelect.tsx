@@ -1,4 +1,4 @@
-import { NativeSelect } from "@grocery-agent/ui";
+import { NativeSelect } from "@yamp/ui";
 
 export function Default() {
   return (

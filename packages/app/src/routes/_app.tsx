@@ -19,7 +19,7 @@ import {
   IconSun,
   Button,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { api } from "../lib/api";
 import { enrollPasskey } from "../lib/passkey";
 import { useGrocery, useOverlay, usePlan, useProfile } from "../lib/data";
@@ -135,7 +135,7 @@ function AppShell() {
           <span className="brand-mark sm">
             <IconBook />
           </span>
-          <span className="brand-name">Cookbook</span>
+          <span className="brand-name">yamp</span>
         </div>
         <nav className="sb-nav">
           {NAV.map((n) => {

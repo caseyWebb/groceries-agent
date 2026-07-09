@@ -1,4 +1,4 @@
-import { SegmentedControl } from "@grocery-agent/ui";
+import { SegmentedControl } from "@yamp/ui";
 
 export function Timeframe() {
   return (

@@ -14,7 +14,7 @@ import {
   type LocalReject,
   type SaleObservation,
   type TaskEnvelope,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 import type { SatelliteConfig, ScanStoreConfig } from "./config.js";
 import type { FetchTier } from "./fetch.js";
 import type { StorageState } from "./session.js";

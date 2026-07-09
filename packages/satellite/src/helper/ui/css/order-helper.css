@@ -1,5 +1,5 @@
   /* ── Operator theme: warm orange accent over Basecoat's neutral primary, ──
-     matched to the grocery-agent admin panel. Light + dark maps. */
+     matched to the yamp admin panel. Light + dark maps. */
   :root {
     --on-accent: #1a1a1a;
     --c-surface: #fff; --c-page: #fafafa;

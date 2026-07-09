@@ -1,4 +1,4 @@
-// A modal dialog (the shared Radix Dialog/AlertDialog from @grocery-agent/ui — role="dialog"
+// A modal dialog (the shared Radix Dialog/AlertDialog from @yamp/ui — role="dialog"
 // with an accessible name from its title). Construct with the dialog's root locator, e.g.
 // `page.getByRole("dialog", { name: "Invite member" })`. Hydration is one-shot at app boot
 // (not per-island), and triggers only render once their screen's query has resolved, so a

@@ -1,4 +1,4 @@
-import { EmptyState, Button, IconSparkle, IconSearch } from "@grocery-agent/ui";
+import { EmptyState, Button, IconSparkle, IconSearch } from "@yamp/ui";
 
 export function NoVibes() {
   return (

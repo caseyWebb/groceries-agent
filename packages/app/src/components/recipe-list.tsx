@@ -10,7 +10,7 @@ import {
   IconHeart,
   IconHeartFill,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { useOverlay, usePlan, type Hit } from "../lib/data";
 import { usePlanOps, useSetFavorite } from "../lib/mutations";
 

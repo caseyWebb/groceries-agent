@@ -8,7 +8,7 @@ import {
   Button,
   IconSearch,
   IconPantry,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 export function NoRecipes() {
   return (

@@ -1,4 +1,4 @@
-import { Label, Input } from "@grocery-agent/ui";
+import { Label, Input } from "@yamp/ui";
 
 export function Default() {
   return <Label htmlFor="nights">How many nights are you planning?</Label>;

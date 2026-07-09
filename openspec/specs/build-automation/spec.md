@@ -16,7 +16,7 @@ The reusable **deploy** workflow SHALL, after the Worker deploy step succeeds, b
 #### Scenario: Connector URL is baked per operator
 
 - **WHEN** the deploy builds the bundle
-- **THEN** `.mcp.json` carries that operator's `grocery-mcp` connector URL, identical to other operators' bundles except for the URL and the version
+- **THEN** `.mcp.json` carries that operator's `yamp` connector URL, identical to other operators' bundles except for the URL and the version
 
 #### Scenario: Published version is monotonic
 

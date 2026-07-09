@@ -1,4 +1,4 @@
-import { Combobox } from "@grocery-agent/ui";
+import { Combobox } from "@yamp/ui";
 
 const RECIPES = [
   { value: "pan-seared-salmon", label: "Pan-seared salmon", sub: "Mediterranean · 25 min" },

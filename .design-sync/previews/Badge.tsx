@@ -1,4 +1,4 @@
-import { Badge } from "@grocery-agent/ui";
+import { Badge } from "@yamp/ui";
 
 export function Variants() {
   return (

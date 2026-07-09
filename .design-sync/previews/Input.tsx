@@ -1,4 +1,4 @@
-import { Input } from "@grocery-agent/ui";
+import { Input } from "@yamp/ui";
 
 export function Default() {
   return <Input type="text" placeholder="Add a recipe name" />;

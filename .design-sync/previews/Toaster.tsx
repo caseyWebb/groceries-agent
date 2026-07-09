@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Toaster, toast } from "@grocery-agent/ui";
+import { Toaster, toast } from "@yamp/ui";
 
 export function AddedToPlan() {
   // Fire after mount so the <Toaster/> listener is registered before toast() runs.

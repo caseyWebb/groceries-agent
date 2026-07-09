@@ -24,7 +24,7 @@ import {
   RecipeFacets,
   Textarea,
   toast,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import {
   useNotes,
   useOverlay,

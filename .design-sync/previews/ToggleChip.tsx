@@ -1,4 +1,4 @@
-import { ToggleChip } from "@grocery-agent/ui";
+import { ToggleChip } from "@yamp/ui";
 
 export function Proteins() {
   return (

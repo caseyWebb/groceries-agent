@@ -1,4 +1,4 @@
-import { Crumbs } from "@grocery-agent/ui";
+import { Crumbs } from "@yamp/ui";
 
 export function EditTrail() {
   return (

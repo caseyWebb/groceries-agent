@@ -1,4 +1,4 @@
-import { Switch, Label } from "@grocery-agent/ui";
+import { Switch, Label } from "@yamp/ui";
 
 export function States() {
   return (

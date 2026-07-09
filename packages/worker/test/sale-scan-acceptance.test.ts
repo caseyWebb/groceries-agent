@@ -11,7 +11,7 @@ import {
   SALE_SCAN_KIND,
   type ClaimResponse,
   type SaleObservation,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
 import type { KvStore } from "../src/kroger-user.js";

@@ -13,7 +13,7 @@
 // `flyer:{store}:{locationId}` rollup with the freshly-observed set (one scan = one store's full
 // current sale set).
 
-import type { SaleObservation } from "@grocery-agent/contract";
+import type { SaleObservation } from "@yamp/contract";
 import { deriveSavings, isOnSale, type FlyerItem } from "./matching.js";
 import { parseSize } from "./unit-price.js";
 

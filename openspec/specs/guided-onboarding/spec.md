@@ -5,7 +5,7 @@ TBD - created by archiving change package-agent-as-plugin. Update Purpose after 
 ## Requirements
 ### Requirement: Guided first-run setup skill
 
-The system SHALL provide a `configure-grocery-profile` skill that handles a member's grocery profile — **store location (ZIP)**, taste, cooking preferences, diet principles, **kitchen equipment**, a **starter recipe corpus**, starting pantry, an optional **bulk-buy watchlist**, an optional **staples list**, and **ready-to-eat (heat-and-eat) acceptance** — **idempotently**: on an empty profile it walks first-time setup conversationally (rather than requiring a wall of typed input); on an existing profile it reads back what it already knows (via `read_user_profile()`) and edits only what the member names. It SHALL persist each piece via write tools — `update_preferences`, `update_taste`, `update_diet_principles`, `update_kitchen`, `update_pantry`, `add_draft_ready_to_eat`, `update_stockup` (bulk-buy watchlist), `update_feeds` (discovery feeds), and `update_staples` (staples list). The skill itself SHALL NOT define an MCP tool — it composes existing and newly-added tools owned by other capabilities. Like every workflow skill, it SHALL load `grocery-core` via its prerequisite line.
+The system SHALL provide a `configure-yamp-profile` skill that handles a member's grocery profile — **store location (ZIP)**, taste, cooking preferences, diet principles, **kitchen equipment**, a **starter recipe corpus**, starting pantry, an optional **bulk-buy watchlist**, an optional **staples list**, and **ready-to-eat (heat-and-eat) acceptance** — **idempotently**: on an empty profile it walks first-time setup conversationally (rather than requiring a wall of typed input); on an existing profile it reads back what it already knows (via `read_user_profile()`) and edits only what the member names. It SHALL persist each piece via write tools — `update_preferences`, `update_taste`, `update_diet_principles`, `update_kitchen`, `update_pantry`, `add_draft_ready_to_eat`, `update_stockup` (bulk-buy watchlist), `update_feeds` (discovery feeds), and `update_staples` (staples list). The skill itself SHALL NOT define an MCP tool — it composes existing and newly-added tools owned by other capabilities. Like every workflow skill, it SHALL load `yamp-core` via its prerequisite line.
 
 The ready-to-eat setup area SHALL ask which kinds of heat-and-eat items the member accepts and for which meals, and SHALL persist named acceptances to the member's ready-to-eat catalog in D1 as `active` items (via `add_draft_ready_to_eat` with `status: active`). A member with no opinion on ready-to-eat SHALL be able to skip the area, leaving the catalog empty.
 
@@ -50,14 +50,14 @@ The staples setup area SHALL ask the member which items they never want to run o
 
 ### Requirement: Onboarding triggers on an empty profile or explicit request
 
-The onboarding skill SHALL be loadable both by explicit invocation and by a **deterministic initialization gate** in the `grocery-core` persona tier (which every workflow loads once per session). Before the first substantive action in a session, the agent SHALL call `profile_status`; when it reports `initialized: false`, the agent SHALL run `configure-grocery-profile` before fulfilling the original request, then resume that request. The gate SHALL pass `missing` through to onboarding so already-completed areas can be skipped. The onboarding flow SHALL NOT force the member to provide everything at once.
+The onboarding skill SHALL be loadable both by explicit invocation and by a **deterministic initialization gate** in the `yamp-core` persona tier (which every workflow loads once per session). Before the first substantive action in a session, the agent SHALL call `profile_status`; when it reports `initialized: false`, the agent SHALL run `configure-yamp-profile` before fulfilling the original request, then resume that request. The gate SHALL pass `missing` through to onboarding so already-completed areas can be skipped. The onboarding flow SHALL NOT force the member to provide everything at once.
 
-The gate SHALL be **fail-open**: if `profile_status` returns an error (an indeterminate result), the agent SHALL proceed with the request normally — a transient failure SHALL NOT be treated as "not initialized." The gate SHALL be **skipped** when the active flow is itself `configure-grocery-profile` (no self-loop) or `report-grocery-agent-bug` (a new member must be able to report a bug without first completing setup).
+The gate SHALL be **fail-open**: if `profile_status` returns an error (an indeterminate result), the agent SHALL proceed with the request normally — a transient failure SHALL NOT be treated as "not initialized." The gate SHALL be **skipped** when the active flow is itself `configure-yamp-profile` (no self-loop) or `report-yamp-bug` (a new member must be able to report a bug without first completing setup).
 
 #### Scenario: Uninitialized member is routed through onboarding first
 
 - **WHEN** a member whose `profile_status` reports `initialized: false` makes a substantive request (e.g. "make me a menu")
-- **THEN** the agent runs `configure-grocery-profile` before fulfilling it, then resumes the original request
+- **THEN** the agent runs `configure-yamp-profile` before fulfilling it, then resumes the original request
 
 #### Scenario: Initialized member proceeds directly
 
@@ -71,19 +71,19 @@ The gate SHALL be **fail-open**: if `profile_status` returns an error (an indete
 
 #### Scenario: Bug reporting is not gated
 
-- **WHEN** a brand-new (uninitialized) member invokes `report-grocery-agent-bug`
+- **WHEN** a brand-new (uninitialized) member invokes `report-yamp-bug`
 - **THEN** the gate is skipped and the bug report proceeds without forcing setup first
 
 #### Scenario: Onboarding does not gate itself
 
-- **WHEN** the active flow is `configure-grocery-profile`
+- **WHEN** the active flow is `configure-yamp-profile`
 - **THEN** the initialization gate is skipped so onboarding does not re-trigger itself
 
 ### Requirement: Incremental, resumable capture
 
 The onboarding skill SHALL capture setup in small batches and persist each batch as it is gathered, so that an interrupted or abandoned setup leaves the already-provided information saved rather than lost. Each setup area SHALL be independently resumable: the skill SHALL check the area's own backing data (via `read_user_profile()`) and SHALL skip (or merely read back) an area that is already populated rather than re-interrogating it — e.g. it SHALL NOT re-walk taste when the `taste` field is already set in D1, and SHALL NOT re-promote a starter corpus when the caller's overlay already holds rows. This per-area idempotency is the single code path behind both first-run setup and returning-member review.
 
-For a brand-new member, `read_user_profile()` returns `{ initialized: false, missing: [...all areas...] }`. The `missing` array signals which areas are empty and not yet set up. The skill SHALL use `missing` to determine which areas to walk and SHALL NOT treat an empty area as a tool failure nor trip the `report-grocery-agent-bug` reflex.
+For a brand-new member, `read_user_profile()` returns `{ initialized: false, missing: [...all areas...] }`. The `missing` array signals which areas are empty and not yet set up. The skill SHALL use `missing` to determine which areas to walk and SHALL NOT treat an empty area as a tool failure nor trip the `report-yamp-bug` reflex.
 
 #### Scenario: Interrupted setup keeps partial data
 

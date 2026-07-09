@@ -11,7 +11,7 @@
 
 import { db } from "./db.js";
 import type { Env } from "./env.js";
-import { DEFAULT_CLAIM_MAX, MAX_CLAIM_TASKS, type TaskEnvelope, type TaskScope, type TaskStatus } from "@grocery-agent/contract";
+import { DEFAULT_CLAIM_MAX, MAX_CLAIM_TASKS, type TaskEnvelope, type TaskScope, type TaskStatus } from "@yamp/contract";
 
 /**
  * Default lease duration — how long a claimed task is held before its lease expires and the

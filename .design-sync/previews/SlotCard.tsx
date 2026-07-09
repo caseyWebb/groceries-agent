@@ -1,4 +1,4 @@
-import { SlotCard, type ProposeSlotView } from "@grocery-agent/ui";
+import { SlotCard, type ProposeSlotView } from "@yamp/ui";
 
 const proteins = ["Chicken", "Beef", "Salmon", "Tofu"];
 const cuisines = ["Italian", "Asian", "Mediterranean"];

@@ -1,4 +1,4 @@
-import { PageHead, Button, IconSparkle } from "@grocery-agent/ui";
+import { PageHead, Button, IconSparkle } from "@yamp/ui";
 
 export function WithActions() {
   return (

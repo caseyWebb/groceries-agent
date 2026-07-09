@@ -1,4 +1,4 @@
-import { RecipeFacets } from "@grocery-agent/ui";
+import { RecipeFacets } from "@yamp/ui";
 
 export function ProteinAndCuisine() {
   return (

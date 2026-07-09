@@ -1,6 +1,6 @@
 // The thin admin component kit (operator-admin), ported from the SSR panel's ui/kit.tsx onto
 // React + the shared shadcn/ui primitives. GENERIC primitives (button, card, badge, alert,
-// input, table, dialog, dropdown) compose @grocery-agent/ui per the visual-layer requirement;
+// input, table, dialog, dropdown) compose @yamp/ui per the visual-layer requirement;
 // the PANEL composites (items, stat tiles, pills, sparklines, progression track, PrettyKV)
 // keep their class vocabulary (src/admin.css) so the areas — and the Playwright page
 // objects — read identically. Composites stay presentational: interactivity lives in the
@@ -17,7 +17,7 @@ import {
   Input,
   Label,
   cn,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 import { CheckCircleIcon, XCircleIcon, MinusCircleIcon, TrashIcon, InboxIcon } from "./icons";
 
 type Child = React.ReactNode;

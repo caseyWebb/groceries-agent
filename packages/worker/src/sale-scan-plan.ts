@@ -17,7 +17,7 @@
 
 import type { Env } from "./env.js";
 import type { KvStore } from "./kroger-user.js";
-import { SALE_SCAN_KIND } from "@grocery-agent/contract";
+import { SALE_SCAN_KIND } from "@yamp/contract";
 import { KROGER_STORE, normalizeTerms } from "./flyer-warm.js";
 import { directoryFromEnv } from "./tenant.js";
 import { readPreferences } from "./profile-db.js";

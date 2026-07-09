@@ -1,4 +1,4 @@
-import { Slider } from "@grocery-agent/ui";
+import { Slider } from "@yamp/ui";
 
 export function Adventurousness() {
   return (

@@ -1,12 +1,12 @@
-# grocery-agent
+# yamp — Yet Another Meal Planner
 
-A personal grocery agent you talk to like a friend who knows your kitchen. It plans the week's
+A personal meal-planning agent you talk to like a friend who knows your kitchen. It plans the week's
 dinners from a shared recipe corpus, keeps track of what's in your pantry, and fills your Kroger
 cart — or walks you through any store, aisle by aisle. The agent *runs* inside Claude.ai; this
 repo is what *builds* it.
 
 > **There is no data in this repo.** It holds the agent's source — a Cloudflare Worker (the
-> `grocery-mcp` server), the persona it runs on, and the build tooling. Every operator's recipes
+> `yamp` server), the persona it runs on, and the build tooling. Every operator's recipes
 > live in Cloudflare R2 and their profile/state in Cloudflare D1; a separate **public data repo**
 > is the deploy control plane and the plugin marketplace. See [Self-hosting](#self-hosting).
 
@@ -59,11 +59,11 @@ Kroger SKU matching, cart writes, validation.
 
 ```
   You, in Claude.ai (web + mobile) — or the member web app at <worker>/
-        │   the grocery-agent plugin — workflow skills + the grocery-mcp connector
+        │   the yamp plugin — workflow skills + the yamp connector
         │   MCP over HTTPS, OAuth 2.1 · connect once with an operator-issued invite code
         │   (the web app signs in with the SAME invite code → a cookie session + typed /api)
         ▼
-  Cloudflare Worker · grocery-mcp
+  Cloudflare Worker · yamp
         │   OAuth provider + multi-tenant gate + coarse, opinionated domain tools
         │   (pantry · recipes · Kroger matching · cart) — the locus of determinism
         ├──────────►  Cloudflare R2               — authored recipe & guidance markdown
@@ -96,7 +96,7 @@ background crons — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 | Path | What it is |
 | --- | --- |
-| `src/`, `test/`, `wrangler.jsonc` | the Cloudflare Worker — the `grocery-mcp` MCP server + OAuth provider |
+| `src/`, `test/`, `wrangler.jsonc` | the Cloudflare Worker — the `yamp` MCP server + OAuth provider |
 | `packages/app`, `packages/admin-app`, `packages/ui` | the member web app (a React SPA served by the Worker at `/`), the operator admin panel (a React SPA served at `/admin`), and the shared shadcn/ui components + theme tokens both build on |
 | `scripts/` | build tooling — recipe indexes, the static cookbook, the plugin bundle |
 | `AGENT_INSTRUCTIONS.md` | the agent persona + conversational flows; the source the plugin bundle is generated from (the bundle is published to the operator's data-repo marketplace, not committed here) |
@@ -139,7 +139,7 @@ plugin marketplace: it holds your config, a thin caller workflow that references
 CI, and the plugin bundle your deploy publishes with your connector URL baked in. Your recipes live
 in a Cloudflare R2 bucket; Cloudflare hosts the Worker, D1, KV, and R2 (comfortably free-tier at
 personal scale); a Kroger developer app handles search and cart. Friends add your marketplace
-(`/plugin marketplace add <you>/groceries-agent-data`) and connect their own Claude.ai with an
+(`/plugin marketplace add <you>/yet-another-meal-planner-deployment`) and connect their own Claude.ai with an
 invite code you mint — no GitHub or Kroger developer account needed on their end. Nothing in the
 data repo is secret, which is what lets it be public.
 

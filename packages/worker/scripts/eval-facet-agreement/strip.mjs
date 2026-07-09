@@ -11,7 +11,7 @@
 //
 //   node scripts/eval-facet-agreement/strip.mjs --plan strip-plan.json --dir ./corpus/recipes          # dry run
 //   node scripts/eval-facet-agreement/strip.mjs --plan strip-plan.json --dir ./corpus/recipes --apply   # write
-//   then: rclone sync ./corpus r2:grocery-corpus
+//   then: rclone sync ./corpus r2:yamp-corpus
 //
 // The classify pass + projection then derive + materialize the stripped facets on the next
 // cron tick (a stripped recipe falls back to "not yet derived" → empty until then, which the
@@ -102,7 +102,7 @@ async function main() {
   }
   console.log(
     `\n${APPLY ? "Stripped" : "Would strip"} ${changed} recipe(s); ${keptOverrides} Tier-B override(s) preserved.` +
-      (APPLY ? "  Now: rclone sync ./corpus r2:grocery-corpus" : "  Re-run with --apply to write."),
+      (APPLY ? "  Now: rclone sync ./corpus r2:yamp-corpus" : "  Re-run with --apply to write."),
   );
 }
 

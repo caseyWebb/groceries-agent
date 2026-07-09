@@ -10,7 +10,7 @@
 // contract (parseRecipeItem) before the satellite will push it — an adapter cannot smuggle a
 // non-contract shape onto the wire.
 
-import { parseRecipeItem, type RecipeItem, type LocalRejectCategory } from "@grocery-agent/contract";
+import { parseRecipeItem, type RecipeItem, type LocalRejectCategory } from "@yamp/contract";
 import { pathToFileURL } from "node:url";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

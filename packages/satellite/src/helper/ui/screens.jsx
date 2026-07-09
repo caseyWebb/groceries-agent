@@ -32,7 +32,7 @@ export function RefreshScreen({ sub, errorMsg, onRefresh, onRetry }) {
       <div className="hero state-empty fade-in">
         <span className="hero-ico"><I.listChecks size={26} /></span>
         <h1>Your list is empty</h1>
-        <p>Add items with your grocery agent, then refresh to pull them here.</p>
+        <p>Add items with yamp, then refresh to pull them here.</p>
         <button className="btn" data-variant="outline" onClick={onRefresh}><I.refresh size={15} /> Refresh list</button>
       </div>
     );

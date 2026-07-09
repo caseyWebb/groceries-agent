@@ -5,7 +5,7 @@
 // data) is an operator-authored adapter, not this one.
 
 import { XMLParser } from "fast-xml-parser";
-import type { RecipeItem } from "@grocery-agent/contract";
+import type { RecipeItem } from "@yamp/contract";
 import type { SourceAdapter, Sdk } from "../adapter.js";
 
 /**

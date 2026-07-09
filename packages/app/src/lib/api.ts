@@ -3,7 +3,7 @@
 // the runtime is just hono/client. Same-origin by construction: the base is "/", and
 // under `aubr dev:app` the Vite proxy carries /api to the local Worker.
 import { hc } from "hono/client";
-import type { MemberApi } from "@grocery-agent/worker/api";
+import type { MemberApi } from "@yamp/worker/api";
 
 /** The SPA's embedded build id — compared against the `X-App-Build` response header
  *  (the version-skew contract). `"dev"` when unstamped (local dev; the harness). */

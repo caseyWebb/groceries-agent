@@ -27,7 +27,7 @@ import {
   type OrderLine,
   type OrderListResponse,
   type OrderReceiptResponse,
-} from "@grocery-agent/contract";
+} from "@yamp/contract";
 import type { Env } from "./env.js";
 import { bearer, underRateLimit, intakeObservations } from "./ingest.js";
 import { lookupIngestKey, type IngestKeyRow } from "./ingest-db.js";

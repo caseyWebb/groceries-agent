@@ -1,4 +1,4 @@
-# Building with @grocery-agent/ui
+# Building with @yamp/ui
 
 A shadcn/ui-style React design system for a grocery / recipe / meal-planning app. Components carry
 their own look via **variant props**; you style your own layout with **Tailwind utility classes bound
@@ -58,7 +58,7 @@ Don't restyle a component's built-in states with classes — pass the prop:
 - `Pagination` → `PaginationContent`, `PaginationItem`, `PaginationLink` (`isActive`), `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`
 - `Tooltip` → `TooltipTrigger`, `TooltipContent`
 
-These sub-parts are importable from `@grocery-agent/ui` even though the pane shows one card per parent.
+These sub-parts are importable from `@yamp/ui` even though the pane shows one card per parent.
 
 **Icons**: import by name — `IconCart`, `IconHeart`, `IconSearch`, `IconPlus`, `IconTrash`, … (browse the
 Icons gallery card). Each takes SVG props and inherits `currentColor`.
@@ -78,7 +78,7 @@ read each component's `.d.ts` + `.prompt.md` for the exact shape.
 import {
   Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
   Button, Badge, IconHeart,
-} from "@grocery-agent/ui";
+} from "@yamp/ui";
 
 function RecipeTile() {
   return (

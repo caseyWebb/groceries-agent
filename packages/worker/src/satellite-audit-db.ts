@@ -10,7 +10,7 @@
 
 import { db } from "./db.js";
 import type { Env } from "./env.js";
-import type { LocalReject } from "@grocery-agent/contract";
+import type { LocalReject } from "@yamp/contract";
 
 /** A satellite rejection's origin: caught Worker-side at intake, or reported by the satellite's local validators. */
 export type RejectionOrigin = "worker" | "local";

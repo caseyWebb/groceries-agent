@@ -1,4 +1,4 @@
-import { NudgeBar } from "@grocery-agent/ui";
+import { NudgeBar } from "@yamp/ui";
 
 export function Default() {
   return (
