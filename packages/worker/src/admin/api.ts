@@ -27,6 +27,7 @@ import {
   buildHealthPayload,
   readJobRuns,
   readAllJobRuns,
+  readAiBacklog,
   HEALTH_JOBS,
   JOB_RUNS_PER_JOB_CAP,
   type JobRun,
@@ -389,13 +390,14 @@ export function registerApiRoutes(app: Hono<{ Bindings: Env }, BlankSchema, "/ad
       // per-activity AI attribution). Not-configured / upstream-failure detail states pass
       // through STRUCTURALLY, as data — never a thrown 500.
       .get("/api/usage", async (c) => {
-        const [usage, trends, tools, aiUsage] = await Promise.all([
+        const [usage, trends, tools, aiUsage, aiBacklog] = await Promise.all([
           fetchUsage(c.env),
           fetchUsageTrends(c.env),
           fetchToolUsage(c.env),
           fetchAiUsage(c.env),
+          readAiBacklog(c.env),
         ]);
-        return c.json({ usage, trends, tools, aiUsage });
+        return c.json({ usage, trends, tools, aiUsage, aiBacklog });
       })
       // Discovery: the bounded candidate read + the liveness-derived ingest strip (the SPA's
       // filter pills + pager work client-side over this one payload).

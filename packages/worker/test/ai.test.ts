@@ -13,11 +13,12 @@ const BGE = "@cf/baai/bge-base-en-v1.5";
  *  every emitted point, so a test can assert the exact slot layout. */
 function fakeEnv(run: (model: string, input: unknown) => unknown) {
   const points: { indexes: unknown[]; blobs: unknown[]; doubles: number[] }[] = [];
+  const runMock = vi.fn((model: string, input: unknown) => Promise.resolve(run(model, input)));
   const env = {
-    AI: { run: vi.fn((model: string, input: unknown) => Promise.resolve(run(model, input))) },
+    AI: { run: runMock },
     AI_AE: { writeDataPoint: vi.fn((p) => points.push(p)) },
   } as unknown as Pick<Env, "AI" | "AI_AE">;
-  return { env, points, ai: (env as { AI: { run: ReturnType<typeof vi.fn> } }).AI.run };
+  return { env, points, ai: runMock };
 }
 
 describe("estimateNeurons", () => {
