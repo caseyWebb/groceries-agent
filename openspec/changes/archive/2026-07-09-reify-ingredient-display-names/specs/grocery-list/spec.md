@@ -1,21 +1,4 @@
-# grocery-list Specification
-
-## Purpose
-TBD - created by archiving change git-write-tools. Update Purpose after archive.
-## Requirements
-### Requirement: Grocery list is stored in and served from D1
-
-The grocery list SHALL be stored as rows in the per-tenant D1 `grocery_list` table (keyed by `(tenant, normalized_name)`), not as a `grocery_list.toml` file or a `state:<username>:grocery_list` JSON array in KV. `read_grocery_list` SHALL query rows (a status filter applied as a `WHERE` clause); `add_to_grocery_list` / `update_grocery_list` / `remove_from_grocery_list` and the order/cart status transitions SHALL be row-level upsert/update/delete (dedup by normalized name), not whole-array rewrites. Writes are strongly consistent (read-after-write).
-
-#### Scenario: Adding an item inserts/updates one row
-
-- **WHEN** `add_to_grocery_list` adds an item
-- **THEN** a single `grocery_list` row is upserted for the caller, leaving other items untouched, and an immediately following read sees it
-
-#### Scenario: Status filter is a query
-
-- **WHEN** `read_grocery_list` is called filtered to `active`
-- **THEN** the result comes from `WHERE tenant=? AND status='active'`, not by loading and filtering the whole list
+## MODIFIED Requirements
 
 ### Requirement: Grocery list schema
 
@@ -114,41 +97,3 @@ The system SHALL provide `read_grocery_list`, `add_to_grocery_list`, `update_gro
 
 - **WHEN** `update_grocery_list` attempts to set an `active` item directly to `ordered`
 - **THEN** the write is rejected with a structured `validation_failed` error carrying the attempted transition, and the row is unchanged
-
-### Requirement: Prompted promotion from pantry
-
-When a pantry item is low or out, the system SHALL treat adding it to the grocery list as a prompted, user-confirmed decision and SHALL NOT auto-add it. An item promoted from pantry SHALL be recorded with `source: "pantry_low"`. Observation (pantry quantity) and intent (the buy list) are kept as distinct facts.
-
-#### Scenario: Low pantry item is offered, not auto-added
-
-- **WHEN** the user reports an item is low or out and the agent considers it for the buy list
-- **THEN** the item is added to the `grocery_list` table only after the user confirms, recorded with `source: "pantry_low"`
-
-### Requirement: Provenance supports order-time dedup and aggregation
-
-The list's `source` and `for_recipes` fields SHALL carry enough provenance for order-time reconciliation without storing portion math. The order-time to-buy set SHALL be `grocery_list(active) ∪ menu-needs − pantry-has`, where **menu needs are derived server-side from the meal plan's recipes' derived full ingredient lists** (see the derived to-buy read requirement) rather than materialized into rows at plan time; `for_recipes` SHALL let the agent aggregate how much the menu needs of an ingredient from the recipes' stated amounts. Explicit `source: "menu"` rows remain legal and meaningful: they are **materializations** — a derived need pinned or edited into an explicit row (or an open-world side's world-knowledge ingredients, which have no recipe to derive from) — and they merge with the derived need under the same canonical id. Lifecycle transitions past `active` (`in_cart`, `ordered`, and the terminal receive action) are driven by the order-placement flow and the user-asserted transitions.
-
-#### Scenario: Menu-derived item records its recipes
-
-- **WHEN** an ingredient reaches the list as an explicit menu row (a materialization or an open-world side ingredient)
-- **THEN** it is recorded with `source: "menu"` and any contributing recipe slugs in `for_recipes`
-
-#### Scenario: A materialized row and its derived need do not double-count
-
-- **WHEN** the order-time to-buy set is computed while an ingredient exists both as a derived plan need and as an explicit `source: "menu"` row
-- **THEN** the two merge on the canonical id into a single to-buy line with unioned `for_recipes`
-
-### Requirement: The to-buy set is a derived, first-class read
-
-The system SHALL expose the order-time to-buy set as a read — computed at read time from the `active` grocery list, the meal plan's derived ingredient needs, and the pantry, joined on canonical ingredient ids by the same shared set-algebra operation `place_order` uses — via the MCP `read_to_buy` tool and the member app's grocery read surface, both calling one shared operation. Derived lines SHALL carry `source:"menu"`-shaped provenance (`origin: "plan"`, `for_recipes`) and SHALL exist only in the read: no reconcile, cron, or write path SHALL materialize plan needs into `grocery_list` rows automatically — materialization SHALL happen only through an explicit edit/pin (the standard add upsert). Pantry-covered needs SHALL be returned as a distinct section (never silently dropped), and planned recipes with no derived ingredient list SHALL be reported by slug.
-
-#### Scenario: The plan is the source of truth for derived lines
-
-- **WHEN** the meal plan changes (a recipe added, removed, or swapped)
-- **THEN** the next to-buy read reflects the change with no intervening write to `grocery_list`
-
-#### Scenario: No automatic materialization
-
-- **WHEN** the to-buy read computes derived lines
-- **THEN** it writes nothing: repeated reads with unchanged inputs return the same lines and leave `grocery_list` untouched
-

@@ -312,7 +312,8 @@ Live inventory. Agent-writable. Updated as side effect of menu generation and ad
 -- D1 pantry table — one row per item. PRIMARY KEY (tenant, normalized_name).
 -- idx_pantry_category on (tenant, category).
 tenant           TEXT  -- owning user
-name             TEXT  -- display name (e.g. "olive oil")
+name             TEXT  -- surface form / resolver input (e.g. "olive oil"; always member phrasing, never a raw id)
+display_name     TEXT  -- optional explicit label override (usually NULL); a row renders display_name ?? name
 normalized_name  TEXT  -- canonical ingredient id via the IngredientContext funnel (resolve)
 quantity         TEXT  -- full | partial | low | "<count>" for countables
 category         TEXT  -- pantry | fridge | freezer | spices
@@ -324,16 +325,17 @@ notes            TEXT  -- optional short freeform note
 
 Example rows:
 
-| tenant | name | normalized_name | quantity | category | prepared_from | added_at | last_verified_at | notes |
-|--------|------|-----------------|----------|----------|---------------|----------|------------------|-------|
-| alice | olive oil | olive oil | partial | pantry | NULL | 2025-04-01 | 2025-05-12 | NULL |
-| alice | ground beef | ground beef | 3 lb | freezer | NULL | 2025-05-10 | 2025-05-10 | freezer burned, best for stocks or stews |
-| alice | cooked rice | cooked rice | partial | fridge | salmon-with-rice | 2025-05-12 | 2025-05-12 | NULL |
+| tenant | name | display_name | normalized_name | quantity | category | prepared_from | added_at | last_verified_at | notes |
+|--------|------|--------------|-----------------|----------|----------|---------------|----------|------------------|-------|
+| alice | olive oil | NULL | olive oil | partial | pantry | NULL | 2025-04-01 | 2025-05-12 | NULL |
+| alice | ground beef | NULL | ground beef | 3 lb | freezer | NULL | 2025-05-10 | 2025-05-10 | freezer burned, best for stocks or stews |
+| alice | cooked rice | NULL | cooked rice | partial | fridge | salmon-with-rice | 2025-05-12 | 2025-05-12 | NULL |
 
 **Notes:**
 - `quantity` is intentionally loose — "full", "partial", "low" plus optional explicit counts. We don't track precise amounts (whiteboard problem).
 - `prepared_from` set for cooked/prepared items — faster perishability profile, identifies which recipe produced it.
 - `last_verified_at` resets when the user confirms the item is still there during a pantry confirmation pass.
+- `display_name` (nullable) is an optional explicit label override, stored independently of the resolver-input `name` and the canonical `normalized_name`. A pantry row's `name` is always the member's phrasing (never a raw id — `update_pantry` takes no id), so a surface renders `display_name ?? name`. A merge (adding "green onions" onto an existing "scallions" row on the same canonical id) keeps the surviving row's `name`/`display_name`, never overwriting it with the incoming surface form.
 
 ## kitchen (per-tenant, D1 `kitchen_equipment` + `profile.kitchen_notes`)
 
@@ -369,7 +371,8 @@ The buy list — committed intent for the next order. Ingredient/product-level a
 -- D1 grocery_list table — one row per item. PRIMARY KEY (tenant, normalized_name).
 -- idx_grocery_status on (tenant, status).
 tenant           TEXT  -- owning user
-name             TEXT  -- order-time search term (display name; required)
+name             TEXT  -- human display: a typed add's member phrasing, or an add-by-id row's resolved label
+display_name     TEXT  -- optional explicit label override (usually NULL); highest read precedence
 normalized_name  TEXT  -- canonical ingredient id (food) via the IngredientContext funnel, else normalizeName(name)
 quantity         TEXT  -- loose BUY amount: "1 bottle" | "enough for the week" | count
 kind             TEXT  -- grocery | household | other
@@ -384,11 +387,11 @@ ordered_at       TEXT  -- ISO date set when status → ordered; else NULL
 
 Example rows:
 
-| tenant | name | normalized_name | quantity | kind | domain | status | source | for_recipes | note | added_at | ordered_at |
-|--------|------|-----------------|----------|------|--------|--------|--------|-------------|------|----------|------------|
-| alice | extra virgin olive oil | olive oil | 1 bottle | grocery | grocery | active | pantry_low | [] | the fancy one this time | 2026-06-09 | NULL |
-| alice | 2x4 lumber | 2x4 lumber | 6 | other | home-improvement | active | ad_hoc | [] | NULL | 2026-06-09 | NULL |
-| alice | paper towels | paper towels | 1 pack | household | grocery | active | ad_hoc | [] | NULL | 2026-06-09 | NULL |
+| tenant | name | display_name | normalized_name | quantity | kind | domain | status | source | for_recipes | note | added_at | ordered_at |
+|--------|------|--------------|-----------------|----------|------|--------|--------|--------|-------------|------|----------|------------|
+| alice | extra virgin olive oil | NULL | olive oil | 1 bottle | grocery | grocery | active | pantry_low | [] | the fancy one this time | 2026-06-09 | NULL |
+| alice | 2x4 lumber | NULL | 2x4 lumber | 6 | other | home-improvement | active | ad_hoc | [] | NULL | 2026-06-09 | NULL |
+| alice | paper towels | NULL | paper towels | 1 pack | household | grocery | active | ad_hoc | [] | NULL | 2026-06-09 | NULL |
 
 **Notes:**
 - `quantity` is the loose BUY amount (1 package unless told otherwise). Recipe-level needs are NOT stored — they're re-aggregated from `for_recipes` when needed (e.g. the partial-check prompt), keeping the no-portion-math stance.
@@ -396,6 +399,7 @@ Example rows:
 - `domain` (free string, default `grocery`; common values `grocery | home-improvement | garden | pharmacy`) is the kind of **store** the item is bought at — **orthogonal to `kind`**: `kind` governs pantry reconcile on receive, `domain` governs which store-type an in-store walk includes the item in. Absent → read as `grocery` (existing items validate unchanged). Open-vocabulary, not a hard enum — a wrong tag only mis-files an item onto the wrong walk. Validated shape-only (a non-string fails) in the Worker write subset; `add_to_grocery_list` / `update_grocery_list` accept it.
 - `source` carries provenance for order-time dedup/behavior: `pantry_low`/`stockup` were promoted (don't re-prompt); `menu` aggregates with recipe needs; `ad_hoc` is a one-off.
 - `note` holds a **one-off** brand request ("the fancy olive oil this time") — explicitly NOT `preferences` (the D1 profile), which is for standing dispositions.
+- `name` and `normalized_name` are stored separately: an **add-by-id** row (e.g. an accepted sibling swap) stores the human display as `name` ("Red cabbage") and the canonical id as `normalized_name` (`cabbage::color-red`); the set-algebra keys on the stored `normalized_name`, so every surface renders `name` natively. The rendered human label is: the row's explicit `display_name` override when set; else, for an **id-named** row (its `name` equals its `normalized_name` — a **legacy** row from before this capability, or a **plan-derived** virtual line), the identity node's label (its `display_name`, else the `base (detail)` synthesis), resolved at read so it converges as the node is backfilled (a legacy row heals with no row edit); else the stored `name`. `display_name` is nullable and rarely populated — the highest-precedence override, not the primary label source. A merge keeps the surviving row's `name`/`display_name`, never adopting the incoming surface form.
 - Lifecycle: `active → in_cart → ordered` + the terminal **receive action**. The `status` **enum is only `active | in_cart | ordered`** — `received` is not a stored status but the receive *action* (the row is removed and, for `grocery`-kind items, the pantry restocked), identical across every fulfillment mode. `place_order` and the satellite receipt write the `active → in_cart` advance; `ordered` is reached by the **user-asserted** "I placed the order" advance (the `update_grocery_list` tool or the member app's mark-order-placed, both through the shared W3 transition guard — legal only from `in_cart`, stamping `ordered_at`) and by the satellite receipt's optional `mark_placed` re-post (`advanceOrderedRows`). Any status write that leaves `ordered` clears `ordered_at`.
 - **The to-buy set is a derived read, not rows.** The order-time set — `active` rows ∪ the meal plan's derived ingredient needs (each planned recipe's projected `ingredients_full`) − pantry on-hand, on canonical ids — is computed at read time by one shared operation (`read_to_buy` / `GET /api/grocery/to-buy`, the same algebra `place_order` flushes and the satellite pull-list serves). Plan needs are **never materialized into rows automatically**; an explicit `source: "menu"` row is a **materialization** (a derived need pinned/edited, or an open-world side's ingredients) and merges with the derived need under the same canonical id. A derived need whose row is in flight (`in_cart`/`ordered`) is suppressed from to-buy until received or re-listed.
 - **The enriched read's `substitutes[]` is derived, never stored.** With `enrich`/`?enrich=1`, each to-buy line additionally carries a `substitutes[]` array alongside its `placement` (see `sku_cache` below for the placement columns) — cross-ingredient hints computed fresh on every call from three already-persisted sources: a depth-1 walk over the `ingredient_edge` graph (the ingredient identity section below), an `in_pantry` join against the pantry table above (a row exists for the sibling's resolved id — no location needed), and, once the primary store resolves, an `on_sale_hint` match against that store's warmed flyer rollup (the flyer cache section below) — `{ sku, description, price: { regular, promo }, savings }`. Each entry also carries its relation label — `{ role: "satisfies" | "sibling" | "generalization", kind: "general" | "containment" | "membership", via? }` — naming how the walk reached it. Nothing here is written to a table: a line's `substitutes[]` is recomputed from the identity graph, pantry, and flyer rollup's current state on every enriched call, so it converges automatically as those sources change (a new edge, a pantry edit, a re-warmed flyer) with no reconcile of its own. The view's `flyer_as_of` is that rollup's own `as_of` (the flyer cache section below), surfaced alongside the hints it fed. See `docs/TOOLS.md`'s `read_to_buy` for the full shape and precedence.
@@ -691,6 +695,11 @@ id             TEXT  -- canonical id: `base` or `base::detail`
 base           TEXT  -- id up to the first "::"  NOT NULL
 detail         TEXT  -- the "::"-joined detail suffix, or NULL for a bare base
 search_term    TEXT  -- human Kroger search phrase for a qualified id ("80/20 ground beef")
+display_name   TEXT  -- curated human-facing label ("Red cabbage") — distinct from the id (the join
+                     --   key) and from search_term (the Kroger phrase); NULL until set; classifier-
+                     --   proposed at import, human-overridable via update_aliases (source='human',
+                     --   never downgraded by an auto pass), reconcile-backfilled for the null backlog;
+                     --   labelOf(id) returns it, else the `base (detail)` synthesis
 representative TEXT  -- union-find pointer to the surviving id, or NULL (self)
 concrete       INTEGER NOT NULL DEFAULT 1  -- 0 = concept node (queryable class, not buyable);
                                            --   disjunctive ids ("x or y") are always concepts —
