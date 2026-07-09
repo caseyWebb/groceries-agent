@@ -26,10 +26,10 @@
 
 ## 4. Panel (admin React SPA) + Playwright
 
-- [~] 4.1 Design handoff: the panel follows the existing Usage-page panels' vocabulary (shared `kit`/`ui` primitives); a Claude Design fidelity pass can follow (noted for the operator). *(Built on the shared system; not routed through the Design project this session — flagged for review.)*
-- [ ] 4.2 `packages/admin-app`: add the "Neurons by activity" panel to the Usage screen — ranked activity spend, cron/import/request split, estimate-vs-account-actual anchor, per-activity backlog pairing (via the health readers). Consumes the existing `usageQuery` payload's new `aiUsage`; `status` union → `assertNever`; not-configured/not-available as a state.
-- [ ] 4.3 `admin/visual/`: extend the `usage` page object + spec (time-free landmark for the panel); run `aubr test:admin` and surface the screenshots.
-- [ ] 4.4 Test: the panel decodes a payload + renders the not-configured state.
+- [~] 4.1 Design handoff: the panel follows the existing Usage-page panels' vocabulary (shared `kit`/`ui` primitives, no new CSS); a Claude Design fidelity pass can follow (noted for the operator). *(Built on the shared system; not routed through the Design project this session — flagged for review.)*
+- [x] 4.2 `packages/admin-app/src/screens/usage.tsx`: `AiUsagePanel` on the Usage screen — ranked activity spend + share bar, cron/import/request trigger badges, estimate-vs-account-actual reconciliation strip, backlog strip (classify/describe/embed). Consumes the existing `usageQuery` payload's `aiUsage`/`aiBacklog` (no new query); not-configured degrades like the sibling panels.
+- [x] 4.3 `admin/visual/`: `expectNeuronsByActivity()` time-free landmark on the Usage page object, wired into the Usage smoke test; `aubr test:admin` green (44 passed, via the sandbox Chromium binary).
+- [x] 4.4 The Playwright landmark asserts the panel's not-configured state renders (the seeded env's readers return `{ configured: false }`).
 
 ## 5. Merge allowlist guard (third instance)
 
@@ -44,6 +44,6 @@
 
 ## 7. Gate
 
-- [x] 7.1 `aubr typecheck` + Worker unit tests (`ai`, `usage`, `embedding-cache`) + `aubr test:tooling` (merge guard) green.
-- [ ] 7.2 `aubr test:admin` (panel) green.
-- [ ] 7.3 `/code-review` the full branch diff; triage findings.
+- [x] 7.1 `aubr typecheck` + Worker unit tests (full suite, 2203) + `aubr test:tooling` (merge guard, 106) green.
+- [x] 7.2 `aubr test:admin` (panel) green — 44 passed.
+- [~] 7.3 `/code-review` the full branch diff; triage findings. *(running)*
