@@ -37,8 +37,8 @@
 ## 8. Tests
 
 - [x] 8.1 vitest (Worker): exact cap enforcement incl. concurrent redemptions never exceeding the cap; `username_taken` rolls back and spends no slot; expired/revoked/unknown codes create nothing and stay uniform; a chosen name colliding with an existing KV tenant is rejected pre-write; backfill idempotency; provenance rows written; member revoke purges the `tenants` + `signup_redemptions` rows but leaves `signup_invites`.
-- [ ] 8.2 Admin Playwright (`packages/worker/admin/visual/`): new `invite-codes` page object + spec — mint a capped/expiring code (assert the once-shown banner + cap/expiry), list shows usage, revoke opens its confirm. Extend `seed.mjs` with a group-code fixture. Run `aubr test:admin` (web: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`) and surface the per-area screenshots.
-- [ ] 8.3 App Playwright (`packages/app` app/visual/, CDP virtual authenticator): signup with code + available username → session established → enrollment prompt; taken-username surfaced inline; invalid code fails uniformly.
+- [x] 8.2 Admin Playwright (`packages/worker/admin/visual/`): new `invite-codes` page object + spec — mint a capped/expiring code (assert the once-shown banner + cap/expiry), list shows usage, revoke opens its confirm. Extend `seed.mjs` with a group-code fixture. Run `aubr test:admin` (web: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`) and surface the per-area screenshots.
+- [x] 8.3 App Playwright (`packages/app` app/visual/, CDP virtual authenticator): signup with code + available username → session established → enrollment prompt; taken-username surfaced inline; invalid code fails uniformly.
 
 ## 9. Docs (lockstep)
 

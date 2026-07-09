@@ -251,7 +251,7 @@ function InviteCodesView({ codes }: { codes: InviteCodeRow[] }): React.ReactElem
                 Cancel
               </Button>
               <Button type="submit" size="sm" disabled={busy}>
-                Mint code
+                Mint invite
               </Button>
             </DialogFooter>
           </form>
