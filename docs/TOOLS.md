@@ -380,6 +380,17 @@ The **planning window** (`preferences.planning_cadence_days`, days; defaults to 
 
 ---
 
+### `display_meal_plan(nights?, seed?, lock?, exclude?, boost_ingredients?, nudges?, slots?, ephemeral_vibes?, new_for_me?)`
+
+Propose a week **and** render it as an **inline, interactive planning card** in the conversation — the bespoke in-chat widget (`ui://plan/propose`), the propose twin of `display_recipe`. Call it when the member wants to **see and tweak** a proposed week; call `propose_meal_plan` when you only need the data to reason over, and `read_meal_plan` to read the already-saved plan. Takes the **same input** as `propose_meal_plan` and reuses the **same shared stateless planner** (`runProposeMealPlan`) — same params, same shaping, same determinism (see `propose_meal_plan` above for the full semantics); it does **not** alter or replace `propose_meal_plan`, which stays a plain data tool. **No writes** — persist a chosen week with `update_meal_plan`.
+
+**Returns:**
+- A **widget-bearing** result: `_meta.ui.resourceUri` is `ui://plan/propose` (the MCP Apps resource the host mounts as an iframe), returned **unconditionally** — never capability-gated, because the pinned SDK's UI-capability probe is unreliable, so a host that cannot render the widget still receives the fallback below. `structuredContent` carries the propose result's display fields (the proposed slots with mains/alternates/sides/why/flags, `variety`, `uncovered_at_risk`, `diagnostics`) **plus** the render context the card's dials need — the replayable `request`, the vibe-id→label map, the palette presets, and the corpus protein/cuisine facet universes (the `ProposeCardData` shape in [`SCHEMAS.md`](SCHEMAS.md)). `content` is a plain-text rendering of the proposed nights, the fallback for a host that cannot render the widget.
+
+**Notes:** A structured error from the shared op (e.g. a context-load failure) is returned as a structured result, **never thrown**, and carries **no partial widget payload**. The card's dials (nights / variety / lock / swap / exclude / per-slot vibe / re-roll) iterate **model-free**: they re-invoke the **stateless** `propose_meal_plan` op client-side (proxied straight to the server through the ext-apps host bridge, `App.callServerTool`), replaying the adjusted request and re-rendering with **no** additional frontier-model turn — the same client-side session replay the member app relies on. A host that cannot proxy tool calls (no `serverTools` capability) degrades to the rendered proposal without dials; the plan is never blocked. The `ui://plan/propose` resource is served over MCP `resources/read` (asserting a widget marker so the SPA-fallback shell is never mistaken for it), **not** a Worker HTTP route — so it needs **no `run_worker_first` entry** in `wrangler.jsonc`. Tool/skill boundary: this tool owns *how* a proposed week renders inline and iterates; the skill owns *when* to show one — `display_meal_plan` to plan interactively, `propose_meal_plan` to reason over the data.
+
+---
+
 ## Profile-reconciliation tools
 
 The reconcile reconciles a member's **stated** preference (their night-vibe palette + cadences) against **revealed** behavior (their cooking log). A background signal cron (and, optionally, the operator's frontier Claude) enqueues proposed profile edits into a per-member queue; the member confirms them from either surface.

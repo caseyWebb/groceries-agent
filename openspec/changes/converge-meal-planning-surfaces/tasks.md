@@ -25,10 +25,10 @@ Ordered by dependency, serial on the shared surfaces (`propose_meal_plan` / `sch
 
 ## 4. The propose MCP App widget (D8)
 
-- [ ] 4.1 Add a shared `@yamp/contract` type for the propose-widget payload (the `propose_meal_plan` result shape).
-- [ ] 4.2 Add a `packages/widgets` component (single-file Vite build → `packages/worker/assets/widgets/`) reusing `packages/ui`; register the `ui://plan/propose` resource + a widget-bearing tool via `registerAppTool`/`registerAppResource` (new `src/meal-plan-widget.ts`, wired in `tools.ts`), returning `_meta.ui.resourceUri` unconditionally + a text fallback.
-- [ ] 4.3 Wire widget-initiated iteration (lock / swap / exclude / per-slot vibe / reroll) to re-invoke the stateless propose op client-side; validate the callback mechanism against the pinned ext-apps SDK (D8 open question) and fall back to the text render if unavailable.
-- [ ] 4.4 Docs (lockstep): `docs/TOOLS.md` the widget; note it needs no `run_worker_first` entry (served over `resources/read`).
+- [x] 4.1 Added `ProposeCardData` (`packages/contract/src/propose-card.ts`, a `Record<string,unknown>`-assignable `type`): the propose result's display fields + the dials' render context (`request`, `vibeLabels`, `palettePresets`, `proteins`, `cuisines`).
+- [x] 4.2 Added `packages/widgets/src/ProposeCard.tsx` + entry/shell (reusing `@yamp/ui`) and `src/meal-plan-widget.ts` `registerMealPlanWidget` (the `display_meal_plan` tool + `ui://plan/propose` resource), wired in `tools.ts` sharing `proposeDeps`; returns `_meta.ui.resourceUri` unconditionally + `structuredContent` + text fallback. `vite.config.ts` made parametric per widget (viteSingleFile forbids multi-input); `aubr build:widgets` emits both HTMLs self-contained.
+- [x] 4.3 **D8 resolved:** `ext-apps@1.7.4` supports `App.callServerTool(...)` (host-proxied, no model turn), gated on `getHostCapabilities().serverTools`. Fully implemented: dials → adjusted request → re-invoke `propose_meal_plan` → re-render; degrades to a read-only render + text `content` fallback when `serverTools` is absent. Dials gate on a non-empty palette (reuse the web app's palette-flow request mapping); commit hands the week back to the agent via `app.sendMessage` (plan writes stay out of Phase 4).
+- [x] 4.4 Docs (lockstep): `docs/TOOLS.md` `display_meal_plan` (unconditional `_meta.ui.resourceUri`, `ui://plan/propose` over `resources/read`, no `run_worker_first`); `docs/SCHEMAS.md` `ProposeCardData`.
 
 ## 5. Capture-first substitution edges + ADR amendment (D6, D7) — parallel thread
 

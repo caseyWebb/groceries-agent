@@ -162,6 +162,20 @@ The wire shape the `display_recipe` tool returns as its result's `structuredCont
 - `favorite` (boolean, optional) — the caller's `favorite` overlay mark (merged from the per-tenant `overlay` table).
 - `body` (string) — the recipe's markdown body (Ingredients/Instructions), rendered escape-first in the card.
 
+## display_meal_plan structuredContent (ProposeCardData, `@yamp/contract`)
+
+The wire shape the `display_meal_plan` tool returns as its result's `structuredContent`, and the shape the bespoke `ui://plan/propose` widget hydrates its interactive render from (meal-plan-widget). Defined once in the runtime-agnostic `@yamp/contract` package (`packages/contract/src/propose-card.ts`) so the Worker (workerd) that produces it and the browser widget that consumes it share **one** definition and cannot drift. Not stored: it is assembled per call from `runProposeMealPlan`'s result plus a little render context, never persisted. The **result-portion fields** mirror `propose_meal_plan`'s own `ProposeResult` exactly, so the widget parses **both** the initial payload and a dial-triggered `propose_meal_plan` re-invocation (proxied through the host, `App.callServerTool`) with one shape.
+
+- `plan` (ProposeCardSlot[]) — the proposed slots (one card per night), mirroring `propose_meal_plan`'s `plan` field-for-field: `{ vibe_id, reason, main, empty_reason?, alternates, alt_similar, alt_different, vibe_override?, recipe_pinned?, weather_category?, sides, uses_perishables, flags, why }` (see [`TOOLS.md`](TOOLS.md) `propose_meal_plan` returns for each field).
+- `variety` (`{ distinct_proteins, distinct_cuisines, mean_pairwise_sim, max_pairwise_sim }`) — the week's cross-slot diversity summary (the variety bar).
+- `uncovered_at_risk` (string[]) — at-risk items the plan could not cover (the honest "still going bad" list).
+- `diagnostics` (`{ seed, lambda, nights, filled, empty, rolled_over? }`) — the op's diagnostics.
+- `note` (string, optional) — present only on the empty-palette short-circuit (an add-a-vibe nudge).
+- `request` (ProposeCardRequest) — the request that produced `plan` (`{ nights, seed, variety, proteins, freeform, exclude, slots }` — the palette-flow subset the member app's client session serializes); the widget seeds its client session from this and replays an adjusted copy against the stateless op on each dial change.
+- `vibeLabels` (Record<string, string>) — vibe id → its phrase, so each slot renders its vibe name (the result carries only the id).
+- `palettePresets` (string[]) — the palette's vibe phrases, for the per-night "pick one of your vibes" panel.
+- `proteins` (string[]) / `cuisines` (string[]) — the corpus facet universes, for the per-night facet-pin pickers.
+
 ## title_audit (D1 `title_audit` table — Worker-owned, shared)
 
 The **title re-audit**'s one-shot convergence stamp (migration 0044, `recipe-title-audit`). The scheduled pass (`src/title-audit.ts`, the `title-audit` job in `scheduled()` phase 1) audits each projected recipe **once**: it runs the guarded title-clean judgment (the discovery classifier's word-subset guard — a cleaned title may only *remove* words, fail-open), rewrites only the R2 frontmatter `title` when the accepted clean name differs, and stamps the outcome here. A recipe with a row never re-enters the backlog (`recipes.slug NOT IN title_audit`); **new writes are born-stamped** by both import paths (the sweep's import and `create_recipe`, `outcome = 'kept'` — their titles are clean at birth), so the pass drains exactly the pre-existing corpus and quiesces to a ~0-LLM no-op. A **sibling of `recipes`** keyed by `slug` (like `recipe_facets`/`recipe_derived`) because the `recipes` projection is rebuilt wholesale and cannot carry a durable stamp. Slugs are **immutable ids** — the audit never renames a slug or moves an R2 object; only the display title converges, and it reaches the index/description/embedding through the existing reconciles (the recipe-derived `content_hash` covers the title; the facet gate hash does not, so no reclassification).

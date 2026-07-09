@@ -33,6 +33,7 @@ import { registerNoteTools, registerStoreNoteTools } from "./notes-tools.js";
 import { registerStoreTools } from "./stores-tools.js";
 import { registerCookingTools } from "./cooking-tools.js";
 import { registerRecipeCardWidget } from "./recipe-card-widget.js";
+import { registerMealPlanWidget } from "./meal-plan-widget.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
 import { readReconcileErrors } from "./recipe-projection.js";
@@ -986,12 +987,18 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
 
   // propose_meal_plan: the two-level planner over the palette. Reuses the search-context
   // closures (overlay / last_cooked / owned / aliases) so its ranking matches search_recipes.
-  registerProposeMealPlanTool(server, env, tenant, {
+  const proposeDeps = {
     getOverlay,
     getLastCookedMap,
     getOwnedEquipment,
     getIngredientContext,
-  });
+  };
+  registerProposeMealPlanTool(server, env, tenant, proposeDeps);
+
+  // The bespoke in-chat meal-plan proposal card (meal-plan-widget): the `display_meal_plan`
+  // tool + the `ui://plan/propose` MCP Apps resource. Reuses the SAME shared propose op + deps
+  // as propose_meal_plan (one contract); the widget HTML is read from the ASSETS binding.
+  registerMealPlanWidget(server, env, tenant, proposeDeps);
 
   // Profile reconciliation: member confirm (list_/confirm_proposal) + operator-gated
   // cross-tenant surface (reconcile_read_signals / reconcile_enqueue_proposal).
