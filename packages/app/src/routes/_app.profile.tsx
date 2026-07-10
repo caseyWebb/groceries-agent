@@ -736,7 +736,7 @@ function BrandsCard(props: {
                         <div className="brand-tier-chips">
                           {tier.map((b) => (
                             <span className="brand-chip2" key={b} data-testid="brand-chip" data-brand={b}>
-                              <span className="brand-chip2-val">{b}</span>
+                              <span>{b}</span>
                               <span className="brand-chip2-ctrls">
                                 <button
                                   type="button"

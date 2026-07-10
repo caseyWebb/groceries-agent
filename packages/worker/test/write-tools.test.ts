@@ -43,6 +43,7 @@ function fakeD1(slugs: string[]): FakeStore {
     pantry: [],
     ingredient_identity: [],
     ingredient_alias: [],
+    novel_ingredient_terms: [],
   };
 
   function tableOf(sql: string): string | null {
@@ -79,7 +80,7 @@ function fakeD1(slugs: string[]): FakeStore {
     }
     if (/^INSERT/i.test(sql)) {
       if (!table || !tables[table]) return { rows: [], changes: 0 };
-      const cols = /INSERT INTO \w+ \(([^)]+)\)/.exec(sql)![1].split(",").map((c) => c.trim());
+      const cols = /INSERT (?:OR IGNORE )?INTO \w+ \(([^)]+)\)/.exec(sql)![1].split(",").map((c) => c.trim());
       const row: Record<string, unknown> = {};
       cols.forEach((c, i) => (row[c] = binds[i] ?? null));
       // Resolve the primary key for ON CONFLICT upserts.
@@ -793,6 +794,30 @@ describe("update_preferences (merge-patch → D1)", () => {
     expect(out.error).toBe("malformed_data");
     expect(out.message).toMatch(/kerrygold/i);
     expect(d1.tables.brand_prefs).toHaveLength(0);
+  });
+
+  it("a validation-rejected brands patch enqueues NO novel terms (stores nothing on failure)", async () => {
+    const d1 = fakeD1([]);
+    const handlers = collectTools(storeWith({}), "everett", d1.env);
+    // "dragonfruit jam" is novel to the (empty) identity graph, but the family value
+    // is invalid — the resolve for key computation must not capture it.
+    const res = await handlers.get("update_preferences")!({
+      patch: { brands: { "dragonfruit jam": { tiers: [], any_brand: false } } },
+    });
+    expect((JSON.parse(res.content[0].text) as { error: string }).error).toBe("malformed_data");
+    expect(d1.tables.novel_ingredient_terms).toHaveLength(0);
+    expect(d1.tables.brand_prefs).toHaveLength(0);
+  });
+
+  it("a valid brands patch still captures its novel term for the graph (deferred past validation)", async () => {
+    const d1 = fakeD1([]);
+    const handlers = collectTools(storeWith({}), "everett", d1.env);
+    await handlers.get("update_preferences")!({
+      patch: { brands: { "dragonfruit jam": { tiers: [["Bonne Maman"]] } } },
+    });
+    expect(d1.tables.novel_ingredient_terms).toContainEqual(
+      expect.objectContaining({ term: "dragonfruit jam" }),
+    );
   });
 
   it("normalizes the brand-pref key to the matcher's lookup form (quantity stripped, brandKey)", async () => {

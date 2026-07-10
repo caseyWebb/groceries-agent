@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { db } from "./db.js";
 import { type CorpusStore, readCorpusFile } from "./corpus-store.js";
-import { addAliases, ingredientContext } from "./corpus-db.js";
+import { addAliases, enqueueNovelTerms, ingredientContext } from "./corpus-db.js";
 import { brandKey } from "./matching.js";
 import { parseMarkdown } from "./parse.js";
 import { serializeMarkdown } from "./serialize.js";
@@ -210,8 +210,7 @@ export async function applyPreferencesPatch(
   //   write lands on the SAME key the matcher reads (`deps.brands[brandKey(normalizeIngredient(x))]`)
   //   AND a partial family patch merges into the stored family instead of forking a
   //   sibling key. A raw multi-word term ("ground beef") otherwise stored as
-  //   "ground beef" but was read as "ground_beef" — a silent miss. resolve() also
-  //   captures the (ingredient) term for the graph.
+  //   "ground beef" but was read as "ground_beef" — a silent miss.
   // - One-window deprecated-shape shim (D21): a legacy `string[]` value is
   //   accepted-and-converted by the migration mapping (never dropped, never bounced),
   //   with a `warnings` entry steering the stale caller to `{ tiers, any_brand }`.
@@ -219,11 +218,18 @@ export async function applyPreferencesPatch(
   //   an array value as `malformed_data` like any other type error.
   const warnings: DeprecationWarning[] = [];
   let brandsPatch: Record<string, unknown> | undefined;
+  let novelIds: string[] = [];
   if (patch.brands !== null && patch.brands !== undefined && typeof patch.brands === "object" && !Array.isArray(patch.brands)) {
-    const ctx = await ingredientContext(env);
+    // Resolve-only (capture: false): this runs BEFORE validation, and a rejected
+    // patch must store nothing — including novel-term queue rows. The write-path
+    // capture happens after validation passes (below).
+    const ctx = await ingredientContext(env, { capture: false });
     brandsPatch = {};
+    const resolvedIds: string[] = [];
     for (const [term, value] of Object.entries(patch.brands as Record<string, unknown>)) {
-      const key = brandKey(ctx.resolve(term));
+      const id = ctx.resolve(term);
+      resolvedIds.push(id);
+      const key = brandKey(id);
       if (Array.isArray(value) && value.every((s) => typeof s === "string")) {
         brandsPatch[key] = convertLegacyBrandRanks(value as string[]);
         warnings.push({
@@ -236,12 +242,18 @@ export async function applyPreferencesPatch(
       }
     }
     patch = { ...patch, brands: brandsPatch };
+    novelIds = [...new Set(resolvedIds.filter((id) => id && !ctx.resolver.ids.has(id)))];
   }
 
   // Stage 2: deep-merge over the current preferences; validate the result's types.
   const current = (await readPreferences(env, tenant)) ?? {};
   const merged = mergePatch(current, patch) as Record<string, unknown>;
   validatePreferences(merged);
+
+  // The patch survived validation — NOW capture its novel ingredient terms for the
+  // graph (the write-path capture, deferred past validation so a rejected patch
+  // enqueues nothing). enqueueNovelTerms is best-effort and never throws.
+  if (novelIds.length > 0) await enqueueNovelTerms(env, novelIds);
 
   // Stage 3: apply atomically (one batch). Scalar/JSON columns come from the MERGED
   // result. Brands rows: the terms come from the PATCH (a `null` vanishes from the
