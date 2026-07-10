@@ -7,7 +7,9 @@ D16's two-phase contract exists because the two facts an analyzer needs — *wha
 - **Prices are known only at send.** `place_order` resolves every line to a `ResolvedLine` carrying fresh `price: {regular, promo}` + `on_sale` (matcher path and override path both revalidate live; `src/matching.ts` `MatchResult` makes `price` non-optional on a resolve). The Kroger cart is additive and write-only (`PUT /v1/cart/add` `{upc, quantity}` — `docs/ARCHITECTURE.md`, the `place_order` SKU-not-price guarantee), so after the flush the numbers are unrecoverable. The satellite receipt's `order` observations carry an optional single observed `product.price` (`packages/contract/src/ingest.ts` `orderFields`) — no regular/promo split. `sku_cache` stores **no** prices (production-verified), and the KV flyer rollup is a store-wide sale scan, not a per-order record.
 - **Purchase is known only at the user's assertion.** The lifecycle spec (order-placement) is explicit: neither flush may advance past `in_cart` on its own; `ordered` is minted only by the guarded user-asserted advance (`updateGroceryRow`'s W3 guard, `advanceOrderedRows` for satellite `mark_placed`), and receive is a terminal *action* (row removed + pantry restock), today expressed as agent choreography (`remove_from_grocery_list` + `update_pantry` — AGENT_INSTRUCTIONS receive flows), not a stored status or a shared op.
 
-Production state (spike, 2026-07-10): no row has ever been `in_cart`/`ordered` (22 `active` rows, all `ad_hoc`, `ordered_at` NULL everywhere); `order_lists` empty; next migration `0049`. There is nothing to backfill — this change only has to be right going forward, and its production acceptance fixture is the first real order after deploy.
+Production state (spike, 2026-07-10): no row has ever been `in_cart`/`ordered` (22 `active` rows, all `ad_hoc`, `ordered_at` NULL everywhere); `order_lists` empty. There is nothing to backfill — this change only has to be right going forward, and its production acceptance fixture is the first real order after deploy.
+
+This change implements **after** its band-1 sibling `pantry-disposition-foundations`, which owns the D17 module: `src/department.ts` (the snake_case vocabularies; `DEPARTMENTS` = the 14 food categories ∪ `household` ∪ `leftovers`; `stampDepartment`), the identity-keyed memo (`ingredient_identity.category` — nullable, cron-owned like `embedding`, representative-resolved, `household` as the classifier's non-food terminal), and the bounded `ingredient-category` scheduled job (phase-1 group; classify → pantry backfill → waste-event stamp). This change **consumes and extends** that machinery — it ships no parallel vocab, memo table, or classify pass.
 
 ## Goals / Non-Goals
 
@@ -15,7 +17,7 @@ Production state (spike, 2026-07-10): no row has ever been `in_cart`/`ordered` (
 
 - Persist the send-time snapshot on both existing commit paths (`place_order`, satellite cart-fill receipt) as the one source Order Review tiles (band 3) and the analyzer (band 4) will agree on.
 - Materialize spend events through one shared writer at the purchase assertion, with D16's negative rules as enforced guarantees, idempotent on `(send_id, line_key)`.
-- Stamp the D17 department at capture via a shared, identity-keyed derivation that `pantry-disposition-foundations` reuses unchanged.
+- Stamp the D17 department on spend lines via the sibling-owned shared derivation (`src/department.ts` + the `ingredient_identity.category` memo), extending the `ingredient-category` job so pending stamps converge to the true category.
 - Land the weekly-budget preference contract and a minimal read so the loop is verifiable end-to-end from band 1.
 
 **Non-Goals**
@@ -23,7 +25,7 @@ Production state (spike, 2026-07-10): no row has ever been `in_cart`/`ordered` (
 - No UI (D25(1)) — no member-app or admin surface, no Playwright deltas.
 - No impulse-capture UX, no manual-shop/walk pricing, no savings tiles — band 3, riding these same ops.
 - No analyzer aggregations beyond the minimal retrospective section — band 4.
-- No pantry category/location split, no waste events — `pantry-disposition-foundations` (it consumes `src/departments.ts` from here).
+- No pantry category/location split, no waste events, no department vocab/memo/classifier of our own — `pantry-disposition-foundations` owns those; this change consumes and extends them.
 - No reconciliation of quotes against fulfillment receipts — no such source exists (resolved question 1).
 
 ## Decisions
@@ -36,7 +38,7 @@ One send row per flush, per-line child rows. On the `place_order` path the snaps
 
 On the satellite path the send id is **deterministic: the order-list id**. The receipt intake's first landing (`row.status !== "received"` in `handleOrderReceipt`) builds the snapshot from the carted/substituted observations and threads it into the same `advanceInCartRows` call; `INSERT OR IGNORE` on the send + lines makes the residual double-intake replay (noted in `ingest.ts`) converge instead of double-recording.
 
-Schema (migration `0049_spend_capture.sql`):
+Schema (migration `NNNN_spend_capture.sql` — the next free number at implementation time; `0050` as of planning, after the sibling's `NNNN_pantry_location_disposition.sql` takes `0049`):
 
 ```sql
 CREATE TABLE order_sends (
@@ -65,7 +67,7 @@ CREATE TABLE order_send_lines (
                                     -- the satellite's observed product.price; NULL when unpriced
   savings       REAL,               -- deriveSavings(regular, promo) when on sale, else 0; NULL = unknown
   estimated     INTEGER NOT NULL DEFAULT 0,  -- 1 = fallback-priced (band 3); send-path quotes are 0
-  department    TEXT NOT NULL,      -- D17 capture stamp (D5 below)
+  department    TEXT,               -- D17 stamp; NULL ONLY while pending classification (D5 below)
   provenance    TEXT NOT NULL,      -- 'planned' | 'impulse' (D6 below)
   for_recipes   TEXT,               -- JSON array
   PRIMARY KEY (send_id, line_key)
@@ -100,12 +102,12 @@ The materializer must know *which* send a row's in-flight state belongs to. Infe
 
 ### D3 — The one writer: `src/spend.ts`, called from inside the shared status ops, never a surface
 
-`spend_events` are written by exactly one function, `recordPurchaseAssertion(env, tenant, rows, occurredOn)`, which loads the `(sent_in, line_key)` snapshot lines and `INSERT OR IGNORE`s events copying them **verbatim** (no re-pricing, no re-derivation — department and provenance included). Call sites are the two shared assertion ops every surface already funnels through:
+`spend_events` are written by exactly one function, `recordPurchaseAssertion(env, tenant, rows, occurredOn)`, which loads the `(sent_in, line_key)` snapshot lines and `INSERT OR IGNORE`s events copying them **verbatim** (no re-pricing, no re-derivation — department and provenance included; a department still pending on the snapshot line copies as NULL, and the `ingredient-category` job's fill converges both rows, D5). Call sites are the two shared assertion ops every surface already funnels through:
 
 - `updateGroceryRow` (session-db) — the guarded `in_cart → ordered` advance behind the `update_grocery_list` tool AND the member `PATCH /api/grocery` route (band 3's "Mark order placed" UI lands on this op with zero new wiring — D16's requirement that the shared op already serve it).
 - `advanceOrderedRows` (session-db) — the satellite `mark_placed` advance (already filtered to `in_cart` rows by its caller).
 
-"Receive of an in_cart row" (the collapsed ordered+received assertion) is routed **through the same advance by choreography**: the persona's receive flows ("I picked up the groceries", satellite §5) gain one step — rows still `in_cart` are first advanced to `ordered` via `update_grocery_list` (this IS the purchase assertion), then removed + restocked exactly as today. `remove_from_grocery_list` therefore never writes spend (a bare remove of an `in_cart` row is "leaving without an assertion" — no event, by rule). This keeps the writer's call sites at two shared ops and adds no third semantics to removal.
+"Receive of an in_cart row" (the collapsed ordered+received assertion): **verified in code, no shared receive operation exists today** — the terminal receive action is realized as per-row `remove_from_grocery_list` calls + one `update_pantry` restock (AGENT_INSTRUCTIONS receive flows; the `in-store-fulfillment` spec). The guarantee therefore homes in the ops that DO exist: `removeGroceryRow` carries the explicit negative guarantee that a removal **never** writes spend (a remove is ambiguous — it is also "changed my mind" — so it cannot be a purchase assertion), and "receive prices nothing itself" holds structurally because receive has no op of its own to price anything in. The spec delta additionally binds the future: **any operation that completes a receive for rows still `in_cart` SHALL internally perform the purchase assertion first** (advance → materialize via this same writer → complete) — band 3's shared shop-commit/receive op (D28/D16) lands on that contract, closing the gap properly inside an op. Until then the persona's receive flows carry an **advisory** choreography step — advance `in_cart` rows to `ordered` before removing — so the collapsed assertion records spend today; a skill-less or stale agent that removes without advancing under-counts (visible, self-healing, and strictly safer than inferring purchases from deletion). This keeps the writer's call sites at two shared ops and adds no third semantics to removal.
 
 Voiding is the writer module's other entry: `voidSpendEvents` sets `voided_at` (rows are never deleted — audit + keep-forever retention) from `updateGroceryRow`'s leave-`ordered` branch. Reads filter `voided_at IS NULL`.
 
@@ -122,7 +124,7 @@ CREATE TABLE spend_events (
   amount      REAL,                 -- unit_price * quantity; NULL when the snapshot was unpriced
   savings     REAL,
   estimated   INTEGER NOT NULL DEFAULT 0,
-  department  TEXT NOT NULL,
+  department  TEXT,                -- copied from the snapshot line; NULL ONLY while pending (filled once by the ingredient-category job, D5)
   provenance  TEXT NOT NULL,
   store       TEXT NOT NULL,
   fulfillment TEXT NOT NULL,
@@ -141,28 +143,17 @@ Idempotency/replay analysis (D15 statement): no new member-reachable write exist
 
 On the `place_order` path the snapshot shares the advance batch, so its failure IS the advance's failure (already reported, cart write skipped, safe retry). Building the snapshot rows (department memo read, provenance mapping) happens before the batch; a failure there degrades to advancing **without** a send (`send.recorded: false` + error in the result, rows advance with `sent_in` NULL) rather than failing the order — telemetry never costs the member their groceries. Same posture on the satellite arm: a snapshot-build failure logs and the advance proceeds bare. The gap is visible (result field / no send for the order list) and self-describing: those rows simply produce no spend events.
 
-### D5 — The department dimension: closed vocab + `ingredient_departments` memo + a bounded classify pass; ships here
+### D5 — The department dimension: consume the sibling's module + memo; NULL-pending fill-once; extend the `ingredient-category` job
 
-`src/departments.ts` owns:
+The D17 machinery is owned by `pantry-disposition-foundations` (its design D1/D5/D6, implemented before this change): `src/department.ts` exports the snake_case vocabularies (`PANTRY_CATEGORIES` — `produce | dairy | meat | seafood | grains | bakery | canned | condiments | oils | spices | baking | frozen | snacks | beverages`), `DEPARTMENTS` = the 14 categories ∪ `household` ∪ `leftovers` (**no `other` value**), and `stampDepartment`; the memo is `ingredient_identity.category` (nullable, cron-owned like `embedding`, representative-resolved, `household` as the classifier's non-food terminal so classification always terminates); the `ingredient-category` job (`src/ingredient-category.ts`, phase-1 `scheduled()` group, `AiActivity: "ingredient-category"`) runs bounded idempotent phases: classify → pantry backfill → event stamp.
 
-- The canonical enum: `Produce, Dairy, Meat, Seafood, Grains, Bakery, Canned, Condiments, Oils, Spices, Baking, Frozen, Snacks, Beverages` (the food vocab) + `Other` + `Household` + `Leftovers`, plus the band-4 constant `COST_PER_MEAL_EXCLUDED = {Household, Beverages}` defined beside it. `Leftovers` is stamped only by waste capture over `prepared_from` rows (the sibling change / band 4); spend never stamps it.
-- `departmentFor(memo, { key, kind, domain })` — pure and total: non-food (`kind` `household`/`other`, or a non-grocery `domain`) → `Household` (included in spend, excluded from cost-per-meal — the "2x4 lumber" fixture maps here); else memo hit → its department; else → `Other`. Never store placement, never read-time derivation (D17).
-- Memo I/O over the shared-corpus table (identity-keyed, no tenant — an ingredient→category fact is source-derived, D2's memoize-everywhere side):
+This change adds to that machinery, never beside it:
 
-```sql
-CREATE TABLE ingredient_departments (
-  ingredient    TEXT PRIMARY KEY,   -- canonical ingredient id (the funnel's resolve output)
-  department    TEXT NOT NULL,      -- food vocab ∪ {Other}
-  source        TEXT NOT NULL,      -- 'model' now; 'human' reserved for curation
-  classified_at TEXT NOT NULL
-);
-```
+- **`departmentForGroceryLine({ key, kind, domain }, memoLookup)` joins `src/department.ts`** — the grocery-line-shaped derivation: deterministic overrides stamp immediately and are never pending (`kind: household`/`other` or a non-grocery `domain` → `household` — the "2x4 lumber" fixture; included in spend, excluded from cost-per-meal); else a memo hit stamps its value (any memo value, `household` included); else **NULL = pending classification**. `leftovers` is waste-side only (`prepared_from` rows via `stampDepartment`) — spend lines never stamp it. Never store placement, never read-time derivation (D17). `COST_PER_MEAL_EXCLUDED = ["household", "beverages"]` is defined beside the vocab as the constant band 4 consumes.
+- **`department` on `order_send_lines` and `spend_events` is nullable**: NULL means pending, and the fill is **NULL → value, exactly once** — a stamped value is never rewritten (vocab/memo evolution never rewrites history, D17). This is the sibling's D5 semantics verbatim, so waste and spend events share ONE pending/immutability model; band-4 analytics read stamped values only, and "Not mapped" never reaches analytics because the backlog drains (the sibling's spike: the whole registry classifies in ~a day; anything that has sat on the list more than one tick is warm).
+- **The `ingredient-category` job gains a spend-fill phase** (the same idiom as its `waste_events` stamp phase): fill `order_send_lines.department` and `spend_events.department` where NULL from the memo via `line_key` → alias/identity → representative `category` (any memo value, `household` included). NULL→value only; bounded; idempotent; no new job, no new `scheduled()` wiring, no new AI activity. No separate enqueue is needed: every food line key IS a canonical id minted through the IngredientContext funnel (grocery adds capture; plan-derived needs and satellite `item_id`s are already ids), so the ids appear in the classify phase's existing backlog (`ingredient_identity` unclassified survivors); non-food keys never enter the registry and never need to — the `household` override stamps them at capture.
 
-`src/department-derivation.ts` is the capture side: a bounded scheduled pass (≤32 ids/tick) over distinct **food** canonical ids present in `grocery_list` (kind `grocery`, grocery/absent domain), `pantry`, and `order_send_lines` that lack a memo row, classifying each with the small model (`runAi`, the `ingredient-classify.ts` discipline: closed-enum output contract, validator, corrective retry, fail-safe skip → retried next tick) and memoizing `source='model'`. It runs in `scheduled()`'s phase 5 beside the other signal producers, registered with the job-health machinery like its siblings. This module + memo IS the "SAME source pantry-add autofill uses" — `pantry-disposition-foundations` consumes `departmentFor`/the memo for its autofill and waste stamping and adds nothing parallel.
-
-Why `Other` is in the vocab: D17 demands a total, immutable stamp at capture with no read-time fallback, and the memo is cron-warmed — a just-added id can be cold at send. `Other` is a real, deliberately-stamped member of the controlled vocab ("Not mapped" can never appear because everything IS mapped), expected rare in practice (list dwell + the per-tick pass warm the memo first; the classify sweep includes `order_send_lines` so a cold-stamped id is classified for every future event). Per D17's own rule, an `Other`-stamped event keeps its stamp when the memo later learns better — vocab/memo evolution never rewrites history.
-
-Why the memo fill is a cron LLM and the capture chain is not: the determinism boundary — tools are plain code; the fuzzy 14-way food taxonomy call is exactly the capture-once work the repo does on `scheduled()` (recipe facets, ingredient identity), retrieved deterministically at capture.
+Why NULL-pending beats a fallback value: a fallback stamp (e.g. `other`) on a food id that classifies one tick later would be a permanently wrong immutable value; NULL-pending converges to the TRUE category through the pipeline while preserving stamp immutability. Why the memo fill is a cron LLM and the capture chain is not: the determinism boundary — tools are plain code; the fuzzy 14-way taxonomy call is the sibling job's capture-once work, retrieved deterministically at capture.
 
 ### D6 — Provenance mapping: `planned` unless the line exists only as an unattributed caller extra
 
@@ -188,22 +179,22 @@ Rationale: D16's "awaiting mark-placed" needs an agent-visible home in band 1, t
 
 ### D9 — What the tool descriptions vs the persona carry (ownership boundary)
 
-Tool descriptions own the new guarantees: `place_order` — the send-record side effect + the `send` result field; `update_grocery_list` — "the `in_cart → ordered` advance records the order's spend from its send-time snapshot; re-listing an `ordered` row voids its spend; removes never write spend". The persona owns only choreography: the receive flows' advance-first step. A skill-less agent can use the tools safely from their descriptions alone.
+Tool descriptions own the new guarantees: `place_order` — the send-record side effect + the `send` result field; `update_grocery_list` — "the `in_cart → ordered` advance records the order's spend from its send-time snapshot; re-listing an `ordered` row voids its spend"; `remove_from_grocery_list` — "removes never write spend". The persona owns only choreography: the receive flows' advisory advance-first step (D3 — the enforced guarantees all live in the ops). A skill-less agent can use the tools safely from their descriptions alone.
 
 ## Risks / Trade-offs
 
 - **Quotes ≠ receipts.** Accepted and documented (resolved q1): there is no fulfillment feedback channel; the analyzer's numbers are send-time quotes. The alternative — no spend telemetry — is strictly worse, and every field records exactly what was known.
-- **`Other` events are permanent.** Bounded by the classify sweep covering `order_send_lines` (one cold event per id worst-case) and by list dwell time. Accepted per D17 immutability.
-- **Collapsed-receive spend depends on the persona step.** A stale plugin (D21 window) that removes `in_cart` rows without advancing loses those events — visible as an empty spend week, self-healing on plugin refresh; the negative rule (removes never write spend) is the safer default than inferring purchases from deletion.
+- **Collapsed-receive spend is advisory-choreography until band 3's receive op.** No shared receive op exists today (D3, code-verified); a skill-less or stale agent (D21 window) that removes `in_cart` rows without advancing under-counts — visible as an empty spend week, self-healing on plugin refresh, and strictly safer than inferring purchases from deletion. The spec already binds any future receive-completing op to perform the assertion internally; band 3's shop-commit/receive op closes the gap.
+- **A pending department can ride a materialized event briefly.** Bounded by the `ingredient-category` job's spend-fill phase (NULL→value within a tick in steady state); band 4 reads stamped values only.
 - **Send retained on failed rollback.** Consistent with the existing stranded-`in_cart` posture; the events only materialize on a user assertion, which remains honest.
 - **Migration numbering race** with band-1 siblings — serialized implementation; renumber on rebase (the repo already tolerates historical duplicate prefixes, but don't add new ones).
 
 ## Migration Plan
 
-Purely additive (`0049_spend_capture.sql`): four `CREATE TABLE` + two `ALTER TABLE ... ADD COLUMN` (both nullable). No backfill — production has zero lifecycle history (spike-verified). Deploy applies it `--remote` as usual. Rollout risk is nil for existing reads (new columns are absent from every existing SELECT's column list except where this change threads them).
+Purely additive (`NNNN_spend_capture.sql`, `0050` as of planning — after the sibling's migration): three `CREATE TABLE` + two `ALTER TABLE ... ADD COLUMN` (both nullable). No backfill — production has zero lifecycle history (spike-verified). Deploy applies it `--remote` as usual. Rollout risk is nil for existing reads (new columns are absent from every existing SELECT's column list except where this change threads them). Implements after `pantry-disposition-foundations` (this migration assumes `ingredient_identity.category` and `src/department.ts` exist).
 
-**Production acceptance (post-deploy convergence checks, no manual surgery):** (a) the first real `place_order` flush writes one `order_sends` row + priced lines with sane departments/provenance and stamps `sent_in`; (b) the member's "I placed the order" advance materializes matching `spend_events` verbatim; (c) `retrospective().spend` reflects them and `awaiting_mark_placed` goes 0 → N → 0 across the flow; (d) re-listing one row voids its event; (e) `ingredient_departments` accretes rows across cron ticks for the 22 live list ids; (f) `update_preferences({ weekly_budget: 95 })` round-trips through `read_user_profile`.
+**Production acceptance (post-deploy convergence checks, no manual surgery):** (a) the first real `place_order` flush writes one `order_sends` row + priced lines with sane departments/provenance and stamps `sent_in`; (b) the member's "I placed the order" advance materializes matching `spend_events` verbatim; (c) `retrospective().spend` reflects them and `awaiting_mark_placed` goes 0 → N → 0 across the flow; (d) re-listing one row voids its event; (e) NULL-pending departments on `order_send_lines`/`spend_events` drain to 0 across `ingredient-category` ticks (its `job_runs` report the spend-fill counts) and no stamped value is ever rewritten; (f) `update_preferences({ weekly_budget: 95 })` round-trips through `read_user_profile`.
 
 ## Out of scope (explicit)
 
-Impulse capture UX, manual-shop/walk commit + estimation ladder, savings tiles, `display_order_review` (band 3); analyzer tabs + full aggregates, avoidability, Leftovers read-time derivation (band 4); waste events + pantry category/location split (`pantry-disposition-foundations`); the budget UI control (band 2); any member-app-offline reclassification (no new member-reachable writes).
+Impulse capture UX, manual-shop/walk commit + estimation ladder, savings tiles, `display_order_review`, the shared shop-commit/receive op (band 3); analyzer tabs + full aggregates, avoidability, Leftovers analytics (band 4); waste events, pantry category/location split, the department vocab/memo/classifier themselves (`pantry-disposition-foundations` — this change only adds `departmentForGroceryLine`/`COST_PER_MEAL_EXCLUDED` and the spend-fill phase); the budget UI control (band 2); any member-app-offline reclassification (no new member-reachable writes).
