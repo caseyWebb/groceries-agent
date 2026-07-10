@@ -18,6 +18,8 @@ declare function fetch(
 declare const navigator: {
   onLine: boolean;
   serviceWorker: { ready: Promise<unknown>; controller: object | null };
+  // connect-modal: the copy-button spec reads back what landed on the clipboard.
+  clipboard: { readText(): Promise<string> };
 };
 declare const window: Record<string, unknown>;
 declare const localStorage: {

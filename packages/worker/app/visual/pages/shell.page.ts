@@ -58,4 +58,30 @@ export class ShellPage extends AppPage {
   async navTo(label: string): Promise<void> {
     await this.page.locator(".sb-link", { hasText: label }).click();
   }
+
+  /** The sidebar's Connect-to-Claude CTA opens the guided modal (connect-modal). */
+  async openConnectModal(): Promise<void> {
+    await this.page.getByTestId("connect-claude-cta").click();
+    await expect(this.page.getByTestId("connect-modal")).toBeVisible();
+  }
+
+  /** Switch the modal's client tab. */
+  async switchConnectTab(tab: "web" | "code"): Promise<void> {
+    await this.page.getByTestId(`connect-tab-${tab}`).click();
+  }
+
+  /** Step n's copyable command text. */
+  connectCmd(n: number): Locator {
+    return this.page.getByTestId(`connect-cmd-${n}`);
+  }
+
+  /** Step n's copy button (flips to "Copied" on success). */
+  connectCopy(n: number): Locator {
+    return this.page.getByTestId(`connect-copy-${n}`);
+  }
+
+  /** Step n's whole row (title + desc + command). */
+  connectStep(n: number): Locator {
+    return this.page.getByTestId(`connect-step-${n}`);
+  }
 }

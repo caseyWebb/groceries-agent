@@ -70,4 +70,11 @@ sh("npx", [
   process.env.PW_APP_PORT || "8788",
   "--var",
   `APP_BUILD:${HARNESS_BUILD}`,
+  // Deterministic operator config (connect-modal): the connect modal's specs assert
+  // TEMPLATED copy — in production MARKETPLACE_REPO is stamped by the deploy and
+  // OPERATOR_NAME falls back to OWNER_TENANT_ID; here both are fixture values.
+  "--var",
+  "MARKETPLACE_REPO:caseyWebb/yet-another-meal-planner-deployment",
+  "--var",
+  `OPERATOR_NAME:${SEED.members.active}`,
 ]);

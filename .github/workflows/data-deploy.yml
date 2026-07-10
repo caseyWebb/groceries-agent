@@ -157,14 +157,17 @@ jobs:
 
       # Deploy. KV/D1 bindings with no id are auto-provisioned here; the recipe index is
       # projected by the Worker reconcile (no CI D1 write), not at deploy. APP_BUILD is
-      # the Worker side of the version-skew stamp (echoed as X-App-Build on every /api
-      # response and by GET /api/version).
+      # the Worker side of the member app's version-skew stamp (echoed as X-App-Build on
+      # every /api response and by GET /api/version). MARKETPLACE_REPO is the calling
+      # data repo — the operator's plugin marketplace by construction — stamped so the
+      # member app's Connect-to-Claude modal templates the real slug with zero operator
+      # setup (whoami serves it; see src/deployment.ts).
       - name: Deploy
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: _code/packages/worker
-          command: deploy --var APP_BUILD:${{ env.BUILD }}
+          command: deploy --var APP_BUILD:${{ env.BUILD }} --var MARKETPLACE_REPO:${{ github.repository }}
 
       # The Worker exists now, so secrets can be put. Only set Kroger creds if the
       # operator provided them as repo secrets — never clobber dashboard-set values
