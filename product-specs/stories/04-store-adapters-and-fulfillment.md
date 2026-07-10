@@ -24,13 +24,14 @@ carries its own connection state and preferred store/retailer.
   scanning / re-run login) linking to the Satellites tab (pages/12); the grocery order
   launcher lists satellite stores, disabled with "re-run login" when the session is
   expired.
-- **Offline** (new concept, small): stores yamp can't connect to, kept "so the planner
-  remembers you shop there", optionally carrying a member-edited **aisle map** (ordered
-  aisles + typical items per aisle, preset aisle names). This is a member UI over the
-  existing store notes `layout` that `in-store-fulfillment` already specs for the
-  agent-guided walk — same data, new editor (map-modal) + "community-mapped" copy implies
-  aisle maps are shareable across households for the same store (dedup/memoize mentality;
-  needs the story-01 lens decision).
+- **Offline** (**decided, D6: a rename, not a new entity**): the existing generic
+  non-Kroger stores surface (`list_stores`/`add_store`/store notes) presented as an
+  adapter tab — "stores yamp can't connect to, kept so the planner remembers you shop
+  there", optionally carrying the **aisle map** (the store notes `layout` that
+  `in-store-fulfillment` already specs for the agent-guided walk; the map-modal is its
+  member editor). "Community-mapped" copy implies aisle maps are shareable across
+  households for the same real-world store (dedup/memoize mentality; needs the story-01
+  lens decision).
 
 ## 2. Fulfillment paths over the adapters
 
@@ -67,5 +68,5 @@ carries its own connection state and preferred store/retailer.
    pantry additions.
 4. Preferred-store changes mid-list: re-derive placements/prices immediately or on next
    order preview?
-5. Does "Offline" absorb today's `list_stores`/`add_store` store notes surface entirely,
-   or coexist with it?
+5. ~~Offline vs existing stores surface~~ — decided (D6): Offline IS that surface,
+   renamed.

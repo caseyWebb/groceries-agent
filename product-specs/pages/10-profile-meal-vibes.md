@@ -28,13 +28,14 @@ meal, so vibes can move between meals) + Delete. Per-group empty line; palette-e
 state ("…or let the suggestions above seed it."). **Pinned has no row indicator in the
 mock — add one** (it changes planner behavior; invisible flags are a trap).
 
+**Cuts (decided, D8)**: the standalone reconcile-queue section and the manual
+"Suggest from your cooking" trigger are gone (inline suggestions + the cron carry the
+load); `merge_recipes` proposals stay agent-side, never surfaced in the member app.
+
 **Inline suggestions** (same proposals, new presentation): row-attached wand icon for
 adjust_cadence / prune_vibe → "Suggestion from your cooking" panel with rationale +
 Apply(/Retire) / Dismiss; per-meal-group footer cards for add_vibe ("Add 'Yogurt +
-granola'? — shows up most mornings this week") with Add / Dismiss. **Cut from the mock,
-decide explicitly**: the standalone queue section, `merge_recipes` proposal surfacing
-(today: dismissable-only rows), and the job-health-gated "Suggest from your cooking"
-trigger button.
+granola'? — shows up most mornings this week") with Add / Dismiss.
 
 ## 3. Delta vs today
 
@@ -43,15 +44,15 @@ trigger button.
 | Palette CRUD, facets, cadence, weather/season, pinned flag, debt meter | exists |
 | Meal field + grouping + per-meal empties | **new** (story 02) |
 | Inline suggestion presentation | tweak (same proposals) |
-| Standalone queue, merge_recipes surface, suggest trigger | **cut — confirm** |
+| Standalone queue, merge_recipes surface, suggest trigger | **cut (decided, D8)** |
 | Pinned row indicator | **add** (absent in mock) |
 
 ## 4. Open questions
 
 1. Migration: existing vibes → `meal: dinner`; tool naming (`add_night_vibe` family →
    meal vibes) across TOOLS.md.
-2. Where do `merge_recipes` proposals surface now?
-3. Does the archetype-derivation cron fully replace the manual suggest trigger?
-4. Cadence optionality; propose behavior for a meal with zero vibes (pages/04 q2).
+2. ~~merge_recipes surfacing~~ / ~~suggest trigger~~ — decided (D8): agent-side only;
+   the cron carries suggestion generation.
+3. Cadence optionality; propose behavior for a meal with zero vibes (pages/04 q2).
 5. What "pinned (weekly intent)" guarantees exactly (a slot every week regardless of
    debt?) — align with `weather-bucket-planning`'s force-place.

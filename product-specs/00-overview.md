@@ -82,7 +82,10 @@ Dependencies, not a mandate. Each numbered band can be one or more OpenSpec chan
 
 ## Mockup fidelity warnings
 
-Mock bugs and vestiges the specs call out (do **not** implement literally): the propose
+The mockup is a painted door (DECISIONS.md D5): its hardcoded data, selection logic, and
+unwired states demonstrate the intended *experience*, never the mechanism — sourcing
+always comes from the repo's derivation doctrine. Beyond that, specific mock bugs and
+vestiges the specs call out (do **not** implement literally): the propose
 widget drops the meal tag at commit and hardcodes `Dinner`; commit's date allocator packs
 one meal per day; the cookbook favorites-toggle control is missing from markup though its
 logic exists; the People sidebar badge counts friends rather than requests; one static

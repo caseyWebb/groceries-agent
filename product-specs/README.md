@@ -31,7 +31,8 @@ says so explicitly rather than speccing the bug. Open questions are genuinely op
 they need a product decision before or during proposal drafting, and are phrased so an
 autonomous planning session can resolve them with a targeted question or a spike.
 
-Four product steers from the operator (Casey, 2026-07-10) are baked in as decisions:
+Operator decisions are logged in **[DECISIONS.md](DECISIONS.md)** — that file wins over
+any page/story text it conflicts with. The founding four (2026-07-10):
 
 1. **Tenant becomes the household.** Productization direction: a tenant can hold multiple
    member accounts; per-tenant data (pantry, plan, grocery, stores) is household-shared

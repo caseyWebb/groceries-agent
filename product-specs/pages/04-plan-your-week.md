@@ -35,11 +35,11 @@ and "Single-use: {ingredient}" (→ `perishable_ingredients`; mock latches at mo
 proposal — decide per-slot vs per-proposal); empty-slot state with honest reason
 ("No {facets} fits under a {t}-min cap — loosen a filter.") + pick list.
 
-**Deliberate UX cuts (confirm, then spec)**: lock and exclude buttons are CSS-hidden
-(handlers intact); adventurousness/variety dial, protein wants, freeform input, global
-reroll, why-chips, and the weather strip are all plumbed but unrendered. The cross-check
-says the weather strip IS specced with member UI (`member-app-propose`) — dropping it is
-a spec regression to decide explicitly, not silently.
+**UX cuts (DECIDED — DECISIONS.md D8)**: lock, exclude, adventurousness/variety dial,
+protein wants, freeform input, global reroll, why-chips, and the weather strip are all
+cut from the member surface. The weather strip cut contradicts `member-app-propose` —
+the change landing this surface updates that spec's requirement in the same pass.
+Server-side weather shaping is untouched.
 
 **Summary bar**: "N cuisines / N proteins" + protein histogram chips ("chicken ×2");
 "Commit all to meal plan" disabled when nothing filled.
@@ -63,13 +63,12 @@ consolidated handoff.
 | Per-meal steppers + independent per-meal sessions | **new** |
 | Sides editing on slots (committed with plan) | **new** |
 | meal-prep / single-use badges | **new surfacing** of derived facets |
-| Lock/exclude/nudge-bar/reroll/weather-strip removal | **cut — confirm each** |
+| Lock/exclude/nudge-bar/reroll/weather-strip removal | **cut (decided, D8)** |
 | Commit meal+date packing | **new (fixes mock bug)** |
 
 ## 4. Open questions
 
-1. Confirm each UX cut (lock, exclude, adventurousness, protein wants, freeform, global
-   reroll, weather strip). Weather strip removal contradicts `member-app-propose`.
+1. ~~Confirm UX cuts~~ — decided (D8).
 2. Empty-meal fallback: slots for a meal with no vibes of that meal (pages/10 q; nudge to
    vibes tab exists today).
 3. Single-use badge cardinality (per-slot vs first-only).

@@ -20,9 +20,9 @@ meal-aware once cadence is per-meal ("3.8 nights a week" → per-meal counts).
 
 **Planning card**: **per-meal weekly cadence steppers** Breakfast/Lunch/Dinner, 0–7
 each (story 02 — replaces the single nights control); resurface-after slider (14–60d);
-novelty-boost slider (0.1–0.5). **Lunch strategy and ready-to-eat default action are
-cut** (vestigial in mock) — proposal must map old values onto seeded meal vibes
-(story 02 §3). Add the **weekly budget** control here (story 03 — mock forgot it).
+novelty-boost slider (0.1–0.5). **Lunch strategy and ready-to-eat default action are cut
+(decided, D8)** — the proposal removing them defines the migration onto seeded meal
+vibes (story 02 §3). Add the **weekly budget** control here (story 03 — mock forgot it).
 
 **Dietary card**: Avoid entirely / Limit token fields (exists; add-pill interaction
 tweak).
@@ -33,10 +33,12 @@ Kroger: Connected chip, preferred store (name + address) with gear → **store-m
 account, preferred retailer (delivery-ETA metadata) via the same modal, connect flow.
 Satellites: read-only per-store adapter summary (state chips: Session fresh / Scanning /
 Re-run login) linking to the Satellites tab + "Authoring store adapters →" doc link.
-Offline (new): store rows (name, optional nickname, mapped/stale/No map chip), gear →
-**map-modal** aisle editor (ordered aisles with move/remove, per-aisle item chips, preset
-aisle names, free-text add), "Add an offline store" form. Standalone ZIP pref retires
-into the picker.
+Offline (**decided, D6: a rename of the existing generic non-Kroger stores surface** —
+`list_stores`/`add_store`/store notes, incl. `layout` aisle notes; no new entity): store
+rows (name, optional nickname, mapped/stale/No map chip), gear → **map-modal** aisle
+editor (ordered aisles with move/remove, per-aisle item chips, preset aisle names,
+free-text add), "Add an offline store" form. Standalone ZIP pref retires into the
+picker.
 
 **Preferred brands card** (new model): per product-family cards with **tiers of
 equivalents** — "yamp tries your top tier first, then falls back. Brands in the same tier
@@ -52,11 +54,11 @@ tier). Order review's "Save as preferred brand" and "don't care" write here (pag
 |---|---|
 | Taste tab (all) | exists (layout) |
 | Per-meal cadence | **new** (story 02) |
-| Lunch strategy / RTE action | **cut** (map to vibes) |
+| Lunch strategy / RTE action | **cut (decided, D8)** (map to vibes) |
 | Sliders, dietary tokens | exists |
 | Adapter-tabbed store card, store picker modal | **new** |
-| Instacart adapter | **new** (spike first — story 04) |
-| Offline stores + aisle-map editor | **new UI** over `layout` store notes |
+| Instacart adapter | **new** (decided D7; spike first — story 04) |
+| Offline stores + aisle-map editor | **new UI** over the existing stores surface (D6) |
 | Brand tiers + Any brand | **new data model** (tri-state semantics exist) |
 | Weekly budget | **new** (story 03; add to this tab) |
 
@@ -68,6 +70,6 @@ tier). Order review's "Save as preferred brand" and "don't care" write here (pag
    `kroger_login_url`; Disconnect semantics (drop refresh token).
 3. Store-modal search behavior (debounce, radius, result count); Instacart retailer
    source.
-4. Offline-store data owner: existing `add_store`/store-notes surface vs new table
-   (story 04 q5); aisle-map sharing scope (story 04 q2).
+4. ~~Offline-store data owner~~ — decided (D6): the existing stores surface. Remaining:
+   aisle-map sharing scope (story 04 q2).
 5. Where old `lunch_strategy`/`rte_action` values migrate (which seeded vibes).
