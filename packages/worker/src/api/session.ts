@@ -9,6 +9,7 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { resolveInvite, inviteAccepted } from "../tenant.js";
+import { deploymentProfile, operatorConfig } from "../deployment.js";
 import { underRateLimit } from "../rate-limit.js";
 import {
   createSession,
@@ -50,8 +51,17 @@ export const sessionArea = new Hono<ApiEnv>()
     setSessionCookie(c, token);
     return c.json({ tenant: { id: inv.tenant } });
   })
-  // Whoami — the SPA's boot check, and the ETag helper's living demonstrator.
-  .get("/session", requireSession, async (c) => jsonWithEtag(c, { tenant: c.get("tenant") }))
+  // Whoami — the SPA's boot check, and the ETag helper's living demonstrator. Besides
+  // the tenant identity it carries the deployment-level config member surfaces need:
+  // the D9 profile and the operator identity the connect modal templates its setup
+  // steps from (connect-modal). Non-secret deployment vars; unset ones are nulls.
+  .get("/session", requireSession, async (c) =>
+    jsonWithEtag(c, {
+      tenant: c.get("tenant"),
+      profile: deploymentProfile(c.env),
+      operator: operatorConfig(c.env),
+    }),
+  )
   // Logout: delete the KV record (the token stops authenticating even if a copy of the
   // cookie value was retained) and expire the cookie. Idempotent — no session, same reply.
   .delete("/session", async (c) => {

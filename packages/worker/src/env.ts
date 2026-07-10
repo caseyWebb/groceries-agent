@@ -77,6 +77,22 @@ export interface Env {
    */
   APP_BUILD?: string;
 
+  // --- Operator identity for member setup copy (connect-modal). OPTIONAL, non-secret. ---
+  /**
+   * The operator's display name the member app's Connect-to-Claude modal templates into its
+   * copy ("updates {name} ships"). Falls back to `OWNER_TENANT_ID`; unset both and the copy
+   * says "your operator". Operator-owned `vars` entry (the deploy merge passes it through).
+   */
+  OPERATOR_NAME?: string;
+  /**
+   * The operator's plugin-marketplace repo slug (`<owner>/<data-repo>`) the connect modal
+   * renders as its copyable marketplace-add step. Stamped automatically by the operator
+   * deploy (`data-deploy.yml` passes `--var MARKETPLACE_REPO:<caller repo>` — the data repo
+   * IS the marketplace), so operators set nothing. UNSET (local dev without `.dev.vars`)
+   * the modal degrades to ask-your-operator copy; it never fabricates a slug.
+   */
+  MARKETPLACE_REPO?: string;
+
   // --- AGPL §13 source offer (open-source-license). OPTIONAL, non-secret. ---
   /**
    * The source location `/source` offers, satisfying AGPL section 13 for users interacting over the

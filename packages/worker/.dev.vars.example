@@ -46,3 +46,11 @@ ADMIN_DEV_BYPASS="1"
 # Optional: the tenant id (allowlisted username) the Members roster badges "owner". A plain,
 # non-secret var (not inferred from onboarding order) — unset means no member is shown as owner.
 # OWNER_TENANT_ID="casey"
+
+# --- Connect-to-Claude modal (connect-modal) ---
+# Optional, non-secret operator identity the member app's Connect-to-Claude modal templates
+# into its setup steps. In production MARKETPLACE_REPO is stamped automatically by the deploy
+# (the data repo IS the marketplace) and OPERATOR_NAME falls back to OWNER_TENANT_ID; set them
+# here only to see templated copy in local dev. Unset, the modal shows generic copy.
+# OPERATOR_NAME="casey"
+# MARKETPLACE_REPO="you/yet-another-meal-planner-deployment"

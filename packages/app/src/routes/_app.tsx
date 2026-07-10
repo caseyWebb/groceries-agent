@@ -16,11 +16,13 @@ import {
   IconHeart,
   IconMoon,
   IconPantry,
+  IconSparkle,
   IconSun,
   Button,
   toast,
 } from "@yamp/ui";
 import { api } from "../lib/api";
+import { ConnectClaudeModal, type OperatorInfo } from "../components/connect-claude";
 import { enrollPasskey } from "../lib/passkey";
 import { useGrocery, useOverlay, usePlan, useProfile } from "../lib/data";
 import { useOnline } from "../lib/online";
@@ -28,15 +30,16 @@ import { promptInstall, useInstallAvailable } from "../lib/install";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
 
 export const Route = createFileRoute("/_app")({
-  loader: async (): Promise<{ tenant: { id: string } }> => {
+  loader: async (): Promise<{ tenant: { id: string }; operator: OperatorInfo }> => {
     const res = await api.api.session.$get().catch(() => null);
     if (res === null) {
       // No server reachable (offline / network error): render the shell for the
       // stamped member over the persisted cache; with no stamp, present login
       // (the SW serves it offline). NEVER purge here — an offline device keeps
-      // its own member's data (D9).
+      // its own member's data (D9). The operator config isn't stamped: the
+      // connect modal degrades to generic copy offline.
       const stamped = readTenantStamp();
-      if (stamped) return { tenant: { id: stamped } };
+      if (stamped) return { tenant: { id: stamped }, operator: { name: null, repo: null } };
       throw redirect({ to: "/login" });
     }
     if (res.status === 401) {
@@ -46,9 +49,15 @@ export const Route = createFileRoute("/_app")({
       throw redirect({ to: "/login" });
     }
     if (!res.ok) throw new Error(`whoami failed (${res.status})`);
-    const data = (await res.json()) as { tenant: { id: string } };
+    const data = (await res.json()) as {
+      tenant: { id: string };
+      profile: "self-hosted" | "saas";
+      operator: OperatorInfo;
+    };
     writeTenantStamp(data.tenant.id);
-    return data;
+    // Defensive: a pre-change Worker (deploy skew) omits `operator` — degrade to
+    // generic copy rather than letting the modal's templating throw.
+    return { tenant: data.tenant, operator: data.operator ?? { name: null, repo: null } };
   },
   component: AppShell,
 });
@@ -116,7 +125,8 @@ function OfflinePill() {
 }
 
 function AppShell() {
-  const { tenant } = Route.useLoaderData();
+  const { tenant, operator } = Route.useLoaderData();
+  const [connectOpen, setConnectOpen] = React.useState(false);
   // Sidebar counts derive client-side from the already-cached area queries (design:
   // no counts endpoint) — the shell subscribing warms them for the pages too.
   const overlay = useOverlay();
@@ -158,6 +168,12 @@ function AppShell() {
             );
           })}
         </nav>
+        <div className="sb-connect-wrap">
+          <button type="button" className="sb-connect" data-testid="connect-claude-cta" onClick={() => setConnectOpen(true)}>
+            <IconSparkle />
+            <span className="sb-connect-label">Connect to Claude.ai</span>
+          </button>
+        </div>
         <div className="sb-foot">
           <AccountMenu tenant={tenant.id} />
           <ThemeFab size="icon-sm" />
@@ -166,6 +182,7 @@ function AppShell() {
       <main className="app-content" id="app-content">
         <Outlet />
       </main>
+      <ConnectClaudeModal open={connectOpen} onOpenChange={setConnectOpen} operator={operator} />
       <OfflinePill />
     </div>
   );

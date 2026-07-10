@@ -167,11 +167,37 @@ describe("GET /api/session (whoami) + ETag", () => {
     const cookie = sessionCookie(await login(env, "GOODCODE"));
     const res = await app.request("http://127.0.0.1/api/session", { headers: { cookie } }, env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tenant: { id: "casey" } });
+    // Unset deployment vars degrade to explicit nulls — never a fabricated slug/name.
+    expect(await res.json()).toEqual({
+      tenant: { id: "casey" },
+      profile: "self-hosted",
+      operator: { name: null, repo: null },
+    });
     expect(res.headers.get("etag")).toMatch(/^W\/"[0-9a-f]{64}"$/);
     // Deterministic store-then-revalidate (member-app-offline D6): the browser keeps
     // the validator but never reuses the body without asking.
     expect(res.headers.get("cache-control")).toBe("private, no-cache");
+  });
+
+  it("carries the deployment profile + operator config for the connect modal", async () => {
+    // Templated: the deploy-stamped marketplace repo and the operator display name.
+    const { env } = apiEnv({
+      OPERATOR_NAME: "casey",
+      MARKETPLACE_REPO: "caseyWebb/yet-another-meal-planner-deployment",
+    });
+    const cookie = sessionCookie(await login(env, "GOODCODE"));
+    const res = await app.request("http://127.0.0.1/api/session", { headers: { cookie } }, env);
+    expect(await res.json()).toMatchObject({
+      profile: "self-hosted",
+      operator: { name: "casey", repo: "caseyWebb/yet-another-meal-planner-deployment" },
+    });
+  });
+
+  it("falls back to OWNER_TENANT_ID for the operator name when OPERATOR_NAME is unset", async () => {
+    const { env } = apiEnv({ OWNER_TENANT_ID: "casey" });
+    const cookie = sessionCookie(await login(env, "GOODCODE"));
+    const res = await app.request("http://127.0.0.1/api/session", { headers: { cookie } }, env);
+    expect(await res.json()).toMatchObject({ operator: { name: "casey", repo: null } });
   });
 
   it("answers a matching If-None-Match with an empty-body 304", async () => {
