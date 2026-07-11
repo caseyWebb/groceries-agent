@@ -60,6 +60,9 @@ export interface Hit {
   cuisine: string | null;
   /** Total minutes, or null when unauthored — an active time filter excludes null. */
   time_total: number | null;
+  /** The recipe's course facets, lowercased (`[]` when unclassified) — backs the plan
+   *  page's Projects picker (project-eligible = a non-meal course) and its kind label. */
+  course?: string[];
 }
 
 export interface RecipeDetail {
@@ -424,6 +427,14 @@ export interface PlanOp {
   planned_for?: string | null;
   sides?: string[];
   from_vibe?: string | null;
+}
+
+/** The `/api/plan/ops` response: applied ops and per-op conflicts (HTTP 200 even with
+ *  conflicts — the caller inspects `conflicts` to surface a failure rather than a false
+ *  success). Both arrays are opaque here; the page only reads `conflicts.length`. */
+export interface PlanOpsResult {
+  applied: unknown[];
+  conflicts: unknown[];
 }
 
 /** Crockford base32 (the ULID alphabet). */

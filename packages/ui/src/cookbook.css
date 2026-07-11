@@ -280,10 +280,20 @@ ul.recipes > li:last-child { border-bottom: 0; }
 .side-combo .cb-input { height: 1.7rem; font-size: var(--text-xs); }
 
 /* ── meal plan ───────────────────────────────────────────────────────────── */
+/* Meal tonal ramp — one warm family, morning gold → midday brand → evening brick. */
+:root {
+  --meal-breakfast: color-mix(in oklch, var(--brand) 46%, #e6ad3c);
+  --meal-lunch: var(--brand);
+  --meal-dinner: color-mix(in oklch, var(--brand) 58%, #5f1f0f);
+}
+[data-meal="breakfast"] { --meal-color: var(--meal-breakfast); }
+[data-meal="lunch"] { --meal-color: var(--meal-lunch); }
+[data-meal="dinner"] { --meal-color: var(--meal-dinner); }
 .plan-group { margin-bottom: 0.5rem; }
-.plan-row { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 0.9rem; padding: 0.9rem 0.25rem; border-bottom: 1px solid var(--border); }
+.plan-row { display: grid; grid-template-columns: 9.5rem 4.5rem 1fr auto; align-items: start; gap: 0.9rem; padding: 0.9rem 0.25rem; border-bottom: 1px solid var(--border); }
 .plan-date { width: 9.5rem; height: 2.1rem; font-size: var(--text-sm); color: var(--muted-foreground); }
 .plan-main { min-width: 0; }
+.plan-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.15rem; }
 .plan-title { font-size: var(--text-base); font-weight: 500; }
 .plan-title:hover { color: var(--link); }
 .plan-sides { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.4rem; }
@@ -295,6 +305,64 @@ ul.recipes > li:last-child { border-bottom: 0; }
 .side-add svg { width: 0.7rem; height: 0.7rem; }
 .side-add:hover { color: var(--foreground); border-color: var(--muted-foreground); }
 .side-input-wrap { display: inline-flex; }
+
+/* Meal label + day heading + provenance chip. */
+.plan-meal { display: flex; align-items: center; height: 2.1rem; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--meal-color, var(--brand)); white-space: nowrap; }
+.plan-day-h { margin: 1rem 0 0.15rem; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-foreground); font-weight: 700; }
+.plan-note { margin: -0.3rem 0 0.9rem; color: var(--muted-foreground); font-size: var(--text-sm); line-height: 1.45; max-width: 34rem; }
+.plan-vibe { margin-top: 0.4rem; text-transform: none; }
+
+/* "Show empty meal slots" switch. */
+.plan-slots-toggle { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 1.1rem; }
+.plan-slots-toggle-label { font-size: var(--text-sm); font-weight: 500; }
+.mp-switch { position: relative; width: 2.4rem; height: 1.4rem; border-radius: 999px; border: 0; background: var(--border); cursor: pointer; padding: 0; flex: 0 0 auto; -webkit-appearance: none; appearance: none; transition: background 0.15s; }
+.mp-switch[data-on="true"] { background: var(--primary); }
+.mp-switch-knob { position: absolute; top: 2px; left: 2px; width: 1rem; height: 1rem; border-radius: 999px; background: #fff; transition: transform 0.15s; }
+.mp-switch[data-on="true"] .mp-switch-knob { transform: translateX(1rem); }
+
+/* Empty-slots grid — 7 days × 3 meals. */
+.plan-week { display: flex; flex-direction: column; gap: 1.4rem; }
+.plan-day-slots { display: flex; flex-direction: column; }
+.plan-slot { display: grid; grid-template-columns: 6rem 4.5rem 1fr; gap: 0.9rem; align-items: start; padding: 0.9rem 0.25rem; border-bottom: 1px solid var(--border); }
+.plan-slot-day { display: flex; align-items: center; height: 2.1rem; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; }
+.plan-slot-body { min-width: 0; }
+.plan-slot-filled { min-width: 0; }
+.plan-slot-filled + .plan-slot-filled { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--border); }
+.plan-slot-line { display: flex; align-items: center; gap: 0.3rem; }
+.plan-slot-line .plan-title { min-width: 0; }
+.plan-slot-line .plan-slot-remove { margin-left: auto; flex: 0 0 auto; }
+.plan-add-slot { display: inline-flex; align-items: center; gap: 0.35rem; height: 1.95rem; padding: 0 0.75rem; border: 1px dashed color-mix(in oklch, var(--border) 92%, var(--foreground)); border-radius: var(--radius-md); background: transparent; color: var(--muted-foreground); font: inherit; font-size: var(--text-xs); font-weight: 500; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.plan-add-slot:hover { color: var(--brand); border-color: color-mix(in oklch, var(--brand) 55%, var(--border)); }
+.plan-add-slot svg { width: 0.85rem; height: 0.85rem; }
+.mp-recipe-combo { display: inline-flex; min-width: 15rem; max-width: 100%; }
+.mp-recipe-combo .combobox { min-width: 15rem; }
+
+/* ×N sibling badge + move-resolve banner. */
+.dup-badge { display: inline-flex; align-items: center; height: 1.05rem; padding: 0 0.34rem; margin-left: 0.4rem; border-radius: 999px; background: color-mix(in oklch, var(--brand) 14%, var(--card)); color: var(--brand); font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; border: 1px solid color-mix(in oklch, var(--brand) 30%, var(--card)); }
+.slot-resolve { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.45rem; padding: 0.4rem 0.35rem 0.4rem 0.6rem; border-radius: var(--radius-md); background: color-mix(in oklch, var(--brand) 8%, var(--card)); border: 1px solid color-mix(in oklch, var(--brand) 22%, var(--card)); font-size: var(--text-xs); color: var(--muted-foreground); }
+.slot-resolve > svg { width: 0.9rem; height: 0.9rem; flex: 0 0 auto; color: var(--brand); }
+.slot-resolve strong { color: var(--foreground); font-weight: 600; }
+.slot-resolve-btn { -webkit-appearance: none; appearance: none; border: 1px solid color-mix(in oklch, var(--brand) 45%, var(--border)); background: var(--card); color: var(--brand); font: inherit; font-size: var(--text-xs); font-weight: 600; height: 1.55rem; padding: 0 0.6rem; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.slot-resolve-btn:hover { background: color-mix(in oklch, var(--brand) 12%, var(--card)); }
+.slot-resolve-x { -webkit-appearance: none; appearance: none; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; margin-left: auto; display: inline-flex; padding: 0.15rem; border-radius: var(--radius-sm); }
+.slot-resolve-x:hover { color: var(--foreground); }
+.slot-resolve-x svg { width: 0.85rem; height: 0.85rem; }
+
+/* The move-to-unscheduled toast. */
+.plan-toast { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 0.65rem; padding: 0.6rem 0.7rem 0.6rem 0.9rem; border-radius: var(--radius-lg); background: var(--foreground); color: var(--background); font-size: var(--text-sm); font-weight: 500; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22); max-width: 90vw; }
+.plan-toast > svg { flex: 0 0 auto; width: 1rem; height: 1rem; }
+.plan-toast .toast-undo { -webkit-appearance: none; appearance: none; border: 0; background: transparent; color: var(--background); font: inherit; font-size: var(--text-sm); font-weight: 700; text-decoration: underline; cursor: pointer; padding: 0 0.25rem; opacity: 0.85; }
+.plan-toast .toast-undo:hover { opacity: 1; }
+
+/* Unscheduled meal groups + Projects. */
+.unsched-group { padding: 0.35rem 0; }
+.unsched-group + .unsched-group { border-top: 1px solid var(--border); }
+.unsched-meal-head { padding: 0.4rem 0 0.1rem; }
+.project-row { grid-template-columns: 1fr auto; align-items: center; }
+.project-main { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; min-width: 0; }
+.project-title { font-weight: 600; color: var(--foreground); }
+.project-kind { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-foreground); white-space: nowrap; }
+.project-add { padding-top: 0.85rem; }
 
 /* ── grocery ─────────────────────────────────────────────────────────────── */
 .g-list { list-style: none; margin: 0.5rem auto 0; padding: 0; }

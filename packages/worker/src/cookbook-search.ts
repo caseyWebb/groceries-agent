@@ -27,6 +27,9 @@ export interface CookbookHit {
   /** Total minutes, or null when unauthored — downstream time filters treat null as
    *  failing any time cap (an unknown time is never claimed under a budget). */
   time_total: number | null;
+  /** The recipe's course facets, lowercased (`[]` when unclassified) — the member
+   *  Projects picker filters and labels by these (a non-meal course is project-eligible). */
+  course: string[];
 }
 
 /** A loose index entry / search hit → the compact shape the list renderer needs. Pure
@@ -40,6 +43,7 @@ export function toHit(r: Record<string, unknown>): CookbookHit {
     protein: typeof r.protein === "string" ? r.protein : null,
     cuisine: typeof r.cuisine === "string" ? r.cuisine : null,
     time_total: typeof r.time_total === "number" ? r.time_total : null,
+    course: asStringArray(r.course).map((c) => c.toLowerCase()),
   };
 }
 

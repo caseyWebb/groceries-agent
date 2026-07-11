@@ -108,6 +108,19 @@ export interface SeedLiterals {
       readonly side: { readonly slug: string; readonly title: string };
       readonly extraRecipes: readonly string[];
     };
+    /** Meal-plan page fixtures (meal-plan-page): the unscheduled non-dinner row, the
+     *  beyond-horizon scheduled row, the from_vibe row (recipe + its unresolved vibe id),
+     *  and the project fixtures — the seeded project row's recipe plus the project-eligible
+     *  recipe the Projects picker offers (with its expected course-derived kind label). */
+    readonly plan: {
+      readonly unscheduled: string;
+      readonly later: string;
+      readonly fromVibe: { readonly recipe: string; readonly vibeId: string };
+      readonly project: {
+        readonly seeded: string;
+        readonly pick: { readonly slug: string; readonly title: string; readonly kind: string };
+      };
+    };
     /** Derived to-buy fixtures (member-app-grocery D9): the planned recipe with a seeded
      *  `ingredients_full`, a derived-only line, the both-origin merge row, the covered
      *  pantry item, and the underived recipe the specs plan. */
