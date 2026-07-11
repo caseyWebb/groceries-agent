@@ -19,7 +19,7 @@ import { useMutation, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@yamp/ui";
 import { api, apiError, type ApiError } from "./api";
 import { REGISTERED_MUTATION_KEYS } from "./persist";
-import type { GroceryRow, Overlay, PlanOp, ToBuyView } from "./data";
+import type { GroceryRow, Overlay, PlanOp, PlanOpsResult, ToBuyView } from "./data";
 
 // --- variable shapes (plain JSON — they persist to IndexedDB and replay) -----------
 
@@ -341,7 +341,14 @@ function registryRows(qc: QueryClient): RegistryRow[] {
     {
       key: ["plan", "ops"],
       defaults: {
-        mutationFn: async (vars: PlanOpsVars) => okOrThrow(await api.api.plan.ops.$post({ json: vars })),
+        // Returns the parsed `{applied, conflicts}` (HTTP 200 even with conflicts) so a
+        // call-site `onSuccess` can gate its toast on `conflicts.length` — a swallowed
+        // conflict would otherwise read as a false success (a silent no-op).
+        mutationFn: async (vars: PlanOpsVars): Promise<PlanOpsResult> => {
+          const res = await api.api.plan.ops.$post({ json: vars });
+          if (!res.ok) throw await apiError(res);
+          return (await res.json()) as PlanOpsResult;
+        },
         onError: (err: unknown) => toast(messageOf(err, "Couldn't update the plan — try again")),
         onSettled: () =>
           Promise.all([
@@ -510,9 +517,10 @@ export function useSetFavorite() {
   return useMutation<void, ApiError, FavoriteVars>({ mutationKey: ["overlay", "favorite"] });
 }
 
-/** Row-level plan ops (class (b), keyed by the client-minted plan-row id). */
+/** Row-level plan ops (class (b), keyed by the client-minted plan-row id). Resolves to the
+ *  parsed `{applied, conflicts}` so call sites surface conflicts instead of false successes. */
 export function usePlanOps() {
-  return useMutation<void, ApiError, PlanOpsVars>({ mutationKey: ["plan", "ops"] });
+  return useMutation<PlanOpsResult, ApiError, PlanOpsVars>({ mutationKey: ["plan", "ops"] });
 }
 
 export function useLogAdd() {

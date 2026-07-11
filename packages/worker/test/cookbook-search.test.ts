@@ -125,7 +125,14 @@ describe("toHit", () => {
       protein: "fish",
       cuisine: null,
       time_total: 25,
+      course: [],
     });
+  });
+
+  it("carries the course facets lowercased (a `[]` default backs the Projects picker)", () => {
+    expect(toHit({ slug: "s", course: ["Dessert", "Baked_Good"] }).course).toEqual(["dessert", "baked_good"]);
+    expect(toHit({ slug: "s", course: "side" }).course).toEqual(["side"]);
+    expect(toHit({ slug: "s" }).course).toEqual([]);
   });
 
   it("carries time_total as null when unauthored or non-numeric — never fabricated", () => {

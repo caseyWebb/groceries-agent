@@ -160,13 +160,13 @@ test("filters narrow the organic list with an honest count, hide the panel, and 
 }) => {
   await cookbookPage.goto();
   await cookbookPage.cuisineSelect().selectOption("italian");
-  await expect(cookbookPage.countLabel()).toHaveText("3 of 8 match");
+  await expect(cookbookPage.countLabel()).toHaveText("3 of 10 match");
   for (const slug of CB.italian) await expect(cookbookPage.organicRow(slug)).toBeVisible();
   // Neither promoted candidate is italian — zero rows survive, so the panel hides.
   await expect(cookbookPage.promotedPanel()).toHaveCount(0);
   await expect(page).toHaveURL(/cuisine=italian/);
   await cookbookPage.timeOption("≤30").click();
-  await expect(cookbookPage.countLabel()).toHaveText("2 of 8 match");
+  await expect(cookbookPage.countLabel()).toHaveText("2 of 10 match");
   await expect(cookbookPage.organicRow("viz-beef-ragu")).toHaveCount(0); // 90 min
   await expect(page).toHaveURL(/time=30/);
   await cookbookPage.captureForReview("cookbook-filtered");
@@ -184,7 +184,7 @@ test("a recipe with no time_total fails any active time cap — never claimed un
   await expect(cookbookPage.organicRow(CB.noTime)).toBeVisible();
   await cookbookPage.timeOption("≤45").click();
   await expect(cookbookPage.organicRow(CB.noTime)).toHaveCount(0);
-  await expect(cookbookPage.countLabel()).toHaveText("6 of 8 match");
+  await expect(cookbookPage.countLabel()).toHaveText("7 of 10 match");
   await cookbookPage.timeOption("Any").click();
   await expect(cookbookPage.organicRow(CB.noTime)).toBeVisible();
 });
@@ -206,7 +206,7 @@ test("filter state deep-links: loading the URL reproduces it", async ({ cookbook
   await cookbookPage.gotoWith("cuisine=italian&time=30");
   await expect(cookbookPage.cuisineSelect()).toHaveValue("italian");
   await expect(cookbookPage.timeOption("≤30")).toHaveAttribute("aria-pressed", "true");
-  await expect(cookbookPage.countLabel()).toHaveText("2 of 8 match");
+  await expect(cookbookPage.countLabel()).toHaveText("2 of 10 match");
   await expect(cookbookPage.organicRow("viz-cacio-pepe")).toBeVisible();
   await expect(cookbookPage.organicRow("viz-beef-ragu")).toHaveCount(0);
 });

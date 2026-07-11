@@ -40,7 +40,22 @@ export function daysSince(isoDay: string): number {
 export const PERISHABLE = new Set(["produce", "dairy", "seafood", "meat"]);
 export const STALE_DAYS = 7;
 
-/** Today as an ISO day. */
+/** Today as an ISO day (UTC). */
 export function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** A Date's browser-LOCAL calendar day as YYYY-MM-DD. */
+export function localDay(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Today in the browser's LOCAL time zone (YYYY-MM-DD). The meal-plan grid horizon and the
+ *  native `<input type="date">` both work in local time; UTC `isoToday` would put an evening
+ *  west-of-UTC user's real today into "Later" and label tomorrow as "Today". */
+export function localToday(): string {
+  return localDay(new Date());
 }

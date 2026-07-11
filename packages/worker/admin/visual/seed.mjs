@@ -138,6 +138,17 @@ export const SEED = {
       side: { slug: "viz-garlic-bread", title: "Garlic Bread" },
       extraRecipes: ["viz-fish-tacos", "viz-beef-ragu", "viz-spinach-curry", "viz-cacio-pepe"],
     },
+    // The meal-plan page fixtures (meal-plan-page): the extra seeded plan rows the redesign
+    // renders — an unscheduled non-dinner, a beyond-horizon scheduled row, a from_vibe row
+    // (its id unresolved while the palette is empty → the chip falls back to the id), and a
+    // seeded project row — plus the project-eligible recipe the Projects picker offers. All
+    // reference DISTINCT recipes from the seeded cook target (`recipe.slug`).
+    plan: {
+      unscheduled: "viz-fish-tacos",
+      later: "viz-cacio-pepe",
+      fromVibe: { recipe: "viz-spinach-curry", vibeId: "cozy-noodles" },
+      project: { seeded: "viz-choc-cookies", pick: { slug: "viz-berry-galette", title: "Berry Galette", kind: "Dessert" } },
+    },
     // The derived to-buy view (member-app-grocery D9): the seeded meal_plan row's recipe
     // carries `ingredients_full`, so the grocery page renders REAL virtual rows. `virtual`
     // is a derived-only line (no grocery row); `both` is the seeded active row the plan
@@ -372,16 +383,29 @@ export function d1Statements(now) {
     // recipe fails any active time cap) — a course SIDE so no suggestion surface
     // (propose pools, trending, picked-for-you) ever volunteers it as a meal.
     ["viz-pickled-onions", "Quick Pickled Onions", null, "mexican", null, null, '["condiment"]', '["red onion","vinegar"]', null, null, null],
+    // Project-eligible corpus recipes (meal-plan-page): non-meal courses so they surface
+    // ONLY in the plan page's Projects picker (course-filtered), never as meal suggestions.
+    // The galette (dessert) backs the Projects add spec; the cookies (baked_good) are the
+    // seeded project row. No `ingredients_full` (they add no derived to-buy lines).
+    ["viz-berry-galette", "Berry Galette", null, "french", 60, null, '["dessert"]', '["berries","butter","flour"]', null, null, null],
+    ["viz-choc-cookies", "Chocolate Chip Cookies", null, "american", 30, null, '["baked_good"]', '["flour","butter","chocolate"]', null, null, null],
   ];
-  /** Corpus sides (course ["side"]) — everything else stays course NULL (unclassified). */
-  const sideSlugs = new Set(["viz-garlic-bread", "viz-pickled-onions"]);
+  /** Corpus course facets by slug — everything else stays course NULL (unclassified). Sides
+   *  gate out of suggestion surfaces; dessert/baked_good are the plan page's project-eligible
+   *  fixtures (meal-plan-page). */
+  const courseBySlug = {
+    "viz-garlic-bread": ["side"],
+    "viz-pickled-onions": ["side"],
+    "viz-berry-galette": ["dessert"],
+    "viz-choc-cookies": ["baked_good"],
+  };
   stmts.push(`DELETE FROM recipes WHERE slug IN (${proposeRecipes.map((r) => q(r[0])).join(", ")});`);
   stmts.push(
     "INSERT INTO recipes (slug, title, protein, cuisine, time_total, source_url, tags, ingredients_key, perishable_ingredients, pairs_with, course, ingredients_full) VALUES " +
       proposeRecipes
         .map(
           ([slug, title, protein, cuisine, time, source, tags, keys, perishable, pairs, full]) =>
-            `(${q(slug)}, ${q(title)}, ${protein ? q(protein) : "NULL"}, ${q(cuisine)}, ${time ?? "NULL"}, ${source ? q(source) : "NULL"}, ${q(tags)}, ${q(keys)}, ${perishable ? q(perishable) : "NULL"}, ${pairs ? q(pairs) : "NULL"}, ${sideSlugs.has(slug) ? q('["side"]') : "NULL"}, ${full ? q(full) : "NULL"})`,
+            `(${q(slug)}, ${q(title)}, ${protein ? q(protein) : "NULL"}, ${q(cuisine)}, ${time ?? "NULL"}, ${source ? q(source) : "NULL"}, ${q(tags)}, ${q(keys)}, ${perishable ? q(perishable) : "NULL"}, ${pairs ? q(pairs) : "NULL"}, ${courseBySlug[slug] ? q(JSON.stringify(courseBySlug[slug])) : "NULL"}, ${full ? q(full) : "NULL"})`,
         )
         .join(", ") +
       ";",
@@ -418,8 +442,20 @@ export function d1Statements(now) {
     `INSERT INTO tenant_activity (tenant, first_seen_at, last_seen_at) VALUES (${q(members.active)}, ${now - 40 * DAY}, ${now - 2 * HOUR});`,
   );
   stmts.push(`DELETE FROM meal_plan WHERE tenant = ${q(members.active)};`);
+  // The meal-plan page fixtures (meal-plan-page): a scheduled dinner (the existing to-buy
+  // anchor), an UNSCHEDULED non-dinner (the Unscheduled-by-meal groups), a BEYOND-HORIZON
+  // scheduled row (>7 days out — the "Later" strip keeps it visible), a FROM_VIBE row (the
+  // provenance chip; the id falls back to itself while the palette is empty), and a PROJECT
+  // row (`meal='project'`, the Baking/treats section). Distinct recipes from the seeded
+  // cook target so a cross-spec log-a-cook's transactional clear can't destabilize them.
+  const pl = SEED.app.plan;
   stmts.push(
-    `INSERT INTO meal_plan (tenant, id, recipe, meal, planned_for, sides) VALUES (${q(members.active)}, 'pw-seed-plan-row-1', ${q(recipe.slug)}, 'dinner', ${q(day(now + 2 * DAY))}, '[]');`,
+    `INSERT INTO meal_plan (tenant, id, recipe, meal, planned_for, sides, from_vibe) VALUES` +
+      ` (${q(members.active)}, 'pw-seed-plan-row-1', ${q(recipe.slug)}, 'dinner', ${q(day(now + 2 * DAY))}, '[]', NULL),` +
+      ` (${q(members.active)}, 'pw-seed-plan-unsched', ${q(pl.unscheduled)}, 'lunch', NULL, '[]', NULL),` +
+      ` (${q(members.active)}, 'pw-seed-plan-later', ${q(pl.later)}, 'dinner', ${q(day(now + 10 * DAY))}, '[]', NULL),` +
+      ` (${q(members.active)}, 'pw-seed-plan-vibe', ${q(pl.fromVibe.recipe)}, 'dinner', NULL, '[]', ${q(pl.fromVibe.vibeId)}),` +
+      ` (${q(members.active)}, 'pw-seed-plan-project', ${q(pl.project.seeded)}, 'project', NULL, '[]', NULL);`,
   );
   stmts.push(`DELETE FROM pantry WHERE tenant = ${q(members.active)};`);
   stmts.push(
