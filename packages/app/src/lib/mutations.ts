@@ -19,7 +19,7 @@ import { useMutation, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@yamp/ui";
 import { api, apiError, type ApiError } from "./api";
 import { REGISTERED_MUTATION_KEYS } from "./persist";
-import type { GroceryRow, Overlay, PlanOp, PlanOpsResult, ToBuyView } from "./data";
+import type { GroceryRow, Overlay, PantryRow, PlanOp, PlanOpsResult, ToBuyView } from "./data";
 
 // --- variable shapes (plain JSON — they persist to IndexedDB and replay) -----------
 
@@ -42,8 +42,27 @@ export interface GroceryRemoveVars {
   name: string;
 }
 
+/** One pantry row op (add-upsert / remove / verify / dispose), keyed by canonical id —
+ *  `dispose` additionally keyed on its client-minted waste `event_id` for replay
+ *  convergence. Plain JSON so a queued op persists and replays (member-app-offline). */
+export type PantryOp =
+  | { op: "add"; item: Record<string, unknown> }
+  | { op: "remove" | "verify"; name: string }
+  | {
+      op: "dispose";
+      name: string;
+      /** consumed (`used`, pure idempotent delete) vs tossed (`waste`, records an event). */
+      disposition: "used" | "waste";
+      /** waste only: the canonical `WASTE_REASONS` slug (required for waste). */
+      reason?: string;
+      /** waste only: the client-minted idempotency key (a ULID); a replay converges to one event. */
+      event_id?: string;
+      /** waste only: ISO date (YYYY-MM-DD) the toss happened (stamped at tap time). */
+      occurred_at?: string;
+    };
+
 export interface PantryOpsVars {
-  operations: unknown[];
+  operations: PantryOp[];
 }
 
 export interface PantryVerifyVars {
@@ -283,6 +302,20 @@ function registryRows(qc: QueryClient): RegistryRow[] {
       key: ["pantry", "ops"],
       defaults: {
         mutationFn: async (vars: PantryOpsVars) => okOrThrow(await api.api.pantry.ops.$post({ json: vars })),
+        onMutate: (vars: PantryOpsVars) => {
+          // A removal — a plain `remove` (verification cleanup) or a `dispose` (Used /
+          // Mark-as-waste) — drops the row optimistically so the disposition feels instant
+          // and works offline (the tap-time truth before the settle-time refetch). `add`
+          // upserts and `verify` restamps rely on the settle invalidation below.
+          const dropped = new Set<string>();
+          for (const o of vars.operations) {
+            if (o.op === "remove" || o.op === "dispose") dropped.add(norm(o.name));
+          }
+          if (dropped.size === 0) return;
+          qc.setQueryData<{ items: PantryRow[] }>(["pantry"], (cur) =>
+            cur ? { items: cur.items.filter((i) => !dropped.has(norm(i.name))) } : cur,
+          );
+        },
         onError: (err: unknown) => toast(messageOf(err, "Couldn't update the pantry — try again")),
         onSettled: () =>
           Promise.all([

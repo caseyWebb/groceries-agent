@@ -113,6 +113,13 @@ export interface PantryRow {
   name: string;
   quantity?: string;
   category?: string;
+  /** Where the row is kept — a `PANTRY_LOCATIONS` slug (served by the pantry read; null
+   *  until the member sets it). Backs the group-by-location view. */
+  location?: string;
+  /** The stored canonical dedup key (the D1 `normalized_name` / PK) — served today. */
+  normalized_name?: string;
+  /** The curated human-facing label, stored independently of `name` — served today. */
+  display_name?: string;
   prepared_from: string | null;
   added_at?: string;
   last_verified_at?: string;
