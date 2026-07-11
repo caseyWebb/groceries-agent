@@ -477,12 +477,20 @@ export function d1Statements(now) {
       ` (${q(members.active)}, 'pw-seed-plan-project', ${q(pl.project.seeded)}, 'project', NULL, '[]', NULL);`,
   );
   stmts.push(`DELETE FROM pantry WHERE tenant = ${q(members.active)};`);
+  // The app pantry page fixtures (pantry-page): rows carry the split `location`/`category`
+  // vocabularies (Baby spinach stays a stale perishable for the needs-verification section)
+  // and span ≥2 locations (fridge + pantry) so the group-by-Location view renders multiple
+  // headers in the fixed order. `category` uses the food taxonomy (`grains`, not the retired
+  // location-flavored `grain`). Distinct from the Red-cabbage `pantryHit` row seeded below.
   stmts.push(
-    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, added_at, last_verified_at) VALUES` +
-      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grain', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))}),` +
+    `INSERT INTO pantry (tenant, name, normalized_name, quantity, category, location, added_at, last_verified_at) VALUES` +
+      ` (${q(members.active)}, 'Jasmine rice', 'jasmine rice', '2 lb', 'grains', 'pantry', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))}),` +
       // A perishable past the 7-day staleness threshold — the app pantry page's
       // needs-verification section (member-app-core) renders + clears from this row.
-      ` (${q(members.active)}, 'Baby spinach', 'baby spinach', '1 bag', 'produce', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))});`,
+      ` (${q(members.active)}, 'Baby spinach', 'baby spinach', '1 bag', 'produce', 'fridge', ${q(day(now - 10 * DAY))}, ${q(day(now - 10 * DAY))}),` +
+      ` (${q(members.active)}, 'Butter', 'butter', '1 stick', 'dairy', 'fridge', ${q(day(now - 3 * DAY))}, ${q(day(now - 1 * DAY))}),` +
+      ` (${q(members.active)}, 'Olive oil', 'olive oil', '1 bottle', 'oils', 'pantry', ${q(day(now - 20 * DAY))}, ${q(day(now - 4 * DAY))}),` +
+      ` (${q(members.active)}, 'Parmesan', 'parmesan', '1 wedge', 'dairy', 'fridge', ${q(day(now - 6 * DAY))}, ${q(day(now - 2 * DAY))});`,
   );
 
   // --- Normalization: an identity graph corner (two concrete nodes + a concept + edges), an

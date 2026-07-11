@@ -1,40 +1,27 @@
-// The pantry/waste vocabularies and the ONE D17 item→department derivation
-// (pantry-disposition-foundations, design D1/D5). Pantry rows carry two orthogonal
-// controlled fields — `location` (where it's kept) and `category` (the food taxonomy,
-// which doubles as the analytics department dimension) — and waste events stamp a
-// `department` at capture through `stampDepartment` below. Spend capture
-// (spend-capture-on-order-commit) stamps the same dimension on order-send lines and
-// spend events through `departmentForGroceryLine`; no
-// surface re-derives item→department on its own. Pure (no env) — the identity-memo
-// read that feeds `stampDepartment` lives with the other identity reads
-// (`readIngredientCategoryMemo`, src/corpus-db.ts). Band 2 lifts the vocab arrays
-// into `@yamp/contract` when the member app needs the dropdowns (a one-line move,
-// deliberately not done speculatively).
+// The D17 item→department derivation (pantry-disposition-foundations, design D1/D5).
+// Pantry rows carry two orthogonal controlled fields — `location` (where it's kept) and
+// `category` (the food taxonomy, which doubles as the analytics department dimension) —
+// and waste events stamp a `department` at capture through `stampDepartment` below. Spend
+// capture (spend-capture-on-order-commit) stamps the same dimension on order-send lines and
+// spend events through `departmentForGroceryLine`; no surface re-derives item→department on
+// its own. Pure (no env) — the identity-memo read that feeds `stampDepartment` lives with
+// the other identity reads (`readIngredientCategoryMemo`, src/corpus-db.ts).
+//
+// The three controlled vocabularies (`PANTRY_LOCATIONS`, `PANTRY_CATEGORIES`,
+// `WASTE_REASONS`) are the SINGLE source in `@yamp/contract` (the member app's pantry
+// dropdowns and waste modal import them there); this module re-exports them so the Worker's
+// existing importers keep their `./department.js` source, and layers the D17-only derived
+// sets (`IDENTITY_CATEGORIES`, `DEPARTMENTS`) and legacy shim on top.
 
-/** Kitchen locations — THE location vocabulary product-wide (page 06). */
-export const PANTRY_LOCATIONS = ["fridge", "freezer", "pantry", "spice_rack", "counter", "cabinet"] as const;
-export type PantryLocation = (typeof PANTRY_LOCATIONS)[number];
-
-/** The food taxonomy a pantry row's `category` holds — also the D17 analytics
- *  dimension source. NULL reads as uncategorized (filled by the classifier), never
- *  an error; there is deliberately NO `other` value. */
-export const PANTRY_CATEGORIES = [
-  "produce",
-  "dairy",
-  "meat",
-  "seafood",
-  "grains",
-  "bakery",
-  "canned",
-  "condiments",
-  "oils",
-  "spices",
-  "baking",
-  "frozen",
-  "snacks",
-  "beverages",
-] as const;
-export type PantryCategory = (typeof PANTRY_CATEGORIES)[number];
+export {
+  PANTRY_LOCATIONS,
+  PANTRY_CATEGORIES,
+  WASTE_REASONS,
+  type PantryLocation,
+  type PantryCategory,
+  type WasteReason,
+} from "@yamp/contract";
+import { PANTRY_CATEGORIES, type PantryLocation } from "@yamp/contract";
 
 /** What the identity memo (`ingredient_identity.category`) may hold: the food taxonomy
  *  plus `household`, the non-food catch-all so classification always terminates. */
@@ -45,22 +32,6 @@ export type IdentityCategory = (typeof IDENTITY_CATEGORIES)[number];
  *  (non-food) ∪ `leftovers` (the waste-only pseudo-department `prepared_from` rows stamp). */
 export const DEPARTMENTS = [...IDENTITY_CATEGORIES, "leftovers"] as const;
 export type Department = (typeof DEPARTMENTS)[number];
-
-/** The ONE canonical waste-reason enum (stories/03 §2's set, slugged). Capture defines
- *  it; band 4's versioned reason(+item-class)→avoidability table consumes it. */
-export const WASTE_REASONS = [
-  "spoiled",
-  "moldy",
-  "over_ripe",
-  "expired",
-  "freezer_burned",
-  "stale",
-  "forgot",
-  "bought_too_much",
-  "never_opened",
-  "other",
-] as const;
-export type WasteReason = (typeof WASTE_REASONS)[number];
 
 /** The ongoing D21 write/read shim: the four LEGACY documented pantry `category` values
  *  transposed onto `location` for one deprecation window (stale cached plugins keep

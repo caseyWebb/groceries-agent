@@ -501,6 +501,31 @@ ul.recipes > li:last-child { border-bottom: 0; }
 .verify-section .pantry-item:last-child { border-bottom: 0; }
 .verify-section .pantry-item [data-slot="button"] svg { width: 0.85rem; height: 0.85rem; }
 
+/* ── pantry: group-by toggle, multi-add grid, disposition split button (page 06) ─── */
+.pantry-groupby { display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.5rem; flex-wrap: wrap; }
+.pantry-groupby-label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-foreground); }
+.pantry-add-panel { border: 1px solid var(--border); border-radius: var(--radius-lg); background: color-mix(in oklch, var(--muted) 40%, var(--card)); padding: 0.9rem 1rem; margin: 0 0 1.1rem; }
+.pantry-add-panel .input { height: 2.1rem; }
+.pantry-add-panel .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.pantry-add-grid { display: grid; grid-template-columns: 1.7fr 0.7fr 1fr 1fr auto; gap: 0.5rem; align-items: center; }
+.pantry-add-grid + .pantry-add-grid { margin-top: 0.5rem; }
+.pantry-add-head { margin-bottom: 0.45rem; }
+.pantry-add-head span { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); }
+.pantry-add-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-top: 1.15rem; flex-wrap: wrap; }
+.pantry-add-hint { font-size: var(--text-xs); color: var(--muted-foreground); line-height: 1.45; max-width: 26rem; }
+.pantry-add-actions { display: flex; gap: 0.5rem; flex: 0 0 auto; }
+.pantry-verified-wrap { display: inline-flex; align-items: center; gap: 0.3rem; }
+.pantry-reverify { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; color: var(--muted-foreground); }
+.pantry-reverify:hover { color: var(--brand); }
+.pantry-reverify svg { width: 0.85rem; height: 0.85rem; }
+.pantry-actions { position: relative; display: inline-flex; flex: 0 0 auto; }
+.pantry-actions .pantry-used { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.pantry-actions .pantry-menu-toggle { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 0.4rem; border-left: 1px solid color-mix(in oklch, var(--primary-foreground) 32%, transparent); }
+.pantry-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 11rem; background: var(--popover, var(--card)); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 4px 12px -6px color-mix(in oklch, var(--foreground) 22%, transparent); padding: 0.3rem; }
+.pantry-menu-item { width: 100%; display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.6rem; background: transparent; border: 0; border-radius: var(--radius-sm, calc(var(--radius-md) - 2px)); cursor: pointer; font: inherit; font-size: var(--text-sm); color: var(--foreground); text-align: left; -webkit-appearance: none; appearance: none; }
+.pantry-menu-item:hover { background: var(--muted); }
+.pantry-menu-item svg { color: var(--muted-foreground); flex: 0 0 auto; width: 0.95rem; height: 0.95rem; }
+
 /* ── retrospective · cooking log ─────────────────────────────────────────── */
 .log-composer { border: 1px solid var(--border); border-radius: var(--radius-xl, 0.9rem); background: var(--card); padding: 1rem 1.1rem; margin-bottom: 1.6rem; display: flex; flex-direction: column; gap: 0.7rem; }
 .log-composer-cap { display: flex; align-items: center; gap: 0.4rem; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.07em; color: var(--brand); font-weight: 600; }
@@ -850,6 +875,23 @@ ul.recipes > li:last-child { border-bottom: 0; }
 .slot-vibe-reset { align-self: flex-start; display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--text-xs); background: none; border: 0; color: var(--muted-foreground); cursor: pointer; padding: 0; font: inherit; }
 .slot-vibe-reset:hover { color: var(--foreground); }
 .slot-vibe-reset svg { width: 0.85rem; height: 0.85rem; }
+
+/* ── lightweight modal + tap-list (unscoped: the pantry waste modal; the mock's
+      `.connect-modal .modal-*` rules still win inside the Dialog-backed connect modal) ─ */
+.modal-backdrop { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 1.5rem; background: color-mix(in oklch, var(--foreground) 42%, transparent); }
+.modal-card { width: 100%; max-width: 33rem; max-height: calc(100vh - 3rem); overflow: auto; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: var(--radius-xl, 0.9rem); box-shadow: 0 24px 60px -12px color-mix(in oklch, var(--foreground) 45%, transparent); }
+.modal-head { display: flex; align-items: flex-start; gap: 0.85rem; padding: 1.35rem 1.5rem 0.9rem; }
+.modal-title { font-size: var(--text-lg); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.modal-sub { font-size: var(--text-sm); color: var(--muted-foreground); margin: 0.2rem 0 0; line-height: 1.5; }
+.modal-close { margin-left: auto; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--muted-foreground); cursor: pointer; -webkit-appearance: none; appearance: none; }
+.modal-close:hover { background: var(--muted); color: var(--foreground); }
+.modal-close svg { width: 1.1rem; height: 1.1rem; }
+.store-results { list-style: none; margin: 0; padding: 0.2rem 0.9rem 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.store-result { width: 100%; display: flex; align-items: center; gap: 0.75rem; text-align: left; padding: 0.7rem 0.85rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); cursor: pointer; font: inherit; -webkit-appearance: none; appearance: none; }
+.store-result:hover { background: var(--muted); }
+.store-result-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.store-result-name { font-size: var(--text-sm); font-weight: 600; }
+.store-result svg { width: 1rem; height: 1rem; color: var(--primary); flex: 0 0 auto; }
 
 /* ── connect-to-claude modal (connect-modal, mock CSS ported) ────────────── */
 .sb-connect-wrap { padding: 0.15rem 0 0.4rem; }
