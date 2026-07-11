@@ -2,10 +2,10 @@
 // search" + member-app-differentiators' promoted panel), LIVE against the seeded
 // Worker: one flat filterable list, the global filter bar (honest time gate, "N of M
 // match", Clear), the promoted "Recommended for you" panel's reason badges over the
-// real signals, URL-search-param deep links, the favorites view mode with both empty
-// states, keyword search (AND-ed with filters), the detail page, and the D14 notes
-// flow. The favorites CONTROL is design-blocked (design-requests #1) — the view mode
-// is entered by URL here until the designed control lands.
+// real signals, URL-search-param deep links, the favorites view mode entered through
+// the All recipes / Favorites tab row (aria-selected + heart fill + count pill, plus
+// the /favorites redirect), both favorites empty states, keyword search (AND-ed with
+// filters), the detail page, and the D14 notes flow.
 import { test, expect } from "../fixtures";
 import { SEED } from "../../../admin/visual/seed.mjs";
 
@@ -85,17 +85,16 @@ test("notes: add an own note (client-minted identity), then delete it", async ({
   await recipePage.expectNoOwnNotes();
 });
 
-test("favorite is an explicit set that shows up on the favorites page", async ({
+test("favorite is an explicit set that shows up in the favorites view", async ({
   cookbookPage,
-  favoritesPage,
 }) => {
   // Explicit-set semantics: drive OFF then ON regardless of the seeded state —
   // each click sends the computed target, so the sequence converges either way.
   await cookbookPage.ensureFavorite(SEED.recipe.slug, false);
   await cookbookPage.ensureFavorite(SEED.recipe.slug, true);
-  await favoritesPage.goto();
-  await favoritesPage.expectRecipe(SEED.recipe.slug);
-  await favoritesPage.captureForReview("favorites-populated");
+  await cookbookPage.openView("Favorites");
+  await expect(cookbookPage.row(SEED.recipe.slug)).toBeVisible();
+  await cookbookPage.captureForReview("favorites-populated");
 });
 
 // ── The promoted "Recommended for you" panel (member-app-differentiators), LIVE
@@ -221,9 +220,35 @@ test("active filters AND onto search results", async ({ cookbookPage }) => {
   await cookbookPage.expectNoMatches();
 });
 
-// ── The favorites view mode (member-app-core, D8: favorites folds into the page).
-// Entered by URL — the toggle CONTROL's form is design-blocked (design-requests #1),
-// so no control markup exists yet; the `/favorites` route stays until it lands.
+// ── The favorites view mode (member-app-core, D8: favorites folds into the page),
+// entered through the view-mode tab row (design-requests #1's committed form): a
+// scope switch, not another AND-filter — the global filters stay mounted inside it.
+
+test("the Favorites tab switches the view: URL param, list, panel, aria, heart fill", async ({
+  cookbookPage,
+  page,
+}) => {
+  await cookbookPage.ensureFavorite(SEED.recipe.slug, true);
+  await cookbookPage.goto();
+  await expect(cookbookPage.viewTab("All recipes")).toHaveAttribute("aria-selected", "true");
+  await expect(cookbookPage.viewTab("Favorites")).toHaveAttribute("aria-selected", "false");
+  await expect(cookbookPage.viewTab("Favorites").locator("svg")).toHaveAttribute("fill", "none");
+  await cookbookPage.openView("Favorites");
+  // The view is derived URL state (default stripped): the param appears, the list
+  // becomes the favorites, the promoted panel hides, and the heart fills.
+  await expect(page).toHaveURL(/\?view=favorites/);
+  await expect(cookbookPage.organicRow(SEED.recipe.slug)).toBeVisible();
+  await expect(cookbookPage.organicList().getByTestId("recipe-row")).toHaveCount(1);
+  await expect(cookbookPage.promotedPanel()).toHaveCount(0);
+  await expect(cookbookPage.viewTab("All recipes")).toHaveAttribute("aria-selected", "false");
+  await expect(cookbookPage.viewTab("Favorites").locator("svg")).toHaveAttribute("fill", "currentColor");
+  await cookbookPage.captureForReview("cookbook-favorites-tabs");
+  // Back to All recipes: the param strips, the panel and full organic list return.
+  await cookbookPage.openView("All recipes");
+  await expect(page).not.toHaveURL(/view=/);
+  await expect(cookbookPage.promotedPanel()).toBeVisible();
+  await expect(cookbookPage.organicRow("viz-chicken-soup")).toBeVisible();
+});
 
 test("the favorites view mode filters favorites and hides the promoted panel", async ({
   cookbookPage,
@@ -233,23 +258,47 @@ test("the favorites view mode filters favorites and hides the promoted panel", a
   await expect(cookbookPage.organicRow(SEED.recipe.slug)).toBeVisible();
   await expect(cookbookPage.organicList().getByTestId("recipe-row")).toHaveCount(1);
   await expect(cookbookPage.promotedPanel()).toHaveCount(0);
-  // The global filters apply INSIDE the view, with the favorites-specific empty copy.
+  // The global filters apply INSIDE the view, with the favorites-specific empty copy —
+  // while the tab's count pill keeps the UNFILTERED total (the honest count).
   await cookbookPage.cuisineSelect().selectOption("italian");
   await expect(cookbookPage.countLabel()).toHaveText("0 of 1 match");
+  await expect(cookbookPage.favoritesTabCount()).toHaveText("1");
   await expect(cookbookPage.filterEmpty()).toContainText("None of your favorites match these filters.");
   await cookbookPage.inlineClearFilters().click();
   await expect(cookbookPage.organicRow(SEED.recipe.slug)).toBeVisible();
   await cookbookPage.captureForReview("cookbook-favorites-view");
 });
 
-test("zero favorites overall renders the No favorites yet empty state", async ({ cookbookPage, page }) => {
+test("zero favorites overall renders the No favorites yet empty state and no count pill", async ({
+  cookbookPage,
+  page,
+}) => {
   await cookbookPage.ensureFavorite(SEED.recipe.slug, false);
   await cookbookPage.gotoWith("view=favorites");
   await expect(page.getByTestId("cookbook-page")).toContainText("No favorites yet");
   await expect(page.getByTestId("cookbook-page")).toContainText("Tap the heart on any recipe to save it here.");
   await expect(cookbookPage.promotedPanel()).toHaveCount(0);
+  // Zero favorites: the Favorites tab renders bare — no "0" pill.
+  await expect(cookbookPage.viewTab("Favorites")).toBeVisible();
+  await expect(cookbookPage.favoritesTabCount()).toHaveCount(0);
   await cookbookPage.captureForReview("cookbook-favorites-empty");
-  // Restore the seeded favorite for any specs that follow.
+  // Restore the seeded favorite for any specs that follow — and pin the pill's return.
   await cookbookPage.goto();
   await cookbookPage.ensureFavorite(SEED.recipe.slug, true);
+  await expect(cookbookPage.favoritesTabCount()).toHaveText("1");
+});
+
+test("/favorites redirects into the view mode, preserving other params", async ({
+  cookbookPage,
+  page,
+}) => {
+  await cookbookPage.ensureFavorite(SEED.recipe.slug, true);
+  await page.goto("/favorites?cuisine=japanese");
+  await cookbookPage.landmark();
+  await expect(page).toHaveURL(/\/\?/);
+  await expect(page).toHaveURL(/view=favorites/);
+  await expect(page).toHaveURL(/cuisine=japanese/);
+  await expect(cookbookPage.viewTab("Favorites")).toHaveAttribute("aria-selected", "true");
+  await expect(cookbookPage.organicRow(SEED.recipe.slug)).toBeVisible();
+  await expect(cookbookPage.cuisineSelect()).toHaveValue("japanese");
 });
