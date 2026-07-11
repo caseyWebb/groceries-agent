@@ -24,8 +24,6 @@ The system SHALL store the caller's cooking frequency as a per-meal **`cadence`*
 - **WHEN** `update_preferences` receives `default_cooking_nights: 3` during the deprecation window
 - **THEN** `cadence.dinner` becomes 3 (breakfast/lunch preserved), the frozen `default_cooking_nights` column is not written, and the result's `warnings` carries the aliased entry
 
-## MODIFIED Requirements
-
 ### Requirement: The planning window bounds per-meal slot counts, not cooking frequency
 
 The number of vibe slots `propose_meal_plan` shapes for a plan SHALL be, per meal, the caller's `cadence[meal]` count applied **within** the planning window (subject to any explicit per-meal override), so that changing the planning window alone SHALL NOT change how many slots per window the caller intends to cook for any meal. Counts are per-window, not week-scaled — parity with the prior `nights` behavior, generalized per meal. The planning window continues to bound **recurrence caps** (period-aware repeatability), not counts.
@@ -39,6 +37,8 @@ The number of vibe slots `propose_meal_plan` shapes for a plan SHALL be, per mea
 
 - **WHEN** a caller's cadence is `{ breakfast: 2, lunch: 0, dinner: 4 }` and no explicit `meals` override is supplied
 - **THEN** the plan shapes 2 breakfast slots, 0 lunch slots, and 4 dinner slots within the window
+
+## MODIFIED Requirements
 
 ### Requirement: Period-aware vibe repeatability
 

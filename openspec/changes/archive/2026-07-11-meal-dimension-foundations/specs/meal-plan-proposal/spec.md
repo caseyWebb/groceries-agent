@@ -1,3 +1,8 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: The candidate pool is course-gated to mains by default`
+- TO: `### Requirement: The candidate pool is course-gated per meal`
+
 ## MODIFIED Requirements
 
 ### Requirement: Two-level meal-plan proposal
