@@ -1,10 +1,11 @@
 // Cookbook — the unified browse page (member-app-core "Cookbook browse and keyword
 // search" + member-app-differentiators' promoted panel): the debounced keyword
-// searchbar, the global filter bar (cuisine/protein selects + time segments + Clear +
-// "N of M match"), the promoted "Recommended for you" panel with its reason badges,
-// the flat organic list, and the favorites view mode (?view=favorites). Also owns the
-// API-level cooking-log provisioning the sparse-trending spec uses (delete own rows →
-// below the guard → restore).
+// searchbar, the view-mode tab row (All recipes / Favorites — the favorites view's
+// entry control, with its count pill), the global filter bar (cuisine/protein selects
+// + time segments + Clear + "N of M match"), the promoted "Recommended for you" panel
+// with its reason badges, and the flat organic list. Also owns the API-level
+// cooking-log provisioning the sparse-trending spec uses (delete own rows → below the
+// guard → restore).
 import { expect } from "@playwright/test";
 import { AppPage, type Locator } from "./base.page";
 
@@ -25,6 +26,28 @@ export class CookbookPage extends AppPage {
 
   row(slug: string): Locator {
     return this.page.locator(`[data-testid="recipe-row"][data-slug="${slug}"]`).first();
+  }
+
+  // --- the view-mode tab row (All recipes / Favorites) ------------------------------
+
+  viewTabs(): Locator {
+    return this.page.getByTestId("cookbook-viewtabs");
+  }
+
+  /** One tab by its accessible name ("All recipes" / "Favorites"). */
+  viewTab(name: "All recipes" | "Favorites"): Locator {
+    return this.viewTabs().getByRole("tab", { name });
+  }
+
+  /** The Favorites tab's mono count pill (absent at zero favorites). */
+  favoritesTabCount(): Locator {
+    return this.page.getByTestId("favorites-tab-count");
+  }
+
+  /** Enter a view through the control (the URL param is the derived state). */
+  async openView(name: "All recipes" | "Favorites"): Promise<void> {
+    await this.viewTab(name).click();
+    await expect(this.viewTab(name)).toHaveAttribute("aria-selected", "true");
   }
 
   // --- the global filter bar -------------------------------------------------------

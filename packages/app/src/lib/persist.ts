@@ -31,8 +31,8 @@ export const GC_TIME_MS = MAX_AGE_MS;
 /**
  * The query-key prefixes that persist (D2's table): the grocery reads (stored rows AND
  * the derived to-buy view — one prefix covers both), pantry, plan, overlay
- * (favorites/rejects — the cookbook/favorites pages and sidebar counts join it
- * client-side), the cookbook index, and visited recipe bodies (visited-only by
+ * (favorites/rejects — the cookbook page, its favorites view, and the row hearts join
+ * it client-side), the cookbook index, and visited recipe bodies (visited-only by
  * construction: only fetched bodies are in cache; bounded by GC_TIME_MS).
  */
 export const PERSIST_PREFIXES: readonly (readonly string[])[] = [

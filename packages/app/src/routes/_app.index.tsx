@@ -6,8 +6,10 @@
 // copy verbatim; "Popular with Friends" waits for the friend lens), "Picked for You"
 // (favorites centroid) — at most one row per signal, deduped out of the organic list.
 // Favorites is an in-page VIEW MODE (?view=favorites): same filters, panel hidden, its
-// own empty copy. All shareable state (query, filters, view) lives in validated URL
-// search params with defaults stripped; only the un-debounced input text is local.
+// own empty copy — entered through the All recipes / Favorites tab row (the
+// design-requests #1 bundle) between the search bar and the filter bar. All shareable
+// state (query, filters, view) lives in validated URL search params with defaults
+// stripped; only the un-debounced input text is local.
 // Search keeps the debounce-against-API behavior (the mock's keystroke search is
 // in-memory only — painted door).
 import * as React from "react";
@@ -16,6 +18,7 @@ import {
   Button,
   EmptyState,
   IconHeart,
+  IconHeartFill,
   IconSearch,
   IconSparkles,
   IconX,
@@ -164,6 +167,9 @@ function CookbookPage() {
   function clearFilters() {
     void navigate({ search: (prev) => ({ ...prev, cuisine: "", protein: "", time: undefined }) });
   }
+  function setView(v: "all" | "favorites") {
+    void navigate({ search: (prev) => ({ ...prev, view: v }) });
+  }
 
   const searching = q.length > 0;
   const active = filtersActive(filters);
@@ -171,8 +177,8 @@ function CookbookPage() {
   const cuisineOptions = facetOptions(indexHits, "cuisine");
   const proteinOptions = facetOptions(indexHits, "protein");
 
-  // Favorites view source: the caller's overlay favorites joined client-side to the
-  // cached index (the same join the standalone favorites page ships).
+  // Favorites view source (and the tab's count pill): the caller's overlay favorites
+  // joined client-side to the cached index.
   const favSlugs = new Set(
     Object.entries(overlay.data?.overlay ?? {})
       .filter(([, row]) => row.favorite)
@@ -243,11 +249,32 @@ function CookbookPage() {
       </div>
 
       {/*
-        The favorites view-mode CONTROL mounts here (or as a filter-bar pill) once its
-        design lands — design-requests.md #1; its form (pill vs tab row) is design-
-        blocked and deliberately not improvised. The view mode itself is live via the
-        `view` search param: navigate({ search: (prev) => ({ ...prev, view }) }).
+        The view-mode tab row (design-requests #1's committed form): a SCOPE switch
+        between the full cookbook and the favorites view — distinct from the
+        AND-filters below, which stay mounted and apply inside it. The count pill is
+        the member's TOTAL favorites (the unfiltered overlay∩index join — the same
+        source the view lists), hidden at zero; the heart fills while active.
       */}
+      <div className="viewtabs" role="tablist" aria-label="Cookbook view" data-testid="cookbook-viewtabs">
+        <button type="button" role="tab" aria-selected={view === "all"} onClick={() => setView("all")}>
+          All recipes
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "favorites"}
+          data-testid="favorites-tab"
+          onClick={() => setView("favorites")}
+        >
+          {view === "favorites" ? <IconHeartFill /> : <IconHeart />}
+          Favorites
+          {favHits.length > 0 ? (
+            <span className="vt-count" data-testid="favorites-tab-count">
+              {favHits.length}
+            </span>
+          ) : null}
+        </button>
+      </div>
 
       <div className="filterbar" data-testid="cookbook-filters">
         <div className="fb-group">

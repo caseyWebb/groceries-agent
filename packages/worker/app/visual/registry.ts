@@ -9,7 +9,6 @@ import { SignupPage } from "./pages/signup.page";
 import { ConnectPage } from "./pages/connect.page";
 import { CookbookPage } from "./pages/cookbook.page";
 import { RecipePage } from "./pages/recipe.page";
-import { FavoritesPage } from "./pages/favorites.page";
 import { PlanPage } from "./pages/plan.page";
 import { GroceryPage } from "./pages/grocery.page";
 import { PantryPage } from "./pages/pantry.page";
@@ -34,7 +33,6 @@ export const AREAS: readonly RegisteredArea[] = [
   { area: "connect", authed: true, make: (p) => new ConnectPage(p, SEED.connect.viewRef) },
   { area: "cookbook", authed: true, make: (p) => new CookbookPage(p) },
   { area: "recipe-detail", authed: true, make: (p) => new RecipePage(p, SEED.recipe.slug) },
-  { area: "favorites", authed: true, make: (p) => new FavoritesPage(p) },
   { area: "plan", authed: true, make: (p) => new PlanPage(p) },
   { area: "grocery", authed: true, make: (p) => new GroceryPage(p) },
   { area: "pantry", authed: true, make: (p) => new PantryPage(p) },

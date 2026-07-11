@@ -98,7 +98,7 @@
 .group-h-row { display: flex; align-items: center; justify-content: space-between; }
 
 /* ── search + recipe list ────────────────────────────────────────────────── */
-.searchbar { position: relative; width: 100%; margin: 0 auto 0.5rem; }
+.searchbar { position: relative; width: 100%; margin: 0 auto 0.8rem; }
 .searchbar > svg { position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%); width: 1.05rem; height: 1.05rem; color: var(--muted-foreground); pointer-events: none; }
 .searchbar input.input { width: 100%; height: 2.85rem; padding-left: 2.6rem; padding-right: 2.6rem; font-size: var(--text-base); border-radius: var(--radius-lg); }
 /* type="search" ships a native clear affordance that doubles the custom .search-clear
@@ -112,6 +112,16 @@
 .searchbar[data-has-text="true"] .search-clear { display: flex; }
 .resultmeta { color: var(--muted-foreground); font-size: var(--text-sm); margin: 1rem 0 0.25rem; }
 .resultmeta strong { color: var(--foreground); font-weight: 500; }
+
+/* ── cookbook view-mode tabs (All / Favorites — a scope switch, distinct from the
+      AND-filters below; styles from the design mockup's stylesheet) ──────────── */
+.viewtabs { display: flex; align-items: stretch; gap: 0.1rem; margin: 0 0 0.85rem; border-bottom: 1px solid var(--border); }
+.viewtabs button { -webkit-appearance: none; appearance: none; border: 0; background: transparent; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 0.42rem; padding: 0.5rem 0.9rem 0.55rem; margin-bottom: -1px; font-size: var(--text-sm); font-weight: 500; color: var(--muted-foreground); border-bottom: 2px solid transparent; transition: color 0.12s; }
+.viewtabs button:hover { color: var(--foreground); }
+.viewtabs button[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+.viewtabs button svg { width: 0.98rem; height: 0.98rem; }
+.viewtabs .vt-count { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 0.16rem 0.4rem; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); }
+.viewtabs button[aria-selected="true"] .vt-count { background: color-mix(in oklch, var(--brand) 16%, transparent); color: var(--brand); }
 
 /* ── cookbook filter bar + promoted panel (unified browse; styles from the design
       mockup's stylesheet — product-specs/mockup) ───────────────────────────── */

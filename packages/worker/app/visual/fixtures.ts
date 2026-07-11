@@ -10,7 +10,6 @@ import { ShellPage } from "./pages/shell.page";
 import { ConnectPage } from "./pages/connect.page";
 import { CookbookPage } from "./pages/cookbook.page";
 import { RecipePage } from "./pages/recipe.page";
-import { FavoritesPage } from "./pages/favorites.page";
 import { PlanPage } from "./pages/plan.page";
 import { GroceryPage } from "./pages/grocery.page";
 import { PantryPage } from "./pages/pantry.page";
@@ -26,7 +25,6 @@ interface AppFixtures {
   connectPage: ConnectPage;
   cookbookPage: CookbookPage;
   recipePage: RecipePage;
-  favoritesPage: FavoritesPage;
   planPage: PlanPage;
   groceryPage: GroceryPage;
   pantryPage: PantryPage;
@@ -56,7 +54,6 @@ export const test = base.extend<AppFixtures>({
   connectPage: async ({ page }, use) => use(new ConnectPage(page, SEED.connect.approveRef)),
   cookbookPage: async ({ page }, use) => use(new CookbookPage(page)),
   recipePage: async ({ page }, use) => use(new RecipePage(page, SEED.recipe.slug)),
-  favoritesPage: async ({ page }, use) => use(new FavoritesPage(page)),
   planPage: async ({ page }, use) => use(new PlanPage(page)),
   groceryPage: async ({ page }, use) => use(new GroceryPage(page)),
   pantryPage: async ({ page }, use) => use(new PantryPage(page)),

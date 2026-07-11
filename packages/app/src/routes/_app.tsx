@@ -13,7 +13,6 @@ import {
   IconCalendar,
   IconCart,
   IconClock,
-  IconHeart,
   IconMoon,
   IconPantry,
   IconSparkle,
@@ -24,7 +23,7 @@ import {
 import { api } from "../lib/api";
 import { ConnectClaudeModal, type OperatorInfo } from "../components/connect-claude";
 import { enrollPasskey } from "../lib/passkey";
-import { useGrocery, useOverlay, usePlan, useProfile } from "../lib/data";
+import { useGrocery, usePlan, useProfile } from "../lib/data";
 import { useOnline } from "../lib/online";
 import { promptInstall, useInstallAvailable } from "../lib/install";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
@@ -99,7 +98,6 @@ export function ThemeFab({ size = "icon" }: { size?: "icon" | "icon-sm" }) {
 
 const NAV = [
   { to: "/", label: "Cookbook", icon: IconBook, count: null },
-  { to: "/favorites", label: "Favorites", icon: IconHeart, count: "favorites" },
   { to: "/plan", label: "Meal plan", icon: IconCalendar, count: "plan" },
   { to: "/grocery", label: "Grocery list", icon: IconCart, count: "grocery" },
   { to: "/pantry", label: "Pantry", icon: IconPantry, count: null },
@@ -129,11 +127,9 @@ function AppShell() {
   const [connectOpen, setConnectOpen] = React.useState(false);
   // Sidebar counts derive client-side from the already-cached area queries (design:
   // no counts endpoint) — the shell subscribing warms them for the pages too.
-  const overlay = useOverlay();
   const plan = usePlan();
   const grocery = useGrocery();
   const counts: Record<string, number> = {
-    favorites: Object.values(overlay.data?.overlay ?? {}).filter((r) => r.favorite).length,
     plan: plan.data?.planned.length ?? 0,
     grocery: grocery.data?.items.filter((g) => g.status !== "in_cart" && g.status !== "ordered").length ?? 0,
   };
