@@ -9,7 +9,7 @@ import {
   type GroceryAction,
   type GroceryHostAdapter,
 } from "@yamp/ui";
-import type { GroceryListData } from "@yamp/contract";
+import { groceryContractSupport, type GroceryListData } from "@yamp/contract";
 import {
   useGroceryAdd,
   useGroceryChecked,
@@ -39,6 +39,7 @@ function GroceryPage() {
   const remove = useGroceryRemove();
   const verify = useGroceryPantryVerify();
   const [orderOpen, setOrderOpen] = React.useState(false);
+  const contractSupported = groceryContractSupport(snapshot.data?.contract_version) === "supported";
 
   const fresh = React.useCallback(async (): Promise<GroceryListData> => {
     const result = await snapshot.refetch();
@@ -48,7 +49,7 @@ function GroceryPage() {
 
   const adapter = React.useMemo<GroceryHostAdapter>(
     () => ({
-      mode: "interactive",
+      mode: contractSupported ? "interactive" : "readonly",
       online,
       mutate: async (action: GroceryAction) => {
         const current = snapshot.data;
@@ -118,7 +119,19 @@ function GroceryPage() {
         }
       },
     }),
-    [add, checked, coverage, fresh, online, relist, remove, snapshot.data, substitution, verify],
+    [
+      add,
+      checked,
+      contractSupported,
+      coverage,
+      fresh,
+      online,
+      relist,
+      remove,
+      snapshot.data,
+      substitution,
+      verify,
+    ],
   );
 
   if (snapshot.isPending)

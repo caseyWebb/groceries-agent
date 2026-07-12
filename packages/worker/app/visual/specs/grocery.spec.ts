@@ -227,6 +227,15 @@ test("unknown-newer fixture remains readable when rendered by the shared compone
 		groceryPage.page.getByTestId("shared-grocery-list"),
 	).toBeVisible();
 	await expect(groceryPage.item("Future milk")).toBeVisible();
+	await expect(
+		groceryPage.page.getByTestId("shared-grocery-list"),
+	).toHaveAttribute("data-host-mode", "readonly");
+	await expect(
+		groceryPage.item("Future milk").getByRole("checkbox"),
+	).toBeDisabled();
+	await expect(
+		groceryPage.page.getByLabel("Add grocery item"),
+	).toBeDisabled();
 	await groceryPage.setViewport(390, 844);
 	await groceryPage.captureForReview("grocery-mobile");
 });

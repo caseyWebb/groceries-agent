@@ -45,6 +45,27 @@ describe("grocery checked operation", () => {
     await setGroceryChecked(h.env, T, { key: "milk", checked: true, expected_row_version: 1, snapshot_version: snap.snapshot_version });
     await expect(setGroceryChecked(h.env, T, { key: "milk", checked: false, expected_row_version: 1, snapshot_version: snap.snapshot_version })).rejects.toMatchObject({ code: "conflict" });
   });
+
+  it("re-reads authoritative truth when a concurrent writer reaches the requested checked state", async () => {
+    const h = sqliteEnv([T]);
+    await addGroceryRow(h.env, T, { name: "milk" }, "2026-07-12");
+    const originalPrepare = h.env.DB.prepare.bind(h.env.DB); let raced = false;
+    h.env.DB.prepare = ((sql: string) => {
+      const statement = originalPrepare(sql);
+      if (!raced && sql.includes("SELECT name, perishable FROM staples")) {
+        const originalAll = statement.all.bind(statement);
+        statement.all = (async <R>() => {
+          raced = true;
+          h.raw.prepare("UPDATE grocery_list SET checked_at='2026-07-12T12:00:00Z',row_version=row_version+1 WHERE tenant=? AND normalized_name='milk'").run(T);
+          return originalAll<R>();
+        }) as typeof statement.all;
+      }
+      return statement;
+    }) as typeof h.env.DB.prepare;
+    const result = await setGroceryChecked(h.env, T, { key: "milk", checked: true, expected_row_version: 1, snapshot_version: "sha256:" + "0".repeat(64) });
+    expect(raced).toBe(true);
+    expect(result.snapshot.lines.find((line) => line.key === "milk")).toMatchObject({ checked_at: "2026-07-12T12:00:00Z", row_version: 2 });
+  });
 });
 
 describe("grocery decisions", () => {
@@ -76,6 +97,10 @@ describe("grocery decisions", () => {
     const swapped = await acceptGrocerySubstitution(h.env, T, { original_key: "milk", replacement_key: "oat milk", replacement_name: "Oat milk", snapshot_version: before.snapshot_version });
     expect(swapped.snapshot.to_buy).toContain("oat milk");
     expect(swapped.snapshot.to_buy).not.toContain("milk");
+    const reopened = await readGrocerySnapshot(h.env, T);
+    expect(reopened.substitution_decisions).toEqual([
+      expect.objectContaining({ original_key: "milk", replacement_key: "oat milk" }),
+    ]);
     await updateGroceryRow(h.env, T, "Oat milk", { note: "barista" });
     const current = await readGrocerySnapshot(h.env, T);
     const undone = await undoGrocerySubstitution(h.env, T, { original_key: "milk", snapshot_version: current.snapshot_version });

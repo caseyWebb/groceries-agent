@@ -42,7 +42,7 @@ export async function setGroceryChecked(
   const rows = await readGroceryList(env, tenant);
   const existing = rows.find((row) => row.normalized_name === input.key);
   const already = existing ? (existing.checked_at != null) === input.checked : !input.checked;
-  if (already) return { status: "ok", snapshot: current };
+  if (already) return { status: "ok", snapshot: await readGrocerySnapshot(env, tenant) };
   if (existing && (existing.row_version ?? 1) !== input.expected_row_version) {
     conflict("This grocery line changed on another device.", current);
   }
@@ -261,12 +261,26 @@ export async function relistGrocerySendLine(
   if (!row) throw new ToolError("not_found", "The grocery line no longer exists.");
   const before = await readGrocerySnapshot(env, tenant);
   if (row.status === "active" && row.sent_in == null) return { status: "ok", snapshot: before, outcome: "already relisted" };
-  if (row.status !== "in_cart" || row.sent_in !== input.send_id || row.row_version !== input.expected_row_version) {
+  const openLink = row.sent_in == null
+    ? null
+    : await db(env).first<{ id: string }>(
+      "SELECT id FROM order_sends WHERE tenant=?1 AND id=?2 AND placed_at IS NULL",
+      tenant, row.sent_in,
+    );
+  const linkageMatches = input.send_id === null
+    ? openLink == null
+    : row.sent_in === input.send_id && openLink != null;
+  if (row.status !== "in_cart" || !linkageMatches || row.row_version !== input.expected_row_version) {
     conflict("The send membership changed; review the current cart group.", before);
   }
   const now = new Date().toISOString();
   const result = input.send_id === null
-    ? await db(env).run("UPDATE grocery_list SET status='active', sent_in=NULL, row_version=row_version+1, updated_at=?1 WHERE tenant=?2 AND normalized_name=?3 AND status='in_cart' AND sent_in IS NULL AND row_version=?4", now, tenant, input.line_key, input.expected_row_version)
+    ? await db(env).run(
+      "UPDATE grocery_list SET status='active', sent_in=NULL, row_version=row_version+1, updated_at=?1 " +
+        "WHERE tenant=?2 AND normalized_name=?3 AND status='in_cart' AND row_version=?4 " +
+        "AND (sent_in IS NULL OR NOT EXISTS (SELECT 1 FROM order_sends WHERE tenant=?2 AND id=grocery_list.sent_in AND placed_at IS NULL))",
+      now, tenant, input.line_key, input.expected_row_version,
+    )
     : await db(env).run(
       "UPDATE grocery_list SET status='active', sent_in=NULL, row_version=row_version+1, updated_at=?1 " +
         "WHERE tenant=?2 AND normalized_name=?3 AND status='in_cart' AND sent_in=?4 AND row_version=?5 " +

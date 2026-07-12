@@ -33,17 +33,20 @@ const data: GroceryListData = {
 afterEach(cleanup);
 
 describe("GroceryList interaction serialization", () => {
-  it("exposes grouping as a single-select radio group", () => {
+  it("exposes grouping as native radios with arrow-key roving selection", () => {
     const view = render(<GroceryList data={data} adapter={{ mode: "interactive", mutate: vi.fn() }} />);
     const group = view.getByRole("radiogroup", { name: "Group grocery list" });
     const department = view.getByRole("radio", { name: "Department" });
     const recipe = view.getByRole("radio", { name: "Recipe" });
     expect(group.contains(department)).toBe(true);
-    expect(department.getAttribute("aria-checked")).toBe("true");
-    expect(recipe.getAttribute("aria-checked")).toBe("false");
+    expect((department as HTMLInputElement).checked).toBe(true);
+    expect((recipe as HTMLInputElement).checked).toBe(false);
     fireEvent.click(recipe);
-    expect(recipe.getAttribute("aria-checked")).toBe("true");
-    expect(department.getAttribute("aria-checked")).toBe("false");
+    expect((recipe as HTMLInputElement).checked).toBe(true);
+    expect((department as HTMLInputElement).checked).toBe(false);
+    fireEvent.keyDown(recipe, { key: "ArrowRight" });
+    expect((department as HTMLInputElement).checked).toBe(true);
+    expect(document.activeElement).toBe(department);
   });
 
   it("visibly labels staple lines", () => {

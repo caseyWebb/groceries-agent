@@ -44,6 +44,7 @@ type Defaults<V> = {
   mutationFn(vars: V): Promise<GroceryListData>;
   onMutate(vars: V): unknown;
   onSuccess(data: GroceryListData): unknown;
+  onError(error: unknown): unknown;
 };
 
 function defaults<V>(qc: QueryClient, key: string[]): Defaults<V> {
@@ -120,6 +121,34 @@ describe("persisted grocery mutation defaults", () => {
       snapshot_version: "v1",
     });
     expect(sent.map((body) => body.snapshot_version)).toEqual(["v1", "v2"]);
+  });
+
+  it.each([
+    ["coverage", { key: "milk", enabled: true, snapshot_version: "v1" }],
+    [
+      "substitution",
+      {
+        original_key: "milk",
+        replacement_key: "oat-milk",
+        replacement_name: "Oat milk",
+        snapshot_version: "v1",
+      },
+    ],
+  ] as const)("installs the authoritative conflict snapshot for restored %s defaults", (key, vars) => {
+    const optimistic = snapshot("v1", { lines: [line("milk")], to_buy: ["milk"] });
+    const restored = client(JSON.parse(JSON.stringify(optimistic)) as GroceryListData);
+    const mutation = defaults<typeof vars>(restored, ["grocery", key]);
+    mutation.onMutate(vars);
+    const authoritative = snapshot("v2", {
+      lines: [line("server-only", { row_version: 4 })],
+      to_buy: ["server-only"],
+    });
+    mutation.onError({
+      error: "conflict",
+      message: "Grocery state changed",
+      context: { snapshot: authoritative },
+    });
+    expect(restored.getQueryData(["grocery", "view"])).toEqual(authoritative);
   });
 
   it("uses the exact grocery pantry verification route and projects only its key", async () => {

@@ -36,6 +36,9 @@
 .grocery-stats strong { display: block; font-size: 1.4rem; }
 .grocery-stats span { color: var(--muted-foreground); font-size: .8rem; }
 .grocery-grouping { display: flex; gap: .5rem; }
+.grocery-grouping label { display: inline-flex; align-items: center; gap: .35rem; min-height: 2rem; padding: 0 .75rem; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm); }
+.grocery-grouping label.selected { color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); }
+.grocery-grouping input { accent-color: currentColor; }
 .grocery-groups section > h2, .grocery-pantry > h2 { margin: 1rem 0 .35rem; font-size: .9rem; text-transform: uppercase; letter-spacing: .05em; }
 .grocery-groups h2 small { color: var(--muted-foreground); }
 .grocery-groups ul, .grocery-carts ul, .grocery-pantry ul { list-style: none; padding: 0; margin: 0; }

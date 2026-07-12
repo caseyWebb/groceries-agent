@@ -260,7 +260,7 @@ Once a send is stamped placed, replay of the same send assertion SHALL return th
 
 ### Requirement: Back to list is linkage-guarded and writes no spend
 
-The shared `relist_grocery_send_line` operation SHALL accept nullable `send_id`, canonical `line_key`, and `expected_row_version`, and SHALL conditionally perform only `in_cart → active`. A non-null send SHALL match the row's current linkage; a null send SHALL match only an unlinked row. It SHALL clear `sent_in`, write no spend, and leave any historical send snapshot immutable. A stale row version or mismatched linkage SHALL return conflict without a write. Ordered-row relist/void behavior remains governed by the existing lifecycle and is not exposed as Back to list in an in-cart group.
+The shared `relist_grocery_send_line` operation SHALL accept nullable `send_id`, canonical `line_key`, and `expected_row_version`, and SHALL conditionally perform only `in_cart → active`. A non-null send SHALL match the row's current linkage and a current open tenant send. A null send SHALL match only a row proven not to belong to a current open send, including a null, dangling, unmatched, or already-placed linkage. It SHALL clear `sent_in`, write no spend, and leave any historical send snapshot immutable. A stale row version or mismatched linkage SHALL return conflict without a write. Ordered-row relist/void behavior remains governed by the existing lifecycle and is not exposed as Back to list in an in-cart group.
 
 #### Scenario: One line returns to active
 - **WHEN** Back to list succeeds for one unplaced send line
@@ -273,3 +273,7 @@ The shared `relist_grocery_send_line` operation SHALL accept nullable `send_id`,
 #### Scenario: An unlinked cart row returns to the list
 - **WHEN** Back to list supplies a null send id for an unlinked `in_cart` row
 - **THEN** only that row becomes active, its quantity is retained, and no spend event is written
+
+#### Scenario: A stale non-open linkage can return to the list
+- **WHEN** Back to list supplies a null send id for an `in_cart` row whose non-null linkage is dangling or already placed
+- **THEN** the operation proves no current open send owns the row, clears the stale linkage, and returns only that row to active

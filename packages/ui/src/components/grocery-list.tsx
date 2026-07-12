@@ -24,6 +24,7 @@ export interface GroceryListProps {
 export function GroceryList({ data, adapter, onDataChange }: GroceryListProps) {
   const [state, setState] = React.useState(() => createGroceryController(data));
   const [add, setAdd] = React.useState("");
+  const groupingRefs = React.useRef<Array<HTMLInputElement | null>>([]);
   const stateRef = React.useRef(state);
   const pendingRef = React.useRef(new Map<string, GroceryAction>());
   React.useEffect(() => {
@@ -87,17 +88,34 @@ export function GroceryList({ data, adapter, onDataChange }: GroceryListProps) {
         </p>
       ) : null}
       <div className="grocery-grouping" role="radiogroup" aria-label="Group grocery list">
-        {(["department", "recipe"] as GroceryGrouping[]).map((mode) => (
-          <Button
-            key={mode}
-            role="radio"
-            aria-checked={grouping === mode}
-            size="sm"
-            variant={grouping === mode ? "default" : "outline"}
-            onClick={() => setState((cur) => ({ ...cur, grouping: mode }))}
-          >
-            {mode === "department" ? "Department" : "Recipe"}
-          </Button>
+        {(["department", "recipe"] as GroceryGrouping[]).map((mode, index, modes) => (
+          <label key={mode} className={grouping === mode ? "selected" : undefined}>
+            <input
+              ref={(node) => {
+                groupingRefs.current[index] = node;
+              }}
+              type="radio"
+              name="grocery-grouping"
+              value={mode}
+              checked={grouping === mode}
+              onChange={() => setState((cur) => ({ ...cur, grouping: mode }))}
+              onKeyDown={(event) => {
+                const delta =
+                  event.key === "ArrowRight" || event.key === "ArrowDown"
+                    ? 1
+                    : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                      ? -1
+                      : 0;
+                if (!delta) return;
+                event.preventDefault();
+                const nextIndex = (index + delta + modes.length) % modes.length;
+                const next = modes[nextIndex]!;
+                setState((cur) => ({ ...cur, grouping: next }));
+                groupingRefs.current[nextIndex]?.focus();
+              }}
+            />
+            <span>{mode === "department" ? "Department" : "Recipe"}</span>
+          </label>
         ))}
       </div>
       <div className="grocery-groups">

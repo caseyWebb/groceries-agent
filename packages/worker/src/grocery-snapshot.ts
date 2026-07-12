@@ -1,9 +1,7 @@
 import { KNOWN_GROCERY_CONTRACT_VERSION, type GroceryListData, type GroceryLine, type GrocerySendGroup } from "@yamp/contract";
 import type { Env } from "./env.js";
 import { db } from "./db.js";
-import { computeToBuyView } from "./to-buy.js";
-import { readGroceryDecisionInputs } from "./to-buy.js";
-import { readGroceryList } from "./session-db.js";
+import { computeToBuyProjection } from "./to-buy.js";
 import { emptyIngredientContext, ingredientContext } from "./corpus-db.js";
 import { readStaples } from "./profile-db.js";
 
@@ -96,14 +94,14 @@ async function sendGroups(env: Env, tenant: string, asOf: Date): Promise<Grocery
 
 /** Authoritative, tenant-scoped state behind the member route and MCP app. */
 export async function readGrocerySnapshot(env: Env, tenant: string, now = new Date()): Promise<GroceryListData> {
-  const view = await computeToBuyView(env, tenant, { enrich: true });
-  const [storedList, staples, stapleContext] = await Promise.all([
-    readGroceryList(env, tenant),
+  const projection = await computeToBuyProjection(env, tenant, { enrich: true });
+  const view = projection.view;
+  const [staples, stapleContext] = await Promise.all([
     readStaples(env, tenant),
     ingredientContext(env, { capture: false }).catch(() => emptyIngredientContext(env)),
   ]);
   const stapleKeys = new Set(staples.map((item) => stapleContext.resolve(item.name)));
-  const decisions = await readGroceryDecisionInputs(env, tenant, [], storedList, (name) => name);
+  const decisions = projection.decisions;
   const linked = await sendGroups(env, tenant, now);
   const linkedKeys = new Set(linked.flatMap((g) => g.lines.map((l) => l.key)));
   const unlinked = view.in_cart.filter((line) => !line.key || !linkedKeys.has(line.key));
@@ -198,9 +196,20 @@ export function grocerySnapshotText(data: GroceryListData): string {
       .filter(Boolean).join(", ");
     const substitutes = (line.substitutes ?? []).flatMap((candidate) => {
       if (!candidate || typeof candidate !== "object") return [];
-      const row = candidate as { id?: unknown; label?: unknown; in_pantry?: unknown; on_sale_hint?: unknown };
+      const row = candidate as {
+        id?: unknown;
+        label?: unknown;
+        in_pantry?: unknown;
+        relation?: { role?: unknown; via?: unknown };
+        on_sale_hint?: { price?: { promo?: unknown } };
+      };
       const label = typeof row.label === "string" ? row.label : typeof row.id === "string" ? row.id : null;
-      return label ? [`${label}${row.in_pantry ? " (pantry)" : ""}${row.on_sale_hint ? " (sale)" : ""}`] : [];
+      const role = typeof row.relation?.role === "string" ? row.relation.role : null;
+      const via = typeof row.relation?.via === "string" ? row.relation.via : null;
+      const promo = typeof row.on_sale_hint?.price?.promo === "number" ? row.on_sale_hint.price.promo : null;
+      return label
+        ? [`${label}${role ? ` (${role}${via ? ` via ${via}` : ""})` : ""}${row.in_pantry ? " (pantry)" : ""}${promo == null ? "" : ` ($${promo.toFixed(2)} promo)`}`]
+        : [];
     });
     return `${line.checked_at ? "✓" : "○"} ${line.display_name ?? line.name} (${line.quantity}${line.assumed_quantity ? " assumed" : ""})${line.staple ? " [Staple]" : ""}${line.note ? ` — ${line.note}` : ""}${recipes.length ? ` [for: ${recipes.join(", ")}]` : ""}${placement ? ` [${placement}]` : ""}${substitutes.length ? ` [try: ${substitutes.join(", ")}]` : ""}`;
   });

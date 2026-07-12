@@ -181,11 +181,11 @@ export function dropInFlightNeeds(
  * label) means placements carry `department` only, while `substitutes[].in_pantry`
  * (pure D1) and a satellite store's label-keyed `on_sale_hint` are still served.
  */
-export async function computeToBuyView(
+export async function computeToBuyProjection(
   env: Env,
   tenant: string,
   opts: { enrich?: boolean } = {},
-): Promise<ToBuyView> {
+): Promise<{ view: ToBuyView; decisions: GroceryDecisionInputs }> {
   // Resolve-only context (capture OFF) — a read never enqueues; degrade to the empty
   // context (cleaned passthrough) rather than failing the view on a resolver-read blip.
   const [list, pantryByKey, ctx, derived] = await Promise.all([
@@ -291,7 +291,15 @@ export async function computeToBuyView(
     in_cart: [...result.in_cart].sort((a, b) => (a.key ?? a.name).localeCompare(b.key ?? b.name)),
     underived: [...new Set(result.underived)].sort(),
   };
-  return { ...ordered, snapshot_version: await toBuyDigest(ordered) };
+  return { view: { ...ordered, snapshot_version: await toBuyDigest(ordered) }, decisions };
+}
+
+export async function computeToBuyView(
+  env: Env,
+  tenant: string,
+  opts: { enrich?: boolean } = {},
+): Promise<ToBuyView> {
+  return (await computeToBuyProjection(env, tenant, opts)).view;
 }
 
 function sortAttribution<T extends ToBuyViewLine>(line: T): T {

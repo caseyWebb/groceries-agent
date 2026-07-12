@@ -465,7 +465,11 @@ function registryRows(qc: QueryClient): RegistryRow[] {
               : cur,
           ),
         onSuccess: (snapshot: GroceryListData) => qc.setQueryData(["grocery", "view"], snapshot),
-        onError: (err: unknown) => toast(messageOf(err, "Couldn't update pantry coverage")),
+        onError: (err: ApiError) => {
+          const snapshot = err.context?.snapshot as GroceryListData | undefined;
+          if (snapshot) qc.setQueryData(["grocery", "view"], snapshot);
+          toast(messageOf(err, "Couldn't update pantry coverage"));
+        },
         onSettled: () =>
           Promise.all([
             qc.invalidateQueries({ queryKey: ["grocery"] }),
@@ -505,7 +509,11 @@ function registryRows(qc: QueryClient): RegistryRow[] {
               : cur,
           ),
         onSuccess: (snapshot: GroceryListData) => qc.setQueryData(["grocery", "view"], snapshot),
-        onError: (err: unknown) => toast(messageOf(err, "Couldn't update the substitution")),
+        onError: (err: ApiError) => {
+          const snapshot = err.context?.snapshot as GroceryListData | undefined;
+          if (snapshot) qc.setQueryData(["grocery", "view"], snapshot);
+          toast(messageOf(err, "Couldn't update the substitution"));
+        },
         onSettled: () => qc.invalidateQueries({ queryKey: ["grocery"] }),
       },
     },

@@ -95,4 +95,21 @@ describe("send-scoped grocery lifecycle", () => {
     const result = await relistGrocerySendLine(h.env, T, { send_id: null, line_key: "manual", expected_row_version: line.row_version });
     expect(result.snapshot.to_buy).toContain("manual"); expect(h.rows("spend_events")).toHaveLength(0);
   });
+
+  it.each(["dangling", "placed"] as const)("re-lists a %s non-open send link from the unlinked group", async (kind) => {
+    const h = sqliteEnv([T]);
+    await addGroceryRow(h.env, T, { name: "manual" }, "2026-07-12");
+    await updateGroceryRow(h.env, T, "manual", { status: "in_cart" });
+    if (kind === "placed") {
+      h.raw.prepare("INSERT INTO order_sends (id,tenant,store,fulfillment,created_at,placed_at) VALUES ('closed',?,'kroger','kroger_online','2026-07-11','2026-07-12')").run(T);
+    }
+    h.raw.prepare("UPDATE grocery_list SET sent_in=? WHERE tenant=? AND normalized_name='manual'").run(kind === "placed" ? "closed" : "missing", T);
+    const before = await readGrocerySnapshot(h.env, T);
+    const group = before.in_cart_groups.find((candidate) => candidate.send_id === null)!;
+    expect(group.lines.map((line) => line.key)).toContain("manual");
+    const line = group.lines.find((candidate) => candidate.key === "manual")!;
+    const result = await relistGrocerySendLine(h.env, T, { send_id: null, line_key: "manual", expected_row_version: line.row_version });
+    expect(result.snapshot.to_buy).toContain("manual");
+    expect(h.rows<{ sent_in: string | null }>("grocery_list")[0].sent_in).toBeNull();
+  });
 });

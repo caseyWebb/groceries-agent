@@ -28,6 +28,18 @@ Rows SHALL show check/strike-through, quantity, stable recipe attribution, note,
 - **WHEN** a `kind:"household"` row renders
 - **THEN** it appears under Household with list controls and no recipe or pantry-restock action
 
+### Requirement: The order UI renders dispositions and honest partial results
+
+The order dialog SHALL lead with the stale-cart warning when the view's `in_cart` section is non-empty. Preview SHALL render each disposition surface: checkpoint items with their candidate lists, pantry partials, assumed-quantity lines, and per-line exclusion. After commit the UI SHALL report the cart, list, send-snapshot, and SKU-cache writes independently and honestly. It SHALL never present the cart as populated when `cart.written` is false; a `reauth_required` cart failure SHALL render the Kroger re-link affordance; and list state SHALL be described from the returned list/rollback result rather than inferred from cart intent. The in-cart group SHALL offer the user-asserted order-placed advance through `mark_grocery_send_placed`, supplying the exact rendered send membership and snapshot version. The existing per-row `status:"ordered"` transition remains compatible for agent and satellite callers, but the member whole-send UI SHALL use the exact batch assertion so it cannot partially advance a send.
+
+#### Scenario: A failed cart write is reported truthfully
+- **WHEN** commit returns `cart.written:false` with `code:"reauth_required"`
+- **THEN** the UI reports cart, list, send, and SKU-cache outcomes independently, shows items as still to-buy only when the list never advanced or rollback succeeded, calls out surviving in-cart state when rollback failed, and offers the Kroger re-link flow
+
+#### Scenario: Mark order placed advances the exact send atomically
+- **WHEN** the member asserts the order was placed on an in-cart send group
+- **THEN** the batch operation advances exactly that send's rendered membership and conflicts without a partial write when membership changed
+
 ## ADDED Requirements
 
 ### Requirement: The member adapter respects write classifications

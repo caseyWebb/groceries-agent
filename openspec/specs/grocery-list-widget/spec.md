@@ -1,7 +1,7 @@
 # grocery-list-widget Specification
 
 ## Purpose
-TBD - created by archiving change grocery-list-page-and-widget. Update Purpose after archive.
+Provide one authoritative, versioned grocery-list snapshot and one shared interactive component for the member app and MCP widget, with truthful cart/send presentation, safe capability degradation, and full-context synchronization after deterministic writes.
 ## Requirements
 ### Requirement: GroceryListData is the authoritative dual-host snapshot
 
