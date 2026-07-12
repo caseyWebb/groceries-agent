@@ -58,9 +58,11 @@ describe("Order Review controller", () => {
     state = stageOrderReview(state, { kind: "undo_selection", line_key: "milk" });
     expect(state.stage.selections).toEqual([]);
     state = stageOrderReview(state, { kind: "impulse", key: "i1", label: "ice" });
+    state = stageOrderReview(state, { kind: "select", line_key: "i1", sku: "ice-1", source: "impulse" });
     state = stageOrderReview(state, { kind: "skip", line_key: "milk" });
     expect(orderReviewEstimatedTotal(state)).toBeNull();
     expect(state.stage.impulses).toEqual([{ key: "i1", label: "ice" }]);
+    expect(orderReviewProjection(state)).toMatchObject({ going_to_cart: 1, left_off: 1 });
   });
 
   it("derives counts, left-offs, totals, and send eligibility from the complete stage", () => {

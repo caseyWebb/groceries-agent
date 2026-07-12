@@ -146,17 +146,25 @@ export function orderReviewProjection(state: OrderReviewControllerState): OrderR
       });
     }
   }
+  const representedLines = new Set([
+    ...state.preview.matched.map((line) => line.line_key),
+    ...state.preview.decisions.map((line) => line.line_key),
+  ]);
   for (const impulse of state.stage.impulses) {
-    if (!impulse.sku || skipped.has(impulse.key)) {
+    // An authoritative preview may already represent this impulse as a matched or
+    // decision line; those loops own its count and disposition exactly once.
+    if (representedLines.has(impulse.key)) continue;
+    const sku = impulse.sku ?? selections.get(impulse.key)?.sku;
+    if (!sku || skipped.has(impulse.key)) {
       left.push({
         line_key: impulse.key,
         name: impulse.label,
-        reason: impulse.sku ? "skipped" : "undecided",
+        reason: sku ? "skipped" : "undecided",
       });
       continue;
     }
     going += 1;
-    const product = searchProducts.get(impulse.sku);
+    const product = searchProducts.get(sku);
     if (product) {
       total += product.on_sale ? product.price.promo : product.price.regular;
       priced += 1;
