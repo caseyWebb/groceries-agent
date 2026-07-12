@@ -232,7 +232,15 @@ export async function readOrderReview(
 ): Promise<OrderReviewData> {
   const stage = normalizedStage(stageValue);
   if (stage.selections.length || stage.impulses.some((impulse) => impulse.sku)) {
-    const baseline = await readOrderReviewUnchecked(env, tenant, emptyOrderReviewStage(), deps);
+    // Reconstruct the exact pre-selection surface: retain staged impulse identities,
+    // labels and other draft choices, but remove the choices being authorized. An
+    // empty-stage baseline cannot issue evidence for an impulse-only line.
+    const evidenceStage: OrderReviewStage = {
+      ...stage,
+      selections: [],
+      impulses: stage.impulses.map(({ sku: _sku, ...impulse }) => impulse),
+    };
+    const baseline = await readOrderReviewUnchecked(env, tenant, evidenceStage, deps);
     await authorizeStageSelections(env, stage, baseline, deps);
   }
   return readOrderReviewUnchecked(env, tenant, stage, deps);

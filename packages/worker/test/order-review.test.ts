@@ -140,6 +140,29 @@ describe("Order Review shared operations", () => {
     expect(carts).toBe(0);
   });
 
+  it("authorizes a choose-one candidate issued for a staged impulse", async () => {
+    const h = sqliteEnv([T]);
+    const choice = { sku: "COOKIE-CHOICE", brand: "Bakery", description: "Cookies", size: "12 oz", price: { regular: 4, promo: 0 }, on_sale: false, fulfillment: { curbside: true, delivery: true }, aisleLocation: null };
+    const deps = { wiring: wiring({
+      resolve: async (name) => name === "cookies"
+        ? { resolved: false, ambiguous: true, candidates: [choice], reason: "pick one" }
+        : { resolved: false, reason: "unavailable", message: "not found" },
+      revalidateSku: async (sku) => sku === choice.sku
+        ? { brand: choice.brand, description: choice.description, size: choice.size, price: choice.price, on_sale: false, fulfillment: { curbside: true, delivery: true }, aisleLocation: choice.aisleLocation }
+        : null,
+    }) };
+    const stage = {
+      ...emptyOrderReviewStage(),
+      impulses: [{ key: "impulse-cookie", label: "cookies" }],
+      selections: [{ line_key: "impulse-cookie", sku: choice.sku, source: "same_identity" as const }],
+    };
+    const evidence = await readOrderReview(h.env, T, { ...stage, selections: [] }, deps);
+    expect(evidence.decisions).toMatchObject([{ line_key: "impulse-cookie", candidates: [{ sku: "COOKIE-CHOICE" }] }]);
+    await expect(readOrderReview(h.env, T, stage, deps)).resolves.toMatchObject({
+      matched: [{ line_key: "impulse-cookie", selected: { sku: "COOKIE-CHOICE" } }],
+    });
+  });
+
   it("atomically claims rows so concurrent confirms call the additive cart once", async () => {
     const h = sqliteEnv([T]);
     await addGroceryRow(h.env, T, { name: "milk" }, "2026-07-12");
