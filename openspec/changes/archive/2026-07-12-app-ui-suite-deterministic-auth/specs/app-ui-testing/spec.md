@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: The suite establishes member sessions deterministically, never via per-test UI login
 
