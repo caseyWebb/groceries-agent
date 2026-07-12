@@ -107,6 +107,25 @@ export {
   type UseCookControllerOptions,
 } from "./cook-controller";
 export { CookMode, type CookModeProps } from "./components/cook-mode";
+export { GroceryList, type GroceryListProps } from "./components/grocery-list";
+export {
+  createGroceryController,
+  groupGroceryLines,
+  runGroceryAction,
+  type GroceryAction,
+  type GroceryControllerState,
+  type GroceryGroup,
+  type GroceryGrouping,
+  type GroceryHostAdapter,
+} from "./grocery-controller";
+export {
+  createGroceryBridgeAdapter,
+  grocerySnapshotFromBridge,
+  resolveGroceryCapabilities,
+  type GroceryBridge,
+  type GroceryBridgeResult,
+  type GroceryCapabilities,
+} from "./grocery-bridge";
 export { Combobox, type ComboOption } from "./components/combobox";
 export { Toaster, toast } from "./components/toast";
 export * from "./components/icons";
@@ -153,7 +172,14 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./components/dropdown-menu";
-export { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./components/empty";
+export {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "./components/empty";
 export {
   Pagination,
   PaginationContent,
@@ -178,5 +204,14 @@ export {
 } from "./components/select-menu";
 export { Slider } from "./components/slider";
 export { Switch } from "./components/switch";
-export { Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "./components/table";
+export {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./components/table";
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/tooltip";

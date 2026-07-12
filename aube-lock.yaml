@@ -291,6 +291,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0 || ^22.0.0 || >=24.0.0
         version: 22.20.0
+      '@yamp/contract':
+        specifier: workspace:*
+        version: 0.1.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

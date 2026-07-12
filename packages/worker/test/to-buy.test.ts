@@ -192,7 +192,7 @@ describe("computeToBuyView", () => {
     await addGroceryRow(h.env, T, { name: "salt" }, TODAY);
 
     const view = await computeToBuyView(h.env, T);
-    expect(view.in_cart).toEqual([{ name: "olive oil", added_at: TODAY }]);
+    expect(view.in_cart).toEqual([{ name: "olive oil", key: "olive oil", added_at: TODAY, row_version: 2, sent_in: null }]);
     expect(view.to_buy.map((l) => l.name)).toEqual(["salt"]);
   });
 
@@ -351,14 +351,14 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
     await (h.env.KROGER_KV as unknown as { put(k: string, v: string): Promise<void> }).put(key, JSON.stringify(rollup));
   }
 
-  it("the DEFAULT read is byte-identical — no placement, no location key, no Kroger read", async () => {
+  it("the DEFAULT read carries concurrency/check state but no placement, location, or Kroger read", async () => {
     const h = sqliteEnv([T]);
     seedProfile(h, { primary: "kroger", preferred_location: "03500520" });
     await addGroceryRow(h.env, T, { name: "flour" }, TODAY);
     seedSkuAisle(h, "flour", "03500520", { number: "12", description: "Baking" });
     const view = await computeToBuyView(h.env, T);
-    expect(JSON.stringify(view)).toBe(
-      JSON.stringify({
+    expect(view).toEqual(
+      {
         to_buy: [
           {
             name: "flour",
@@ -369,12 +369,16 @@ describe("computeToBuyView — enrich (member-app-differentiators D6, generalize
             key: "flour",
             kind: "grocery",
             domain: "grocery",
+            checked_at: null,
+            row_version: 1,
+            updated_at: expect.any(String),
           },
         ],
+        checked: [],
         pantry_covered: [],
         in_cart: [],
         underived: [],
-      }),
+      },
     );
   });
 

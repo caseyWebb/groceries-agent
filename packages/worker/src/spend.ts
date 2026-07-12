@@ -175,13 +175,13 @@ interface SnapshotLineRow {
  * `recorded` counts MATCHED snapshot lines, not new inserts — a fully-replayed
  * assertion still reports every matched line even though ON CONFLICT inserted nothing.
  */
-export async function recordPurchaseAssertion(
+export async function purchaseAssertionStatements(
   env: Env,
   tenant: string,
   rows: AssertedRow[],
   occurredOn: string,
-): Promise<{ recorded: number }> {
-  if (rows.length === 0) return { recorded: 0 };
+): Promise<{ statements: D1PreparedStatement[]; recorded: number }> {
+  if (rows.length === 0) return { statements: [], recorded: 0 };
   const d = db(env);
 
   // Group by send id and load each send's asserted snapshot lines in one query,
@@ -234,8 +234,18 @@ export async function recordPurchaseAssertion(
       recorded++;
     }
   }
-  if (stmts.length > 0) await d.batch(stmts);
-  return { recorded };
+  return { statements: stmts, recorded };
+}
+
+export async function recordPurchaseAssertion(
+  env: Env,
+  tenant: string,
+  rows: AssertedRow[],
+  occurredOn: string,
+): Promise<{ recorded: number }> {
+  const built = await purchaseAssertionStatements(env, tenant, rows, occurredOn);
+  if (built.statements.length > 0) await db(env).batch(built.statements);
+  return { recorded: built.recorded };
 }
 
 /**

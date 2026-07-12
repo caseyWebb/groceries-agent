@@ -48,6 +48,8 @@ export interface ToBuyItem {
 
 export interface ToBuyResult {
   to_buy: ToBuyItem[];
+  /** Shopping lines already handled in-store; never eligible for an online cart. */
+  checked: ToBuyItem[];
   partials: PartialItem[];
 }
 
@@ -66,6 +68,8 @@ export interface ComputeToBuyInput {
   quantities?: Record<string, number>;
   /** Resolved keys the user confirmed buying despite a pantry hit. */
   includePartials?: Set<string>;
+  /** Canonical originals hidden by still-valid persistent substitution decisions. */
+  suppressedKeys?: Set<string>;
   /**
    * Map a name to its dedup/join key — `IngredientContext.resolve` in production, so a food
    * item's key is the canonical id and a pantry on-hand cancels its grocery/menu counterpart
@@ -89,7 +93,7 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
   // Accumulate by the resolved key (canonical id for food) so list + menu needs dedupe
   // across surface forms. `needQty` is the package count carried on a menu need (max across
   // merges); the separate `quantities` map overrides it below.
-  const merged = new Map<string, { name: string; for_recipes: string[]; needQty?: number }>();
+  const merged = new Map<string, { name: string; for_recipes: string[]; needQty?: number; checked: boolean }>();
 
   for (const it of input.list) {
     if (it.status !== "active") continue;
@@ -98,7 +102,8 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
     // display still keys on its id, and a typed food row's stored key is byte-identical to
     // `groceryKey(name,…)`. `entry.name` stays the display so surfaces render it natively.
     const key = storedGroceryKey(it, resolve);
-    const entry = merged.get(key) ?? { name: it.name, for_recipes: [] };
+    const entry = merged.get(key) ?? { name: it.name, for_recipes: [], checked: false };
+    entry.checked = entry.checked || it.checked_at != null;
     entry.for_recipes = [...new Set([...entry.for_recipes, ...it.for_recipes])];
     merged.set(key, entry);
   }
@@ -106,7 +111,7 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
   for (const need of input.menuNeeds ?? []) {
     // Menu needs are recipe ingredients = food → resolve to the canonical id.
     const key = resolve(need.name);
-    const entry = merged.get(key) ?? { name: need.name, for_recipes: [] };
+    const entry = merged.get(key) ?? { name: need.name, for_recipes: [], checked: false };
     entry.for_recipes = [...new Set([...entry.for_recipes, ...(need.for_recipes ?? [])])];
     // Honor a per-need package count; take the max when several needs merge.
     if (need.quantity != null && need.quantity > 0) {
@@ -116,9 +121,11 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
   }
 
   const to_buy: ToBuyItem[] = [];
+  const checked: ToBuyItem[] = [];
   const partials: PartialItem[] = [];
 
   for (const [key, entry] of merged) {
+    if (input.suppressedKeys?.has(key)) continue;
     const inPantry = input.pantryNames.has(key);
     if (inPantry && !includePartials.has(key)) {
       partials.push({ name: entry.name, for_recipes: entry.for_recipes });
@@ -129,7 +136,7 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
     const hasOverride = override != null && override > 0;
     const hasNeed = entry.needQty != null && entry.needQty > 0;
     const quantity = hasOverride ? override : hasNeed ? entry.needQty! : 1;
-    to_buy.push({
+    const line = {
       name: entry.name,
       quantity,
       for_recipes: entry.for_recipes,
@@ -137,10 +144,11 @@ export function computeToBuy(input: ComputeToBuyInput): ToBuyResult {
       // The merge key IS the stored `normalized_name` (`storedGroceryKey` for a list row, resolve(need)
       // for a plan need) — the canonical id the pull-list issues and advance/cache key on.
       key,
-    });
+    };
+    (entry.checked ? checked : to_buy).push(line);
   }
 
-  return { to_buy, partials };
+  return { to_buy, checked, partials };
 }
 
 // --- orchestrator -----------------------------------------------------------

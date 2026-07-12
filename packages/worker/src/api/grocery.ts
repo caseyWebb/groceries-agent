@@ -23,6 +23,16 @@ import { buildOrderWiring } from "../tools.js";
 import { readPreferences } from "../profile-db.js";
 import { KROGER_STORE } from "../flyer-warm.js";
 import type { GroceryAddInput, GroceryUpdateInput } from "../grocery.js";
+import { readGrocerySnapshot } from "../grocery-snapshot.js";
+import {
+  acceptGrocerySubstitution,
+  setGroceryBuyAnyway,
+  setGroceryChecked,
+  undoGrocerySubstitution,
+  verifyGroceryPantry,
+  relistGrocerySendLine,
+  markGrocerySendPlaced,
+} from "../grocery-operations.js";
 
 const KINDS = new Set(["grocery", "household", "other"]);
 const SOURCES = new Set(["ad_hoc", "menu", "pantry_low", "stockup"]);
@@ -74,6 +84,42 @@ function coerceCommon(o: Record<string, unknown>): GroceryUpdateInput {
 }
 
 export const groceryArea = new Hono<ApiEnv>()
+  .get("/grocery/view", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    return jsonWithEtag(c, await readGrocerySnapshot(c.env, tenant.id));
+  })
+  .post("/grocery/checked", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ key: string; checked: boolean; expected_row_version: number; snapshot_version: string; occurred_at?: string }>(c);
+    return c.json(await setGroceryChecked(c.env, tenant.id, body));
+  })
+  .post("/grocery/substitution", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ original_key: string; replacement_key: string; replacement_name: string; snapshot_version: string; undo?: boolean }>(c);
+    return c.json(body.undo
+      ? await undoGrocerySubstitution(c.env, tenant.id, body)
+      : await acceptGrocerySubstitution(c.env, tenant.id, body));
+  })
+  .post("/grocery/coverage", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ key: string; enabled: boolean; name?: string; snapshot_version: string }>(c);
+    return c.json(await setGroceryBuyAnyway(c.env, tenant.id, body));
+  })
+  .post("/grocery/pantry-verify", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ key: string; snapshot_version: string }>(c);
+    return c.json(await verifyGroceryPantry(c.env, tenant.id, body));
+  })
+  .post("/grocery/relist", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ send_id: string; line_key: string; expected_row_version: number }>(c);
+    return c.json(await relistGrocerySendLine(c.env, tenant.id, body));
+  })
+  .post("/grocery/mark-placed", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const body = await jsonBody<{ send_id: string; expected_line_keys: string[]; snapshot_version: string; occurred_at?: string }>(c);
+    return c.json(await markGrocerySendPlaced(c.env, tenant.id, body));
+  })
   .get("/grocery", requireSession, async (c) => {
     const tenant = c.get("tenant");
     const items = await readGroceryListReified(c.env, tenant.id);

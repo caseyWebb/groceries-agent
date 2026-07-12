@@ -31,6 +31,8 @@ import type { KvStore } from "./kroger-user.js";
 import { annotateSubstitutes } from "./substitute-annotator.js";
 import { MIN_FLYER_DISCOUNT, type CachedMapping } from "./matching.js";
 import type { ToBuyViewLine, PantryCoveredLine, InCartLine, LinePlacement, ToBuyView } from "./order-shapes.js";
+import { classifyPantryFreshness } from "./pantry-freshness.js";
+import { db } from "./db.js";
 
 // The view's line shapes live in the leaf order-shapes.ts (member-app-grocery D9 — the
 // app imports them directly instead of hand-mirroring); re-exported so every existing
@@ -53,7 +55,10 @@ export interface DerivedMenuNeeds {
  * no quantities are derived.
  */
 export async function deriveMenuNeeds(env: Env, tenant: string): Promise<DerivedMenuNeeds> {
-  const planned = await readMealPlan(env, tenant);
+  const planned = (await readMealPlan(env, tenant)).sort((a, b) =>
+    (a.planned_for ?? "9999-99-99").localeCompare(b.planned_for ?? "9999-99-99") ||
+    String(a.id ?? "").localeCompare(String(b.id ?? "")) || a.recipe.localeCompare(b.recipe),
+  );
   if (planned.length === 0) return { needs: [], underived: [] };
 
   const slugs = [...new Set(planned.map((p) => p.recipe))];
@@ -141,11 +146,31 @@ export async function computeToBuyView(
   // being bought; it reappears via the in_cart section, not as a to-buy line.
   const needs = dropInFlightNeeds(derived.needs, list, resolve);
 
-  const { to_buy, partials } = computeToBuy({
+  const [decisions, coverage] = await Promise.all([
+    db(env).all<{ original_key: string; attribution_signature: string }>(
+      "SELECT original_key, attribution_signature FROM grocery_substitution_decisions WHERE tenant = ?1",
+      tenant,
+    ).catch(() => []),
+    db(env).all<{ line_key: string }>(
+      "SELECT line_key FROM grocery_coverage_decisions WHERE tenant = ?1",
+      tenant,
+    ).catch(() => []),
+  ]);
+  const planAttribution = new Map(needs.map((n) => [resolve(n.name), JSON.stringify(n.for_recipes ?? [])]));
+  for (const item of list.filter((row) => row.status === "active")) {
+    const key = storedGroceryKey(item, resolve);
+    if (!planAttribution.has(key)) planAttribution.set(key, JSON.stringify(item.for_recipes));
+  }
+  const suppressedKeys = new Set(
+    decisions.filter((d) => planAttribution.get(d.original_key) === d.attribution_signature).map((d) => d.original_key),
+  );
+  const { to_buy, checked, partials } = computeToBuy({
     list,
     menuNeeds: needs,
     pantryNames: new Set(pantryByKey.keys()),
     resolve,
+    suppressedKeys,
+    includePartials: new Set(coverage.map((d) => d.line_key)),
   });
 
   // Post-partition (computeToBuy itself is unchanged): a line whose key matches a stored
@@ -173,6 +198,23 @@ export async function computeToBuyView(
       kind: stored?.kind ?? "grocery",
       domain: stored?.domain ?? "grocery",
       ...(stored?.note != null ? { note: stored.note } : {}),
+      checked_at: stored?.checked_at ?? null,
+      row_version: stored?.row_version ?? 0,
+      updated_at: stored?.updated_at ?? null,
+    };
+  });
+  const checkedLines: ToBuyViewLine[] = checked.map((line) => {
+    const stored = storedByKey.get(line.key);
+    const inPlan = planKeys.has(line.key);
+    return {
+      ...line,
+      origin: stored ? (inPlan ? "both" : "list") : "plan",
+      kind: stored?.kind ?? "grocery",
+      domain: stored?.domain ?? "grocery",
+      ...(stored?.note != null ? { note: stored.note } : {}),
+      checked_at: stored?.checked_at ?? null,
+      row_version: stored?.row_version ?? 0,
+      updated_at: stored?.updated_at ?? null,
     };
   });
 
@@ -181,7 +223,9 @@ export async function computeToBuyView(
   // fall back to the plain normalizeName for the non-food edge.
   const pantry_covered: PantryCoveredLine[] = partials.map((p) => {
     const meta = pantryByKey.get(resolve(p.name)) ?? pantryByKey.get(normalizeName(p.name));
+    const freshness = classifyPantryFreshness(meta?.category, meta?.last_verified_at);
     return {
+      key: resolve(p.name),
       name: p.name,
       for_recipes: p.for_recipes,
       on_hand: {
@@ -189,14 +233,17 @@ export async function computeToBuyView(
         ...(meta?.category != null ? { category: meta.category } : {}),
         ...(meta?.last_verified_at != null ? { last_verified_at: meta.last_verified_at } : {}),
       },
+      freshness: freshness.freshness,
+      ...(freshness.reason ? { freshness_reason: freshness.reason } : {}),
+      buy_anyway: false,
     };
   });
 
   const in_cart: InCartLine[] = list
     .filter((it) => it.status === "in_cart")
-    .map((it) => ({ name: it.name, added_at: it.added_at }));
+    .map((it) => ({ name: it.name, key: storedGroceryKey(it, resolve), added_at: it.added_at, row_version: it.row_version ?? 1, sent_in: it.sent_in ?? null }));
 
-  const view: ToBuyView = { to_buy: lines, pantry_covered, in_cart, underived: derived.underived };
+  const view: ToBuyView = { to_buy: lines, checked: checkedLines, pantry_covered, in_cart, underived: derived.underived };
   if (!opts.enrich) return view; // the default read: byte-identical, zero Kroger
   return enrichView(env, tenant, view, ctx, storedByKey, list);
 }
@@ -277,7 +324,7 @@ async function enrichView(
   const saleItems = rollup ? filterByMinSavings(rollup.items, MIN_FLYER_DISCOUNT) : [];
   const flyer_as_of = rollup ? new Date(rollup.as_of).toISOString() : null;
 
-  const keys = view.to_buy.map((l) => l.key);
+  const keys = [...view.to_buy, ...view.checked].map((l) => l.key);
   const [cache, neighborsByKey, pantry] = await Promise.all([
     locationId !== null ? readSkuCache(env) : Promise.resolve([] as CachedMapping[]),
     readIdentityNeighbors(env, keys),
@@ -327,6 +374,16 @@ async function enrichView(
       substitutes: substitutesByKey.get(line.key) ?? [],
     };
   });
+  const checked = view.checked.map((line) => {
+    const stored = storedByKey.get(line.key);
+    const row = placementRow(cache, line.key, locationId);
+    const placement: LinePlacement = {};
+    if (row?.aisle?.number) placement.aisle_number = row.aisle.number;
+    if (row?.aisle?.description) placement.aisle_description = row.aisle.description;
+    if (row?.aisle?.side !== undefined) placement.aisle_side = row.aisle.side;
+    const display_name = stored?.display_name ?? (line.name === line.key ? ctx.idLabel(line.key) : line.name);
+    return { ...line, display_name, placement: Object.keys(placement).length ? placement : null, substitutes: substitutesByKey.get(line.key) ?? [] };
+  });
 
   // Reify pantry_covered + in_cart with the SAME unified rule. A covered line's key is its resolved
   // name (food need); an active stored row that backs it supplies an override, else an id-named line
@@ -351,6 +408,7 @@ async function enrichView(
   return {
     ...view,
     to_buy,
+    checked,
     pantry_covered,
     in_cart,
     location: locationId !== null ? { id: locationId } : null,

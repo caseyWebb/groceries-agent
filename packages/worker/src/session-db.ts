@@ -26,6 +26,7 @@ import {
 import { validateCanonicalId } from "./ingredient-normalize.js";
 import { stampDepartment, PANTRY_CATEGORIES, LEGACY_CATEGORY_TO_LOCATION } from "./department.js";
 import { recordPurchaseAssertion, voidSpendEvents, deleteSendStatements } from "./spend.js";
+import { classifyPantryFreshness } from "./pantry-freshness.js";
 import {
   applyPantryOperations,
   markVerified,
@@ -109,6 +110,7 @@ export interface PantryFilter {
   category?: string;
   location?: string;
   preparedOnly?: boolean;
+  staleOnly?: boolean;
 }
 
 /** Read the caller's pantry rows, with optional category / location / prepared filters (WHERE).
@@ -141,7 +143,13 @@ export async function readPantry(env: Env, tenant: string, filter: PantryFilter 
     sql += " AND prepared_from IS NOT NULL";
   }
   const rows = await db(env).all<PantryRow>(sql, ...binds);
-  return rows.map(pantryItemOf);
+  const items = rows.map(pantryItemOf);
+  return filter.staleOnly
+    ? items.filter((item) => classifyPantryFreshness(
+        typeof item.category === "string" ? item.category : undefined,
+        typeof item.last_verified_at === "string" ? item.last_verified_at : undefined,
+      ).freshness === "worth_a_look")
+    : items;
 }
 
 /** An UPSERT statement for one pantry item (merge rule: keep added_at, overlay rest). Pantry
@@ -503,6 +511,9 @@ interface GroceryRow {
   added_at: string | null;
   ordered_at: string | null;
   sent_in: string | null;
+  checked_at: string | null;
+  row_version: number | null;
+  updated_at: string | null;
 }
 
 function groceryItemOf(r: GroceryRow): GroceryItem {
@@ -520,12 +531,15 @@ function groceryItemOf(r: GroceryRow): GroceryItem {
     added_at: r.added_at ?? "",
     ordered_at: r.ordered_at ?? null,
     sent_in: r.sent_in ?? null,
+    checked_at: r.checked_at ?? null,
+    row_version: r.row_version ?? 1,
+    updated_at: r.updated_at ?? null,
   };
 }
 
 const GROCERY_SELECT =
   "SELECT name, normalized_name, display_name, quantity, kind, domain, status, source, for_recipes, note, " +
-  "added_at, ordered_at, sent_in FROM grocery_list WHERE tenant = ?1";
+  "added_at, ordered_at, sent_in, checked_at, row_version, updated_at FROM grocery_list WHERE tenant = ?1";
 
 /** Read the caller's grocery-list rows, with an optional status filter (WHERE). */
 export async function readGroceryList(env: Env, tenant: string, status?: string): Promise<GroceryItem[]> {
@@ -575,13 +589,14 @@ export function groceryUpsertStmt(
 ): D1PreparedStatement {
   return db(env).prepare(
     "INSERT INTO grocery_list (tenant, name, normalized_name, quantity, kind, domain, status, " +
-      "source, for_recipes, note, added_at, ordered_at, display_name, sent_in) " +
-      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) " +
+      "source, for_recipes, note, added_at, ordered_at, display_name, sent_in, checked_at, row_version, updated_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) " +
       "ON CONFLICT(tenant, normalized_name) DO UPDATE SET " +
       "name = excluded.name, quantity = excluded.quantity, kind = excluded.kind, " +
       "domain = excluded.domain, status = excluded.status, source = excluded.source, " +
       "for_recipes = excluded.for_recipes, note = excluded.note, ordered_at = excluded.ordered_at, " +
-      "display_name = excluded.display_name, sent_in = excluded.sent_in",
+      "display_name = excluded.display_name, sent_in = excluded.sent_in, checked_at = excluded.checked_at, " +
+      "row_version = grocery_list.row_version + 1, updated_at = excluded.updated_at",
     tenant,
     item.name,
     // Persist the STORED key the item carries (add-by-id rows key on the given id, which is NOT
@@ -600,6 +615,9 @@ export function groceryUpsertStmt(
     // The internal send linkage rides the in-memory item (stamped/cleared only by the
     // order-flush and status-transition ops — no tool/route input reaches it).
     item.sent_in ?? null,
+    item.checked_at ?? null,
+    item.row_version ?? 1,
+    item.updated_at ?? new Date().toISOString(),
   );
 }
 
