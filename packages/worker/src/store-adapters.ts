@@ -6,7 +6,7 @@ import type { Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { listStoreRows } from "./corpus-db.js";
 import { createKrogerClient, KrogerError } from "./kroger.js";
-import { evictUserTokenCache, refreshKeyFor, type KvStore } from "./kroger-user.js";
+import { disconnectKrogerUser, refreshKeyFor, type KvStore } from "./kroger-user.js";
 import { readPreferences } from "./profile-db.js";
 import type {
   KrogerLocation,
@@ -122,7 +122,6 @@ export async function searchKrogerLocations(env: Env, zip: string): Promise<{ lo
 }
 
 export async function disconnectKrogerConnection(env: Env, tenantId: string): Promise<{ linked: false }> {
-  await (env.KROGER_KV as unknown as KvStore).delete(refreshKeyFor(tenantId));
-  evictUserTokenCache(tenantId);
+  await disconnectKrogerUser(env.KROGER_KV as unknown as KvStore, tenantId);
   return { linked: false };
 }

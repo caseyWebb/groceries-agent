@@ -85,6 +85,9 @@ export interface UserTokenCache {
 // Per-tenant isolate caches, keyed by tenant id. A tenant only ever reads its own
 // entry, so one tenant's cached access token can never be served to another.
 const moduleCaches = new Map<string, UserTokenCache>();
+const tenantGenerations = new Map<string, number>();
+const disconnectingTenants = new Set<string>();
+const generationFor = (tenantId: string): number => tenantGenerations.get(tenantId) ?? 0;
 function tenantCache(tenantId: string): UserTokenCache {
   let c = moduleCaches.get(tenantId);
   if (!c) {
@@ -98,7 +101,32 @@ function tenantCache(tenantId: string): UserTokenCache {
  * detached promise may settle, but its cache object is no longer reachable by a
  * future client, so disconnect takes effect immediately without cross-tenant impact. */
 export function evictUserTokenCache(tenantId: string): void {
+  tenantGenerations.set(tenantId, generationFor(tenantId) + 1);
   moduleCaches.delete(tenantId);
+}
+
+/** Disconnect one tenant without allowing an already-issued refresh request to
+ * resurrect durable or isolate credential state. Generation invalidation makes
+ * the refresh discard its response; awaiting the coalesced promise plus a final
+ * delete closes the narrower race where its KV put had already begun. */
+export async function disconnectKrogerUser(kv: KvStore, tenantId: string): Promise<void> {
+  disconnectingTenants.add(tenantId);
+  tenantGenerations.set(tenantId, generationFor(tenantId) + 1);
+  const cache = moduleCaches.get(tenantId);
+  if (cache) cache.token = null;
+  try {
+    await kv.delete(refreshKeyFor(tenantId));
+    if (cache?.refreshing) await cache.refreshing.catch(() => {});
+    await kv.delete(refreshKeyFor(tenantId));
+  } finally {
+    tenantGenerations.set(tenantId, generationFor(tenantId) + 1);
+    if (cache) {
+      cache.token = null;
+      cache.refreshing = null;
+    }
+    if (moduleCaches.get(tenantId) === cache) moduleCaches.delete(tenantId);
+    disconnectingTenants.delete(tenantId);
+  }
 }
 
 export interface KrogerUserClientOptions {
@@ -189,6 +217,7 @@ export function createKrogerUserClient(
   }
 
   async function refresh(): Promise<string> {
+    const generation = generationFor(tenantId);
     const stored = await kv.get(refreshKey);
     if (!stored) {
       throw new ReauthRequiredError("No Kroger refresh token stored; run the one-time /oauth/init");
@@ -200,11 +229,17 @@ export function createKrogerUserClient(
     if (!json.access_token) {
       throw new KrogerError(502, "Kroger refresh response missing access_token");
     }
+    if (disconnectingTenants.has(tenantId) || generation !== generationFor(tenantId)) {
+      throw new ReauthRequiredError("Kroger was disconnected while its token refreshed");
+    }
     // Single-use rotation: write the NEW refresh token to KV BEFORE the new
     // access token is used for any request. If Kroger rotated it (it does), a
     // crash here cannot strand us on the consumed token.
     if (json.refresh_token) {
       await kv.put(refreshKey, json.refresh_token);
+    }
+    if (disconnectingTenants.has(tenantId) || generation !== generationFor(tenantId)) {
+      throw new ReauthRequiredError("Kroger was disconnected while its token refreshed");
     }
     cache.token = {
       accessToken: json.access_token,
@@ -214,6 +249,9 @@ export function createKrogerUserClient(
   }
 
   async function getAccessToken(): Promise<string> {
+    if (disconnectingTenants.has(tenantId)) {
+      throw new ReauthRequiredError("Kroger is being disconnected");
+    }
     if (cache.token && cache.token.expiresAt > now() + EXPIRY_SKEW_MS) {
       return cache.token.accessToken;
     }
@@ -276,4 +314,6 @@ export function toToolError(e: unknown): ToolError {
 /** Test helper: clear all per-tenant isolate token caches. */
 export function __resetUserTokenCache(): void {
   moduleCaches.clear();
+  tenantGenerations.clear();
+  disconnectingTenants.clear();
 }

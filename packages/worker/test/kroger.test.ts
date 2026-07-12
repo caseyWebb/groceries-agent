@@ -65,6 +65,20 @@ describe("Kroger client", () => {
     await expect(k.locationsNearZip("76104")).resolves.toEqual([]);
   });
 
+  it("falls back to the validated query ZIP for malformed or missing provider ZIPs", async () => {
+    const fetchMock = (async (url: string) =>
+      url.startsWith(TOKEN_URL)
+        ? json({ access_token: "T1", expires_in: 1800 })
+        : json({ data: [
+            { locationId: "bad", name: "Bad ZIP", address: { addressLine1: "1 Main", zipCode: "76x04" } },
+            { locationId: "missing", name: "Missing ZIP", address: { addressLine1: "2 Main" } },
+          ] })) as unknown as typeof fetch;
+    const k = createKrogerClient(env, { fetch: fetchMock, cache: freshCache(), now: () => 1000, sleep: async () => {} });
+    const locations = await k.locationsNearZip("76104");
+    expect(locations.map((location) => location.zip)).toEqual(["76104", "76104"]);
+    expect(locations.map((location) => location.address)).toEqual(["1 Main, 76104", "2 Main, 76104"]);
+  });
+
   it("mints one client_credentials token and reuses it across calls", async () => {
     const calls: string[] = [];
     const fetchMock = (async (url: string) => {

@@ -5,6 +5,7 @@ import {
   toToolError,
   __resetUserTokenCache,
   evictUserTokenCache,
+  disconnectKrogerUser,
   type KvStore,
   type UserTokenCache,
 } from "../src/kroger-user.js";
@@ -135,6 +136,32 @@ describe("Kroger user-context client — token rotation", () => {
 });
 
 describe("Kroger user-context client — refresh coalescing", () => {
+  it("a deferred refresh response cannot resurrect credentials after disconnect", async () => {
+    __resetUserTokenCache();
+    const kv = memKv({ [REFRESH_KEY]: "R0" });
+    let release!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchMock = (async (url: string) => {
+      if (!url.startsWith(TOKEN_URL)) return new Response(null, { status: 204 });
+      markStarted();
+      await gate;
+      return json({ access_token: "A-late", refresh_token: "R-late", expires_in: 1800 });
+    }) as unknown as typeof fetch;
+    const client = createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, now: () => 1000 });
+    const refreshing = client.getAccessToken();
+    await started;
+    const disconnecting = disconnectKrogerUser(kv, TENANT);
+    release();
+    await disconnecting;
+    await expect(refreshing).rejects.toBeInstanceOf(ReauthRequiredError);
+    expect(await kv.get(REFRESH_KEY)).toBeNull();
+    await expect(
+      createKrogerUserClient(env, kv, TENANT, { fetch: fetchMock, now: () => 1000 }).getAccessToken(),
+    ).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+
   it("evicts only the named tenant after access tokens are cached", async () => {
     __resetUserTokenCache();
     const kv = memKv({ "kroger:refresh:alice": "RA", "kroger:refresh:bob": "RB" });

@@ -103,7 +103,8 @@ test("the Store card exposes four honest adapter tabs from one projection", asyn
 
   await profilePage.openStoreTab("satellites");
   await expect(profilePage.storePanel("satellites")).toContainText("Freshness unavailable");
-  await expect(profilePage.storePanel("satellites").getByRole("link", { name: "Open Satellites" })).toBeVisible();
+  await expect(profilePage.storePanel("satellites")).toContainText("not available in the member app yet");
+  await expect(profilePage.storePanel("satellites").getByRole("link", { name: "Open Satellites" })).toHaveCount(0);
   await expect(profilePage.storePanel("satellites").getByRole("link", { name: "Adapter authoring guide" })).toBeVisible();
 
   await profilePage.openStoreTab("offline");

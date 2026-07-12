@@ -638,8 +638,8 @@ function StoreCard() {
           {adapters.satellites.stores.map((store) => (
             <p key={store.slug}>{store.name} · status unavailable</p>
           ))}
+          <p className="muted">Satellite management is not available in the member app yet.</p>
           <p className="store-links">
-            <Link to="/profile">Open Satellites</Link>
             <a href="https://github.com/caseyWebb/yet-another-meal-planner/blob/main/docs/SELF_HOSTING.md" target="_blank" rel="noreferrer">Adapter authoring guide</a>
           </p>
         </section>
