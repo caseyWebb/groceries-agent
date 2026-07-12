@@ -947,7 +947,11 @@ export async function advanceInCartRows(
       "SELECT sent_in FROM grocery_list WHERE tenant=?1 AND normalized_name=?2 AND status='in_cart'", tenant, key,
     );
     if (claimed?.sent_in !== claimId) {
-      if (send?.id) await db(env).batch(deleteSendStatements(env, send.id));
+      // A multi-line request can win only its non-overlapping rows. Compensate every
+      // row this token did win before rejecting, otherwise that subset is stranded
+      // in_cart even though no additive cart write occurred. Ownership predicates in
+      // rollbackInCartRows keep this from touching a concurrent winner's rows.
+      await rollbackInCartRows(env, tenant, lines, inserted, send?.id, claimId);
       throw new ToolError("conflict", "order review changed while claiming grocery lines");
     }
   }

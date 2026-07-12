@@ -392,8 +392,9 @@ export async function placeOrder(
     preview,
   };
 
-  if (preview || resolved.length === 0) return result;
+  if (preview) return result;
   await options.beforeCommit?.(resolved, checkpoint);
+  if (resolved.length === 0) return result;
 
   // 1. Advance the list to in_cart BEFORE the cart write. Failure ordering is
   //    deliberate: an under-buy (items marked in_cart that never reached the cart)

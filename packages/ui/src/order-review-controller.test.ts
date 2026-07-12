@@ -91,6 +91,7 @@ describe("Order Review controller", () => {
       ...preview,
       matched: [],
       decisions: [decision],
+      left_off: [{ line_key: "bread", name: "bread", reason: "undecided" }],
       counts: { going_to_cart: 0, needs_decision: 1, left_off: 1 },
       estimated_total: null,
     });

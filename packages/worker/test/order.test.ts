@@ -575,8 +575,16 @@ describe("placeOrder", () => {
 
   it("does nothing to the cart when there is nothing resolved", async () => {
     const { deps, calls } = makeDeps({ saffron: unavailable });
-    const res = await placeOrder(deps, toBuy("saffron"));
+    let compared = false;
+    const res = await placeOrder(deps, toBuy("saffron"), {
+      beforeCommit: (resolved, checkpoint) => {
+        compared = true;
+        expect(resolved).toEqual([]);
+        expect(checkpoint).toHaveLength(1);
+      },
+    });
     expect(res.checkpoint).toHaveLength(1);
+    expect(compared).toBe(true);
     expect(calls).toMatchObject({ sku: 0, cart: 0, advance: 0 });
   });
 });

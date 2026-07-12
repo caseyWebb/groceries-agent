@@ -32,6 +32,7 @@ export interface OrderReviewHostAdapter {
     stage: OrderReviewStage;
     preview_fingerprint: string;
     cleared_cart_ack: boolean;
+    rendered_preview?: OrderReviewData;
   }): Promise<OrderReviewSendResult>;
   publishModelContext?(context: OrderReviewModelContext): Promise<void> | void;
   notifyCompletion?(outcome: OrderReviewOutcome & { carted_names: string[] }): Promise<void> | void;
@@ -99,7 +100,10 @@ export function orderReviewProjection(state: OrderReviewControllerState): OrderR
   let unresolved = 0;
   let total = 0;
   let priced = 0;
-  const left = [...state.preview.left_off];
+  // Rebuild staged left-offs from the authoritative lines plus the local draft.
+  // Copying preview.left_off would retain an old undecided/unavailable entry after
+  // the member selects it and would duplicate underived recipes below.
+  const left: OrderReviewProjection["left_off_lines"] = [];
 
   for (const line of state.preview.matched) {
     if (skipped.has(line.line_key)) {
@@ -379,6 +383,7 @@ export async function sendOrderReviewState(
       stage: state.stage,
       preview_fingerprint: refreshed.preview_fingerprint,
       cleared_cart_ack: state.cleared_cart_ack,
+      rendered_preview: refreshed,
     });
     if (outcome.status === "review_changed" || outcome.status === "cart_clearance_required") {
       const next = {

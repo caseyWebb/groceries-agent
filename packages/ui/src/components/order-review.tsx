@@ -32,6 +32,21 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
   const stateRef = React.useRef(state);
   const operationRef = React.useRef(0);
   const publishRef = React.useRef<Promise<void>>(Promise.resolve());
+  const enqueueContext = React.useCallback(
+    (context: Parameters<NonNullable<OrderReviewHostAdapter["publishModelContext"]>>[0]) => {
+      publishRef.current = publishRef.current
+        .then(async () => {
+          await adapter.publishModelContext?.(context);
+        })
+        .catch(() => undefined);
+      return publishRef.current;
+    },
+    [adapter],
+  );
+  const controllerAdapter = React.useMemo<OrderReviewHostAdapter>(
+    () => ({ ...adapter, publishModelContext: enqueueContext }),
+    [adapter, enqueueContext],
+  );
   const update = React.useCallback(
     (next: typeof state) => {
       const previous = stateRef.current;
@@ -46,17 +61,13 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
       update(createOrderReviewController(data));
   }, [data, update]);
   const publish = (next: typeof state, action: string) => {
-    publishRef.current = publishRef.current
-      .then(async () => {
-        await adapter.publishModelContext?.({
-          preview: next.preview,
-          stage: next.stage,
-          save_receipts: next.save_receipts,
-          ...(next.outcome ? { outcome: next.outcome } : {}),
-          action_summary: action,
-        });
-      })
-      .catch(() => undefined);
+    void enqueueContext({
+      preview: next.preview,
+      stage: next.stage,
+      save_receipts: next.save_receipts,
+      ...(next.outcome ? { outcome: next.outcome } : {}),
+      action_summary: action,
+    });
   };
   const readonly = adapter.mode === "readonly";
   const stage = (action: Parameters<typeof stageOrderReview>[1]) => {
@@ -128,7 +139,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
               : `Send summary unavailable: ${confirmed.steps.send.error ?? "not recorded"}`}
           </li>
         </ol>
-        <Button onClick={() => void closeOrderReview(stateRef.current, adapter)}>Back to grocery</Button>
+        <Button onClick={() => void closeOrderReview(stateRef.current, controllerAdapter)}>Back to grocery</Button>
       </section>
     );
   const projection = orderReviewProjection(state);
@@ -150,7 +161,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
         <Button
           variant="ghost"
           aria-label="Close order review"
-          onClick={() => void closeOrderReview(stateRef.current, adapter)}
+          onClick={() => void closeOrderReview(stateRef.current, controllerAdapter)}
         >
           Close
         </Button>
@@ -216,6 +227,15 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
               : (state.outcome.steps.cache.error ?? "not recorded")}
           </li>
         </ol>
+      ) : null}
+      {state.outcome?.status === "review_changed" && state.outcome.divergences.length ? (
+        <ul data-testid="order-review-divergences">
+          {state.outcome.divergences.map((divergence, index) => (
+            <li key={`${divergence.category}:${divergence.line_key ?? "review"}:${index}`}>
+              {divergence.message}
+            </li>
+          ))}
+        </ul>
       ) : null}
       {state.outcome?.status === "send_failed" &&
       state.outcome.steps.cart.code === "reauth_required" &&
@@ -383,7 +403,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
                           disabled={readonly || busy}
                           onClick={() =>
                             runAsync("save", (source) =>
-                              saveOrderReviewBrand(source, adapter, line.line_key, candidate.brand),
+                              saveOrderReviewBrand(source, controllerAdapter, line.line_key, candidate.brand),
                             )
                           }
                         >
@@ -398,7 +418,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
                       disabled={readonly || busy}
                       onClick={() =>
                         runAsync("search", (source) =>
-                          searchOrderReview(source, adapter, "broader", line.line_key),
+                          searchOrderReview(source, controllerAdapter, "broader", line.line_key),
                         )
                       }
                     >
@@ -420,7 +440,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
                           runAsync("search", (source) =>
                             searchOrderReview(
                               source,
-                              adapter,
+                              controllerAdapter,
                               "manual",
                               line.line_key,
                               manual[line.line_key],
@@ -494,7 +514,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
             stage({ kind: "impulse", key: `impulse-${Date.now()}`, label });
             event.currentTarget.reset();
             if (adapter.mode === "interactive")
-              runAsync("preview", (source) => refreshOrderReview(source, adapter));
+              runAsync("preview", (source) => refreshOrderReview(source, controllerAdapter));
           }
         }}
       >
@@ -519,7 +539,7 @@ export function OrderReview({ data, adapter, onDataChange }: OrderReviewProps) {
             !projection.can_send ||
             (state.preview.cleared_cart_ack_required && !state.cleared_cart_ack)
           }
-          onClick={() => runAsync("send", (source) => sendOrderReviewState(source, adapter))}
+          onClick={() => runAsync("send", (source) => sendOrderReviewState(source, controllerAdapter))}
         >
           {busy ? "Sending…" : adapter.mode === "delegate" ? "Ask to send" : "Send to Kroger"}
         </Button>

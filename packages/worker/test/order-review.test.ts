@@ -29,7 +29,9 @@ describe("Order Review shared operations", () => {
     expect(preview.matched).toHaveLength(1);
     expect(h.rows("order_sends")).toHaveLength(0);
     expect(h.rows("novel_ingredient_terms")).toHaveLength(captureRowsBefore);
-    const sent = await sendOrderReview(h.env, T, { stage: { ...emptyOrderReviewStage(), quantities: { milk: 2 } }, preview_fingerprint: preview.preview_fingerprint, cleared_cart_ack: true, rendered_preview: preview }, deps);
+    const stage = { ...emptyOrderReviewStage(), quantities: { milk: 2 } };
+    const staged = await readOrderReview(h.env, T, stage, deps);
+    const sent = await sendOrderReview(h.env, T, { stage, preview_fingerprint: staged.preview_fingerprint, cleared_cart_ack: true, rendered_preview: staged }, deps);
     expect(sent.status).toBe("sent");
     expect(h.rows("order_sends")).toHaveLength(1);
     expect(h.rows("sku_cache")).toHaveLength(1);
@@ -86,6 +88,58 @@ describe("Order Review shared operations", () => {
     expect((await readOrderReview(h.env, T, emptyOrderReviewStage(), deps)).preview_fingerprint).toBe(preview.preview_fingerprint);
   });
 
+  it("authorizes exactly the sorted manual-search window issued to the client", async () => {
+    const h = sqliteEnv([T]);
+    await addGroceryRow(h.env, T, { name: "milk" }, "2026-07-12");
+    const catalog = Array.from({ length: 21 }, (_, index) =>
+      candidate(`SKU-${String(index + 1).padStart(2, "0")}`, "Kroger", 100 - index),
+    );
+    const deps = { wiring: wiring({
+      search: async () => catalog,
+      revalidateSku: async (sku) => {
+        const found = catalog.find((item) => item.productId === sku);
+        return found ? { brand: found.brand, description: found.description, size: found.size, price: found.price, on_sale: false, fulfillment: { curbside: true, delivery: true }, aisleLocation: found.aisleLocation } : null;
+      },
+    }) };
+    const manual = (sku: string) => ({
+      ...emptyOrderReviewStage(),
+      selections: [{ line_key: "milk", sku, source: "manual" as const, divergence: { rung: "manual" as const, requested_label: "milk", searched_label: "milk", missing_constraints: [], candidate_terms: [] } }],
+    });
+    // SKU-21 is last in provider order but cheapest and therefore inside the issued
+    // sorted top 20. SKU-01 is first raw but excluded by that same issued window.
+    await expect(readOrderReview(h.env, T, manual("SKU-21"), deps)).resolves.toMatchObject({ stage: { selections: [{ sku: "SKU-21" }] } });
+    await expect(readOrderReview(h.env, T, manual("SKU-01"), deps)).rejects.toMatchObject({ code: "validation_failed" });
+  });
+
+  it("requires the complete staged fingerprint when an impulse quote changes", async () => {
+    const h = sqliteEnv([T]);
+    let price = 3;
+    let carts = 0;
+    const impulseCandidate = () => candidate("COOKIE-1", "Bakery", price);
+    const deps = { wiring: wiring({
+      search: async () => [impulseCandidate()],
+      revalidateSku: async (sku) => sku === "COOKIE-1"
+        ? { brand: "Bakery", description: "Cookies", size: "12 oz", price: { regular: price, promo: 0 }, on_sale: false, fulfillment: { curbside: true, delivery: true }, aisleLocation: null }
+        : null,
+      cartAdd: async () => { carts += 1; },
+    }) };
+    const stage = {
+      ...emptyOrderReviewStage(),
+      impulses: [{ key: "impulse-cookie", label: "cookies", sku: "COOKIE-1" }],
+      selections: [{ line_key: "impulse-cookie", sku: "COOKIE-1", source: "impulse" as const, divergence: { rung: "manual" as const, requested_label: "cookies", searched_label: "cookies", missing_constraints: [], candidate_terms: [] } }],
+    };
+    const rendered = await readOrderReview(h.env, T, stage, deps);
+    price = 5;
+    const result = await sendOrderReview(h.env, T, {
+      stage,
+      preview_fingerprint: rendered.preview_fingerprint,
+      cleared_cart_ack: true,
+      rendered_preview: rendered,
+    }, deps);
+    expect(result.status).toBe("review_changed");
+    expect(carts).toBe(0);
+  });
+
   it("atomically claims rows so concurrent confirms call the additive cart once", async () => {
     const h = sqliteEnv([T]);
     await addGroceryRow(h.env, T, { name: "milk" }, "2026-07-12");
@@ -111,7 +165,13 @@ describe("Order Review shared operations", () => {
     const h = sqliteEnv([T]);
     await addGroceryRow(h.env, T, { name: "milk" }, "2026-07-12");
     const first = await advanceInCartRows(h.env, T, [{ name: "milk", key: "milk" }], "2026-07-12");
-    await expect(advanceInCartRows(h.env, T, [{ name: "milk", key: "milk" }], "2026-07-12")).rejects.toMatchObject({ code: "conflict" });
+    await expect(advanceInCartRows(h.env, T, [
+      { name: "milk", key: "milk" },
+      { name: "flour", key: "flour" },
+    ], "2026-07-12")).rejects.toMatchObject({ code: "conflict" });
+    // The losing multi-line request briefly owns its non-overlapping flour row. Its
+    // conflict compensation must remove that subset before returning: no cart ran.
+    expect(h.rows<{ normalized_name: string }>("grocery_list").map((row) => row.normalized_name)).toEqual(["milk"]);
     await rollbackInCartRows(h.env, T, [{ name: "milk", key: "milk" }], [], undefined, "order-claim:not-owner");
     expect(h.rows<{ status: string; sent_in: string }>("grocery_list")[0]).toMatchObject({ status: "in_cart", sent_in: first.claimId });
     await finalizeInCartClaim(h.env, T, [{ name: "milk", key: "milk" }], first.claimId);

@@ -201,12 +201,22 @@ async function authorizeStageSelections(
         const phrase = rung.search_term ?? rung.display_name ?? rung.id.replaceAll("_", " ");
         const found = (await deps.wiring.search(phrase)).filter(isFulfillable);
         if (!found.length) continue;
-        issued = found.slice(0, 12).some((candidate) => candidate.productId === selection.sku);
+        const tokens = phrase.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        issued = found
+          .sort((a, b) => relevanceScore(b, tokens) - relevanceScore(a, tokens) || compareCatalogCandidates(a, b))
+          .slice(0, 12)
+          .some((candidate) => candidate.productId === selection.sku);
         break;
       }
     } else if ((selection.source === "manual" || selection.source === "impulse") && selection.divergence?.rung === "manual") {
       const query = selection.divergence.searched_label.trim();
-      if (query.length >= 2 && query.length <= 80) issued = (await deps.wiring.search(query)).filter(isFulfillable).slice(0, 20).some((candidate) => candidate.productId === selection.sku);
+      if (query.length >= 2 && query.length <= 80) {
+        const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        issued = (await deps.wiring.search(query)).filter(isFulfillable)
+          .sort((a, b) => relevanceScore(b, tokens) - relevanceScore(a, tokens) || compareCatalogCandidates(a, b))
+          .slice(0, 20)
+          .some((candidate) => candidate.productId === selection.sku);
+      }
     }
     if (!issued) throw new ToolError("validation_failed", `SKU ${selection.sku} was not issued for ${selection.line_key}`);
   }
@@ -297,12 +307,10 @@ export async function sendOrderReview(
   await requireKrogerOrderReview(env, tenant);
   const stage = normalizedStage(input.stage);
   const current = await readOrderReview(env, tenant, stage, deps);
-  // A host may stage locally from an empty-stage authoritative preview. Accept that
-  // exact baseline fingerprint while applying the complete posted stage; any external
-  // list/store/price/preference drift changes the freshly recomputed baseline too.
-  const baseline = stage.skipped.length || Object.keys(stage.quantities).length || stage.selections.length || stage.impulses.length || stage.saved_brands.length
-    ? await readOrderReview(env, tenant, emptyOrderReviewStage(), deps) : current;
-  if (current.preview_fingerprint !== input.preview_fingerprint && baseline.preview_fingerprint !== input.preview_fingerprint) {
+  // The fingerprint must cover the complete staged preview. An empty-stage baseline
+  // cannot authorize staged-only SKUs or impulses whose availability/price may have
+  // changed since search.
+  if (current.preview_fingerprint !== input.preview_fingerprint) {
     return { status: "review_changed", preview: current, divergences: input.rendered_preview ? compareOrderReviews(input.rendered_preview, current) : [{ category: "availability", message: "Current order facts changed." }] };
   }
   if (current.cleared_cart_ack_required && !input.cleared_cart_ack) return { status: "cart_clearance_required", preview: current };
@@ -446,7 +454,8 @@ export async function searchOrderBroader(
   if (review.preview_fingerprint !== previewFingerprint) throw new ToolError("conflict", "order review changed; refresh before searching");
   if (!review.decisions.some((line) => line.line_key === lineKey && line.kind === "unavailable"))
     throw new ToolError("validation_failed", "broader search is available only for a current unavailable review line");
-  const ladder = await buildBroaderLadder(env, lineKey);
+  const decision = review.decisions.find((line) => line.line_key === lineKey)!;
+  const ladder = await buildBroaderLadder(env, decision.family_key);
   for (const rung of ladder) {
     const phrase = rung.search_term ?? rung.display_name ?? rung.id.replaceAll("_", " ");
     const found = (await deps.wiring.search(phrase)).filter(isFulfillable);
