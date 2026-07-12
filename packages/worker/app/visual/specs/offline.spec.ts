@@ -8,7 +8,7 @@
 // never a fixed sleep. The spec provisions its own rows and removes them, leaving the
 // seeded grocery state for the later specs.
 import { test, expect } from "../fixtures";
-import { persistedGroceryNames, waitForPersistedMutations, waitForPersistedQuery } from "../idb";
+import { persistedGroceryNames, persistedSnapshot, waitForPersistedMutations, waitForPersistedQuery } from "../idb";
 import { becomeControlled } from "../sw";
 
 const ITEM_A = "offline croissants";
@@ -71,4 +71,38 @@ test("airplane mode opens the grocery list from the persisted cache; offline che
   // Leave the seeded state for the later specs (sequential suite).
   await groceryPage.removeRow(ITEM_A);
   await groceryPage.removeRow(ITEM_B);
+});
+
+test("adapter truth and class-(a) store actions never persist, queue, or auto-fire on reconnect", async ({
+  asMember,
+  groceryPage,
+  profilePage,
+  page,
+  context,
+}) => {
+  await asMember();
+  await groceryPage.goto();
+  await becomeControlled(page);
+  await waitForPersistedQuery(page, "grocery");
+  await expect.poll(async () => (await persistedSnapshot(page)).queryKeys.some((key) => key[0] === "store-adapters")).toBe(false);
+
+  await profilePage.goto();
+  await profilePage.openTab("prefs");
+  await profilePage.openStoreTab("offline");
+  const choice = profilePage.offlineStore("aldi-north").getByRole("button", { name: "Use this store" });
+  await expect(choice).toBeEnabled();
+  await context.setOffline(true);
+  await expect(choice).toBeDisabled();
+  await profilePage.openStoreTab("kroger");
+  await expect(profilePage.storePanel("kroger").getByRole("button", { name: "Disconnect" })).toBeDisabled();
+  expect((await persistedSnapshot(page)).pausedMutationKeys).toEqual([]);
+
+  let adapterActions = 0;
+  page.on("request", (request) => {
+    if (/kroger-(connection|locations|login-url)/.test(request.url())) adapterActions++;
+  });
+  await context.setOffline(false);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
+  expect(adapterActions).toBe(0);
+  expect((await persistedSnapshot(page)).pausedMutationKeys).toEqual([]);
 });

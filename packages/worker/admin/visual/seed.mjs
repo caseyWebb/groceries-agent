@@ -133,6 +133,22 @@ export const SEED = {
       ladder: { term: "butter", tiers: [["Kerrygold"], ["store brand"]] },
       dontCare: { term: "yellow_onion" },
     },
+    storeAdapters: {
+      kroger: {
+        locationId: "03500520",
+        name: "Kroger Marketplace",
+        address: "5241 N Tarrant Pkwy, Fort Worth, TX 76137",
+        zip: "76137",
+      },
+      search: [
+        { location_id: "01400943", name: "Kroger University", address: "3120 S University Dr, Fort Worth, TX 76109", zip: "76109" },
+        { location_id: "03500521", name: "Kroger Camp Bowie", address: "6333 Camp Bowie Blvd, Fort Worth, TX 76116", zip: "76116" },
+      ],
+      offline: [
+        { slug: "aldi-north", name: "Aldi", label: "North", address: "123 North St" },
+        { slug: "central-market", name: "Central Market", label: "Fort Worth", address: "4651 West Fwy" },
+      ],
+    },
     // The unified cookbook browse (cookbook-unified-browse): the filter-bar fixtures —
     // `noTime` has NO time_total (an active time cap must exclude it, honestly), and
     // the italian trio is what `cuisine=italian` narrows the corpus to.
@@ -712,7 +728,16 @@ export function d1Statements(now) {
   // `weekly_budget` (dollars/week) backs the budget control's set/clear coverage.
   stmts.push(
     "INSERT INTO profile (tenant, taste, diet_principles, default_cooking_nights, lunch_strategy, ready_to_eat_default_action, stores, dietary, rotation, cadence, weekly_budget) VALUES " +
-      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, 3, NULL, 'opt-in', ${q(JSON.stringify({ primary: "kroger", preferred_location: app.differentiators.location }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))}, ${q(JSON.stringify({ breakfast: 2, lunch: 1, dinner: 4 }))}, 95);`,
+      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, 3, NULL, 'opt-in', ${q(JSON.stringify({ primary: "kroger", preferred_location: app.storeAdapters.kroger.locationId, preferred_location_name: app.storeAdapters.kroger.name, preferred_location_address: app.storeAdapters.kroger.address, location_zip: app.storeAdapters.kroger.zip }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))}, ${q(JSON.stringify({ breakfast: 2, lunch: 1, dinner: 4 }))}, 95);`,
+  );
+  stmts.push(`DELETE FROM stores WHERE slug IN (${app.storeAdapters.offline.map((store) => q(store.slug)).join(", ")}, 'hardware-store');`);
+  stmts.push(
+    "INSERT INTO stores (slug, name, domain, extra) VALUES " +
+      app.storeAdapters.offline
+        .map((store) => `(${q(store.slug)}, ${q(store.name)}, 'grocery', ${q(JSON.stringify({ label: store.label, address: store.address }))})`)
+        .concat([`('hardware-store', 'Hardware Store', 'household', NULL)`])
+        .join(", ") +
+      ";",
   );
   stmts.push(`DELETE FROM brand_prefs WHERE tenant = ${q(members.active)};`);
   stmts.push(

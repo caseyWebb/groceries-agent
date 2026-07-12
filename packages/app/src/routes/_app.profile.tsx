@@ -21,6 +21,12 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   Button,
   Combobox,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   IconClock,
   IconDollarSign,
   IconPencil,
@@ -38,9 +44,10 @@ import {
   TokenField,
   toast,
 } from "@yamp/ui";
-import { api, apiError } from "../lib/api";
+import { api, apiError, appFetch } from "../lib/api";
 import {
   useProfile,
+  useStoreAdapters,
   useProposals,
   useRetrospective,
   useOverlay,
@@ -48,6 +55,7 @@ import {
   useVibes,
   type ProposalRow,
   type VibeRow,
+  type StoreAdapterProjection,
 } from "../lib/data";
 import { useProposalConfirm, useVibeAdd, useVibeRemove } from "../lib/mutations";
 import { useOnline } from "../lib/online";
@@ -358,7 +366,11 @@ function EquipmentCard({ owned }: { owned: string[] }) {
 
 /** Merge-patch under If-Match with ONE automatic rebase retry (merge-patches rebase
  *  trivially — the patch IS the intent), then invalidate the profile reads. */
-async function patchPreferences(qc: QueryClient, patch: Record<string, unknown>): Promise<boolean> {
+async function patchPreferences(
+  qc: QueryClient,
+  patch: Record<string, unknown>,
+  storeBoundary = false,
+): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const read = await api.api.profile.preferences.$get().catch(() => null);
     if (!read?.ok) break;
@@ -373,6 +385,13 @@ async function patchPreferences(qc: QueryClient, patch: Record<string, unknown>)
       return false;
     }
     await qc.invalidateQueries({ queryKey: ["profile"] });
+    if (storeBoundary) {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["store-adapters"] }),
+        qc.invalidateQueries({ queryKey: ["grocery", "to-buy", "enriched"] }),
+      ]);
+      window.dispatchEvent(new Event("yamp:store-adapter-changed"));
+    }
     return true;
   }
   toast("Couldn't save preferences — try again");
@@ -400,7 +419,6 @@ function PrefsTab() {
   const budget = typeof prefs.weekly_budget === "number" ? prefs.weekly_budget : null;
   const rotation = (prefs.rotation ?? {}) as Record<string, unknown>;
   const dietary = (prefs.dietary ?? {}) as { avoid?: string[]; limit?: string[] };
-  const stores = (prefs.stores ?? {}) as Record<string, unknown>;
   const brands = (prefs.brands ?? {}) as Record<string, BrandTierValue>;
 
   const patch = (p: Record<string, unknown>) => void patchPreferences(qc, p);
@@ -511,44 +529,250 @@ function PrefsTab() {
         </section>
       </section>
 
-      <section className="card prof-card prof-card-wide rounded-xl border bg-card p-6">
-        <header>
-          <h3>Store</h3>
-        </header>
-        <section className="prof-fields">
-          <div className="prof-fields-row">
-            <div className="prof-field">
-              <label>Preferred store</label>
-              <div className="prof-static" data-testid="preferred-store">
-                {typeof stores.preferred_location === "string" && stores.preferred_location ? (
-                  stores.preferred_location
-                ) : typeof stores.primary === "string" && stores.primary ? (
-                  <>
-                    {capitalize(stores.primary)} <span className="muted">— no location set</span>
-                  </>
-                ) : (
-                  <span className="muted">none linked</span>
-                )}
-              </div>
-            </div>
-            <div className="prof-field">
-              <label>ZIP</label>
-              <input
-                className="input p-zip"
-                aria-label="ZIP"
-                defaultValue={typeof stores.location_zip === "string" ? stores.location_zip : ""}
-                onBlur={(e) => {
-                  const v = e.target.value.trim();
-                  if (v !== (stores.location_zip ?? "")) patch({ stores: { location_zip: v } });
-                }}
-              />
-            </div>
-          </div>
-        </section>
-      </section>
+      <StoreCard />
 
       <BrandsCard brands={brands} onPatch={(brandsPatch) => patch({ brands: brandsPatch })} />
     </div>
+  );
+}
+
+type StoreTab = "kroger" | "instacart" | "satellites" | "offline";
+
+function StoreCard() {
+  const projection = useStoreAdapters();
+  const qc = useQueryClient();
+  const online = useOnline();
+  const [tab, setTab] = React.useState<StoreTab>("kroger");
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const adapters = projection.data?.adapters;
+  const tabs: [StoreTab, string][] = [
+    ["kroger", "Kroger"],
+    ["instacart", "Instacart"],
+    ["satellites", "Satellites"],
+    ["offline", "Offline"],
+  ];
+
+  async function openKrogerLink() {
+    const res = await api.api.profile["kroger-login-url"].$get().catch(() => null);
+    if (!res?.ok) return void toast("Couldn't start Kroger connection — try again");
+    const { url } = (await res.json()) as { url: string };
+    window.open(url, "_blank", "noopener");
+  }
+
+  async function disconnect() {
+    const res = await appFetch("/api/profile/kroger-connection", { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) return void toast("Couldn't disconnect Kroger — try again");
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["store-adapters"] }),
+      qc.invalidateQueries({ queryKey: ["profile"] }),
+      qc.invalidateQueries({ queryKey: ["grocery", "to-buy", "enriched"] }),
+    ]);
+    window.dispatchEvent(new Event("yamp:store-adapter-changed"));
+    toast("Kroger disconnected");
+  }
+
+  return (
+    <section className="card prof-card prof-card-wide store-card rounded-xl border bg-card p-6" data-testid="store-card">
+      <header>
+        <h3>Store</h3>
+        <p>Choose how this household shops. Connection state is checked live.</p>
+      </header>
+      {!online ? <p className="store-offline-hint">You're offline — store changes need the server.</p> : null}
+      <nav className="store-tabs" role="tablist" aria-label="Store adapters">
+        {tabs.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`store-tab${tab === key ? " on" : ""}`}
+            data-testid={`store-tab-${key}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      {!adapters ? <p className="muted">Loading store adapters…</p> : null}
+      {adapters && tab === "kroger" ? (
+        <section className="store-panel" role="tabpanel" data-testid="store-panel-kroger">
+          <div className="store-summary">
+            <div>
+              <strong>{adapters.kroger.linked ? "Connected" : "Not connected"}</strong>
+              {adapters.kroger.preferred ? (
+                <p data-testid="kroger-preferred">
+                  {adapters.kroger.preferred.name}
+                  {adapters.kroger.preferred.address ? <span>{adapters.kroger.preferred.address}</span> : null}
+                </p>
+              ) : (
+                <p className="muted">Choose a preferred Kroger location before ordering.</p>
+              )}
+            </div>
+            <div className="store-actions">
+              <Button size="sm" variant="outline" disabled={!online} onClick={() => void openKrogerLink()}>
+                {adapters.kroger.linked ? "Reconnect" : "Connect"}
+              </Button>
+              {adapters.kroger.linked ? (
+                <Button size="sm" variant="ghost" disabled={!online} onClick={() => void disconnect()}>
+                  Disconnect
+                </Button>
+              ) : null}
+              <Button size="sm" data-testid="kroger-location-open" disabled={!online} onClick={() => setPickerOpen(true)}>
+                Choose location
+              </Button>
+            </div>
+          </div>
+          <KrogerLocationModal open={pickerOpen} onOpenChange={setPickerOpen} />
+        </section>
+      ) : null}
+      {adapters && tab === "instacart" ? (
+        <section className="store-panel" role="tabpanel" data-testid="store-panel-instacart">
+          <strong>Coming later</strong>
+          <p>Instacart account linking and retailer availability are not available yet.</p>
+        </section>
+      ) : null}
+      {adapters && tab === "satellites" ? (
+        <section className="store-panel" role="tabpanel" data-testid="store-panel-satellites">
+          <strong>Freshness unavailable</strong>
+          <p>Status will appear after a Satellite reports its retailer-session freshness.</p>
+          {adapters.satellites.stores.map((store) => (
+            <p key={store.slug}>{store.name} · status unavailable</p>
+          ))}
+          <p className="store-links">
+            <Link to="/profile">Open Satellites</Link>
+            <a href="https://github.com/caseyWebb/yet-another-meal-planner/blob/main/docs/SELF_HOSTING.md" target="_blank" rel="noreferrer">Adapter authoring guide</a>
+          </p>
+        </section>
+      ) : null}
+      {adapters && tab === "offline" ? (
+        <OfflineStorePanel adapter={adapters.offline} online={online} qc={qc} />
+      ) : null}
+    </section>
+  );
+}
+
+function OfflineStorePanel({
+  adapter,
+  online,
+  qc,
+}: {
+  adapter: StoreAdapterProjection["adapters"]["offline"];
+  online: boolean;
+  qc: QueryClient;
+}) {
+  return (
+    <section className="store-panel" role="tabpanel" data-testid="store-panel-offline">
+      {adapter.selection_unavailable ? (
+        <p role="alert">Your selected Offline store ({adapter.selected_slug}) is no longer available.</p>
+      ) : null}
+      {adapter.stores.length ? (
+        <ul className="offline-store-list">
+          {adapter.stores.map((store) => (
+            <li key={store.slug} data-testid="offline-store" data-store-slug={store.slug}>
+              <span>
+                <strong>{store.name}</strong>{store.label ? ` · ${store.label}` : ""}
+                {store.address ? <small>{store.address}</small> : null}
+              </span>
+              {store.selected ? (
+                <span className="store-selected">Selected</span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!online}
+                  onClick={() => void patchPreferences(qc, { stores: { primary: store.slug, fulfillment: null } }, true)}
+                >
+                  Use this store
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No Offline grocery stores are registered yet.</p>
+      )}
+    </section>
+  );
+}
+
+function KrogerLocationModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient();
+  const [zip, setZip] = React.useState("");
+  const [locations, setLocations] = React.useState<
+    NonNullable<StoreAdapterProjection["adapters"]["kroger"]["preferred"]>[]
+  >([]);
+  const [state, setState] = React.useState<"idle" | "loading" | "empty" | "error">("idle");
+  const [message, setMessage] = React.useState("");
+
+  async function search(event: React.FormEvent) {
+    event.preventDefault();
+    if (!/^\d{5}$/.test(zip)) {
+      setState("error");
+      setMessage("Enter exactly five ZIP digits.");
+      return;
+    }
+    setState("loading");
+    const res = await appFetch(`/api/profile/kroger-locations?zip=${encodeURIComponent(zip)}`).catch(() => null);
+    if (!res?.ok) {
+      setState("error");
+      setMessage(res ? (await apiError(res)).message : "Search failed — try again.");
+      return;
+    }
+    const body = (await res.json()) as { locations: (typeof locations)[number][] };
+    setLocations(body.locations);
+    setState(body.locations.length ? "idle" : "empty");
+  }
+
+  async function choose(location: (typeof locations)[number]) {
+    const saved = await patchPreferences(
+      qc,
+      {
+        stores: {
+          primary: "kroger",
+          fulfillment: null,
+          location_zip: location.zip,
+          preferred_location: location.location_id,
+          preferred_location_name: location.name,
+          preferred_location_address: location.address,
+        },
+      },
+      true,
+    );
+    if (saved) onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="kroger-location-modal" data-testid="kroger-location-modal">
+        <DialogHeader>
+          <DialogTitle>Choose a Kroger location</DialogTitle>
+          <DialogDescription>Search by ZIP, then select one exact provider location.</DialogDescription>
+        </DialogHeader>
+        <form className="kroger-location-search" onSubmit={(event) => void search(event)}>
+          <label htmlFor="kroger-location-zip">ZIP code</label>
+          <div>
+            <input id="kroger-location-zip" className="input" inputMode="numeric" maxLength={5} value={zip} onChange={(event) => setZip(event.target.value)} />
+            <Button type="submit" disabled={state === "loading"}>{state === "loading" ? "Searching…" : "Search"}</Button>
+          </div>
+        </form>
+        {state === "empty" ? <p data-testid="kroger-location-empty">No Kroger locations were returned for that ZIP.</p> : null}
+        {state === "error" ? <p role="alert" data-testid="kroger-location-error">{message}</p> : null}
+        {locations.length ? (
+          <ul className="kroger-location-results">
+            {locations.map((location) => (
+              <li key={location.location_id}>
+                <button type="button" data-testid="kroger-location-result" data-location-id={location.location_id} onClick={() => void choose(location)}>
+                  <strong>{location.name}</strong><span>{location.address}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

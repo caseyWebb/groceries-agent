@@ -20,6 +20,18 @@ export class GroceryPage extends AppPage {
     await expect(this.page.getByTestId("grocery-page")).toBeVisible();
   }
 
+  launcher(): Locator {
+    return this.page.getByTestId("store-launcher");
+  }
+
+  launcherEntry(id: string): Locator {
+    return this.launcher().locator(`[data-testid="store-launcher-entry"][data-launcher-id="${id}"]`);
+  }
+
+  async launch(id: string): Promise<void> {
+    await this.launcherEntry(id).getByRole("button").click();
+  }
+
   // --- provisioning (through the browser's session fetch) -----------------------
 
   /** Converge the meal plan to EXACTLY these recipes (the derivation's input). */

@@ -4,6 +4,7 @@ import {
   ReauthRequiredError,
   toToolError,
   __resetUserTokenCache,
+  evictUserTokenCache,
   type KvStore,
   type UserTokenCache,
 } from "../src/kroger-user.js";
@@ -134,6 +135,27 @@ describe("Kroger user-context client — token rotation", () => {
 });
 
 describe("Kroger user-context client — refresh coalescing", () => {
+  it("evicts only the named tenant after access tokens are cached", async () => {
+    __resetUserTokenCache();
+    const kv = memKv({ "kroger:refresh:alice": "RA", "kroger:refresh:bob": "RB" });
+    let posts = 0;
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      if (!url.startsWith(TOKEN_URL)) return new Response(null, { status: 204 });
+      posts++;
+      const refresh = new URLSearchParams(String(init?.body)).get("refresh_token");
+      return json({ access_token: `A-${refresh}`, refresh_token: `${refresh}-next`, expires_in: 1800 });
+    }) as unknown as typeof fetch;
+    const alice = createKrogerUserClient(env, kv, "alice", { fetch: fetchMock, now: () => 1000 });
+    const bob = createKrogerUserClient(env, kv, "bob", { fetch: fetchMock, now: () => 1000 });
+    await alice.getAccessToken();
+    await bob.getAccessToken();
+    evictUserTokenCache("alice");
+    await kv.delete("kroger:refresh:alice");
+    await expect(createKrogerUserClient(env, kv, "alice", { fetch: fetchMock, now: () => 1000 }).getAccessToken()).rejects.toBeInstanceOf(ReauthRequiredError);
+    await expect(bob.getAccessToken()).resolves.toBe("A-RB");
+    expect(posts).toBe(2);
+  });
+
   it("coalesces simultaneous getAccessToken calls into exactly ONE token POST", async () => {
     const kv = memKv({ [REFRESH_KEY]: "R0" });
     let tokenPosts = 0;

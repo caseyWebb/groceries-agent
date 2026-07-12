@@ -44,7 +44,7 @@ import { PERISHABLE, STALE_DAYS, daysSince } from "../lib/format";
 import {
   fetchSubstitutions,
   useGrocery,
-  useProfile,
+  useStoreAdapters,
   useToBuy,
   type GroceryRow,
   type LineSuggestions,
@@ -54,6 +54,7 @@ import {
   type SiblingSuggestion,
   type SubstitutionAlternative,
   type ToBuyLine,
+  type StoreAdapterProjection,
 } from "../lib/data";
 
 export const Route = createFileRoute("/_app/grocery")({
@@ -173,7 +174,7 @@ function GroceryPage() {
   // render under both modes, not just aisle mode.
   const [groupMode, setGroupMode] = React.useState<"category" | "aisle">("category");
   const toBuy = useToBuy(true);
-  const profile = useProfile();
+  const adapters = useStoreAdapters();
   const qc = useQueryClient();
   const online = useOnline();
   const setMutation = useGrocerySet();
@@ -197,10 +198,19 @@ function GroceryPage() {
   // stale-cart section renders the curated label, never a raw canonical id.
   const inCartDisplayByName = new Map((view?.in_cart ?? []).map((l) => [l.name, l.display_name] as const));
 
-  // The order affordance renders only for a Kroger primary with a linked account (D7).
-  const stores = (profile.data?.preferences?.stores ?? {}) as { primary?: string };
-  const krogerPrimary = (stores.primary ?? "kroger").toLowerCase() === "kroger";
-  const krogerReady = krogerPrimary && profile.data?.kroger.linked === true;
+  const launcher = adapters.data?.launcher ?? [];
+  const launcherSignature = JSON.stringify(launcher);
+  const priorLauncher = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    const discard = () => setOrderOpen(false);
+    window.addEventListener("yamp:store-adapter-changed", discard);
+    return () => window.removeEventListener("yamp:store-adapter-changed", discard);
+  }, []);
+  React.useEffect(() => {
+    if (priorLauncher.current !== null && priorLauncher.current !== launcherSignature) setOrderOpen(false);
+    priorLauncher.current = launcherSignature;
+  }, [launcherSignature]);
 
   function dismiss(keys: string[]) {
     setDismissed((cur) => new Set([...cur, ...keys]));
@@ -272,6 +282,7 @@ function GroceryPage() {
         title="Grocery list"
         sub={`${lines.length} to buy${inCart.length ? ` · ${inCart.length} in cart` : ""}.`}
       />
+      <StoreLauncher entries={launcher} online={online} onOrder={() => setOrderOpen(true)} />
       {lines.length > 0 ? (
         <div className="g-toolbar">
           <div className="g-groupmode" data-testid="group-mode">
@@ -283,19 +294,7 @@ function GroceryPage() {
               onChange={setGroupMode}
             />
           </div>
-          {/* Ordering is ONLINE-ONLY (D5/D10): disabled with a hint offline, never
-              queued — reconnect re-enables, nothing auto-fires. */}
-          {krogerReady ? (
-            <Button
-              size="sm"
-              data-testid="order-open"
-              disabled={!online}
-              title={online ? undefined : "You're offline — ordering needs Kroger"}
-              onClick={() => setOrderOpen(true)}
-            >
-              <IconCart /> Add all to Kroger cart
-            </Button>
-          ) : null}
+          <span className="muted small">Shop manually from this list at any store.</span>
         </div>
       ) : null}
       {orderOpen ? (
@@ -380,6 +379,54 @@ function GroceryPage() {
         </>
       )}
     </div>
+  );
+}
+
+function StoreLauncher({
+  entries,
+  online,
+  onOrder,
+}: {
+  entries: StoreAdapterProjection["launcher"];
+  online: boolean;
+  onOrder: () => void;
+}) {
+  const reason = (entry: StoreAdapterProjection["launcher"][number]) => {
+    switch (entry.disabled_reason) {
+      case "connect_kroger": return "Connect Kroger in Profile first.";
+      case "choose_kroger_store": return "Choose a Kroger location in Profile first.";
+      case "satellite_freshness_unavailable": return "Session freshness is unavailable; reopen from Satellites after it reports.";
+      case "store_walk_unavailable": return "Store walk is not available in this version yet.";
+      default: return "This path is unavailable.";
+    }
+  };
+  return (
+    <section className="store-launcher" data-testid="store-launcher" aria-label="Shopping options">
+      <div className="store-launcher-head"><strong>Shop this list</strong><span>Manual shopping always remains available.</span></div>
+      {entries.length ? (
+        <ul>
+          {entries.map((entry) => {
+            const actionable = entry.enabled && entry.mode === "online_order" && online;
+            return (
+              <li key={entry.id} data-testid="store-launcher-entry" data-launcher-id={entry.id} data-mode={entry.mode}>
+                <span><strong>{entry.store?.name ?? "Kroger"}</strong><small>{entry.mode.replaceAll("_", " ")}</small></span>
+                <Button
+                  size="sm"
+                  variant={actionable ? "default" : "outline"}
+                  data-testid={entry.mode === "online_order" ? "order-open" : undefined}
+                  disabled={!actionable}
+                  title={!online ? "You're offline — store actions need the server" : entry.enabled ? undefined : reason(entry)}
+                  onClick={actionable ? onOrder : undefined}
+                >
+                  {entry.mode === "online_order" ? <IconCart /> : null}
+                  {entry.enabled ? "Open" : reason(entry)}
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p className="muted">Configure a store adapter in Profile, or shop manually from the list below.</p>}
+    </section>
   );
 }
 

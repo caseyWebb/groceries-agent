@@ -9,3 +9,39 @@
 @import "@yamp/ui/cookbook.css";
 @source "./";
 @source "../../ui/src";
+/* Shared Store adapter card + exact Kroger picker (store-adapters-card). */
+.store-card { grid-column: 1 / -1; }
+.store-tabs { display: flex; gap: .35rem; overflow-x: auto; margin: 1rem 0; padding-bottom: .25rem; }
+.store-tab { border: 0; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); padding: .5rem .85rem; font: inherit; white-space: nowrap; cursor: pointer; }
+.store-tab.on { background: var(--primary); color: var(--primary-foreground); }
+.store-panel { min-height: 7rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.store-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.25rem; }
+.store-summary p { margin: .35rem 0 0; }
+.store-summary p span, .offline-store-list small, .kroger-location-results span { display: block; color: var(--muted-foreground); }
+.store-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+.store-offline-hint { border-radius: .5rem; background: var(--muted); color: var(--muted-foreground); padding: .6rem .75rem; }
+.store-links { display: flex; flex-wrap: wrap; gap: 1rem; }
+.offline-store-list, .kroger-location-results { display: grid; gap: .65rem; margin: 0; padding: 0; list-style: none; }
+.offline-store-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border: 1px solid var(--border); border-radius: .65rem; padding: .75rem; }
+.store-selected { color: var(--primary); font-weight: 650; }
+.kroger-location-modal { max-height: min(42rem, 90vh); overflow-y: auto; }
+.kroger-location-search label { display: block; margin-bottom: .35rem; font-weight: 650; }
+.kroger-location-search > div { display: grid; grid-template-columns: 1fr auto; gap: .5rem; }
+.kroger-location-results button { width: 100%; border: 1px solid var(--border); border-radius: .65rem; background: var(--card); color: inherit; padding: .8rem; text-align: left; cursor: pointer; }
+.kroger-location-results button:hover, .kroger-location-results button:focus-visible { border-color: var(--primary); outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .store-summary, .offline-store-list li { align-items: stretch; flex-direction: column; }
+  .store-actions { justify-content: stretch; }
+  .store-actions > * { flex: 1 1 auto; }
+}
+
+.store-launcher { margin: 0 0 1rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--card); padding: 1rem; }
+.store-launcher-head { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: .65rem; }
+.store-launcher-head span { color: var(--muted-foreground); font-size: .85rem; }
+.store-launcher ul { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+.store-launcher li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--border); padding-top: .55rem; }
+.store-launcher li small { display: block; color: var(--muted-foreground); text-transform: capitalize; }
+@media (max-width: 640px) {
+  .store-launcher-head, .store-launcher li { align-items: stretch; flex-direction: column; }
+}

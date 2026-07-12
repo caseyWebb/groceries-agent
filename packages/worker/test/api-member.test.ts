@@ -124,6 +124,7 @@ function memberEnv(tables: Record<string, Record<string, unknown>[]> = {}) {
       ingredient_identity: [],
       ingredient_alias: [],
       novel_ingredient_terms: [],
+      stores: [],
       ...tables,
     },
   });
@@ -132,6 +133,8 @@ function memberEnv(tables: Record<string, Record<string, unknown>[]> = {}) {
     ...(d1.env as object),
     TENANT_KV: tenantKv,
     KROGER_KV: memKv(),
+    KROGER_CLIENT_ID: "client-id",
+    KROGER_CLIENT_SECRET: "client-secret",
     TOOL_AE: { writeDataPoint: () => {} },
   } as unknown as Env;
   return { env, d1, tenantKv };
@@ -206,6 +209,9 @@ const MEMBER_ENDPOINTS: [string, string][] = [
   ["PUT", "/api/profile/diet-principles"],
   ["GET", "/api/profile/retrospective"],
   ["GET", "/api/profile/kroger-login-url"],
+  ["GET", "/api/profile/store-adapters"],
+  ["GET", "/api/profile/kroger-locations?zip=76104"],
+  ["DELETE", "/api/profile/kroger-connection"],
   ["GET", "/api/vibes"],
   ["GET", "/api/vibes/weeknight"],
   ["POST", "/api/vibes"],
@@ -592,6 +598,64 @@ describe("log area", () => {
 });
 
 describe("profile area", () => {
+  it("serves projection parity and disconnects idempotently without clearing the preferred location", async () => {
+    const { env } = memberEnv({
+      profile: [{
+        tenant: "casey",
+        stores: JSON.stringify({
+          primary: "kroger",
+          preferred_location: "01400943",
+          preferred_location_name: "Kroger Marketplace",
+          preferred_location_address: "123 Main St, Fort Worth, TX 76104",
+          location_zip: "76104",
+        }),
+      }],
+      stores: [{ slug: "aldi", name: "Aldi", domain: "grocery", extra: JSON.stringify({ address: "1 Oak St" }) }],
+    });
+    (env.KROGER_KV as unknown as { store: Map<string, string> }).store.set("kroger:refresh:casey", "secret");
+    const cookie = await loggedIn(env);
+    const projected = await get(env, "/api/profile/store-adapters", cookie);
+    expect(projected.status).toBe(200);
+    const body = (await projected.json()) as { adapters: { kroger: { linked: boolean; preferred: { location_id: string } } }; launcher: { id: string }[] };
+    expect(body.adapters.kroger).toMatchObject({ linked: true, preferred: { location_id: "01400943" } });
+    expect(body.launcher[0].id).toBe("kroger");
+    expect(JSON.stringify(body)).not.toContain("secret");
+
+    for (let i = 0; i < 2; i++) {
+      const disconnected = await send(env, "DELETE", "/api/profile/kroger-connection", cookie);
+      expect(disconnected.status).toBe(200);
+      expect(await disconnected.json()).toEqual({ linked: false });
+    }
+    const after = (await (await get(env, "/api/profile/store-adapters", cookie)).json()) as { adapters: { kroger: { linked: boolean; preferred: { location_id: string } } } };
+    expect(after.adapters.kroger).toMatchObject({ linked: false, preferred: { location_id: "01400943" } });
+  });
+
+  it("searches several/zero Kroger locations and distinguishes validation/upstream errors", async () => {
+    const { env } = memberEnv();
+    const cookie = await loggedIn(env);
+    let mode: "many" | "empty" | "error" = "many";
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/token")) return new Response(JSON.stringify({ access_token: "public-token", expires_in: 1800 }), { status: 200, headers: { "content-type": "application/json" } });
+      if (mode === "error") return new Response("nope", { status: 503 });
+      return new Response(JSON.stringify({ data: mode === "empty" ? [] : [
+        { locationId: "2", name: "Near", address: { addressLine1: "2 Main", city: "Fort Worth", state: "TX", zipCode: "76104" } },
+        { locationId: "3", name: "Next", address: { addressLine1: "3 Main", city: "Fort Worth", state: "TX", zipCode: "76104" } },
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const many = await get(env, "/api/profile/kroger-locations?zip=76104", cookie);
+    expect((await many.json()) as unknown).toMatchObject({ locations: [{ location_id: "2" }, { location_id: "3" }] });
+    mode = "empty";
+    expect(await (await get(env, "/api/profile/kroger-locations?zip=76104", cookie)).json()).toEqual({ locations: [] });
+    const invalid = await get(env, "/api/profile/kroger-locations?zip=7610x", cookie);
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()) as unknown).toMatchObject({ error: "validation_failed" });
+    mode = "error";
+    const upstream = await get(env, "/api/profile/kroger-locations?zip=76104", cookie);
+    expect(upstream.status).toBe(503);
+    expect((await upstream.json()) as unknown).toMatchObject({ error: "upstream_unavailable" });
+  });
+
   it("assembles the profile with the Kroger link state from KV", async () => {
     const { env } = memberEnv();
     (env.KROGER_KV as unknown as { store: Map<string, string> }).store.set("kroger:refresh:casey", "tok");

@@ -101,6 +101,26 @@ export interface SeedLiterals {
       readonly ladder: { readonly term: string; readonly tiers: readonly (readonly string[])[] };
       readonly dontCare: { readonly term: string };
     };
+    readonly storeAdapters: {
+      readonly kroger: {
+        readonly locationId: string;
+        readonly name: string;
+        readonly address: string;
+        readonly zip: string;
+      };
+      readonly search: readonly {
+        readonly location_id: string;
+        readonly name: string;
+        readonly address: string;
+        readonly zip: string;
+      }[];
+      readonly offline: readonly {
+        readonly slug: string;
+        readonly name: string;
+        readonly label: string;
+        readonly address: string;
+      }[];
+    };
     /** Unified cookbook browse fixtures (cookbook-unified-browse): `noTime` has NO
      *  time_total (an active time cap must exclude it), and `italian` is what
      *  `cuisine=italian` narrows the corpus to. */

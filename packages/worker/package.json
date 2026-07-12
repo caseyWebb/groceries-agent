@@ -11,7 +11,8 @@
   "exports": {
     "./api": "./src/api/app.ts",
     "./admin-api": "./src/admin/app.ts",
-    "./order-shapes": "./src/order-shapes.ts"
+    "./order-shapes": "./src/order-shapes.ts",
+    "./store-adapter-shapes": "./src/store-adapter-shapes.ts"
   },
   "scripts": {
     "dev": "wrangler dev",

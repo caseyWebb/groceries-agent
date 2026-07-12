@@ -16,6 +16,11 @@ import { readPreferences, readProfile, setProfileFields } from "../profile-db.js
 import { loadRetrospective } from "../cooking-tools.js";
 import { buildKrogerConsentUrl } from "../oauth.js";
 import { refreshKeyFor, type KvStore } from "../kroger-user.js";
+import {
+  disconnectKrogerConnection,
+  loadStoreAdapterProjection,
+  searchKrogerLocations,
+} from "../store-adapters.js";
 
 /** The markdown field's conditional-write representation (what its GET serves). */
 async function markdownDoc(
@@ -84,4 +89,15 @@ export const profileArea = new Hono<ApiEnv>()
     const origin = new URL(c.req.url).origin;
     const url = await buildKrogerConsentUrl(c.env.KROGER_KV as unknown as KvStore, origin, tenant.id);
     return c.json({ url });
+  })
+  .get("/profile/store-adapters", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    return c.json(await loadStoreAdapterProjection(c.env, tenant.id));
+  })
+  .get("/profile/kroger-locations", requireSession, async (c) => {
+    return c.json(await searchKrogerLocations(c.env, c.req.query("zip") ?? ""));
+  })
+  .delete("/profile/kroger-connection", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    return c.json(await disconnectKrogerConnection(c.env, tenant.id));
   });

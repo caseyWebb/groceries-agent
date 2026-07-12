@@ -94,6 +94,13 @@ function tenantCache(tenantId: string): UserTokenCache {
   return c;
 }
 
+/** Evict one tenant's isolate-held access token and in-flight refresh slot. The
+ * detached promise may settle, but its cache object is no longer reachable by a
+ * future client, so disconnect takes effect immediately without cross-tenant impact. */
+export function evictUserTokenCache(tenantId: string): void {
+  moduleCaches.delete(tenantId);
+}
+
 export interface KrogerUserClientOptions {
   fetch?: typeof fetch;
   cache?: UserTokenCache;

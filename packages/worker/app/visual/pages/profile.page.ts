@@ -66,6 +66,14 @@ export class ProfilePage extends AppPage {
         // no-op when it was never added), so a retry starts from the seed's two families only.
         pasta: null,
       },
+      stores: {
+        primary: "kroger",
+        fulfillment: null,
+        preferred_location: SEED.app.storeAdapters.kroger.locationId,
+        preferred_location_name: SEED.app.storeAdapters.kroger.name,
+        preferred_location_address: SEED.app.storeAdapters.kroger.address,
+        location_zip: SEED.app.storeAdapters.kroger.zip,
+      },
     };
     const status = await this.page.evaluate(async (p: Record<string, unknown>) => {
       const read = await fetch("/api/profile/preferences");
@@ -197,6 +205,82 @@ export class ProfilePage extends AppPage {
   async expectBudgetUnset(): Promise<void> {
     await expect(this.budgetInput()).toHaveValue("");
     await expect(this.budgetField().getByTestId("budget-off")).toBeVisible();
+  }
+
+  // --- prefs tab: shared Store adapter card ------------------------------------
+
+  storeCard(): Locator {
+    return this.page.getByTestId("store-card");
+  }
+
+  async openStoreTab(adapter: "kroger" | "instacart" | "satellites" | "offline"): Promise<void> {
+    await this.storeCard().getByTestId(`store-tab-${adapter}`).click();
+  }
+
+  storePanel(adapter: "kroger" | "instacart" | "satellites" | "offline"): Locator {
+    return this.storeCard().getByTestId(`store-panel-${adapter}`);
+  }
+
+  async openKrogerPicker(): Promise<void> {
+    await this.storePanel("kroger").getByTestId("kroger-location-open").click();
+  }
+
+  krogerModal(): Locator {
+    return this.page.getByTestId("kroger-location-modal");
+  }
+
+  async searchKrogerZip(zip: string): Promise<void> {
+    await this.krogerModal().getByLabel("ZIP code").fill(zip);
+    await this.krogerModal().getByRole("button", { name: "Search" }).click();
+  }
+
+  async chooseKrogerLocation(locationId: string): Promise<void> {
+    await this.awaitPreferencesSave(() =>
+      this.krogerModal().locator(`[data-testid="kroger-location-result"][data-location-id="${locationId}"]`).click(),
+    );
+  }
+
+  async cancelKrogerPicker(): Promise<void> {
+    await this.krogerModal().getByRole("button", { name: "Cancel" }).click();
+  }
+
+  async routeKrogerLocations(
+    response: { locations: readonly { location_id: string; name: string; address: string; zip: string }[] } | { error: string; message: string },
+    status = 200,
+  ): Promise<void> {
+    await this.page.route("**/api/profile/kroger-locations?zip=*", (route) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(response) }),
+    );
+  }
+
+  async clearKrogerLocationsRoute(): Promise<void> {
+    await this.page.unroute("**/api/profile/kroger-locations?zip=*");
+  }
+
+  async setStores(stores: Record<string, unknown>): Promise<void> {
+    const status = await this.page.evaluate(async (patch: Record<string, unknown>) => {
+      const read = await fetch("/api/profile/preferences");
+      const etag = read.headers.get("etag") ?? "";
+      const res = await fetch("/api/profile/preferences", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "X-App-Csrf": "1", "If-Match": etag },
+        body: JSON.stringify({ patch: { stores: patch } }),
+      });
+      return res.status;
+    }, stores);
+    if (status !== 200) throw new Error(`store preference write failed (${status})`);
+  }
+
+  offlineStore(slug: string): Locator {
+    return this.storePanel("offline").locator(`[data-testid="offline-store"][data-store-slug="${slug}"]`);
+  }
+
+  async selectOfflineStore(slug: string): Promise<void> {
+    await this.awaitPreferencesSave(() => this.offlineStore(slug).getByRole("button", { name: "Use this store" }).click());
+  }
+
+  async disconnectKroger(): Promise<void> {
+    await this.storePanel("kroger").getByRole("button", { name: "Disconnect" }).click();
   }
 
   // --- prefs tab: the Preferred-brands tier card ----------------------------------
