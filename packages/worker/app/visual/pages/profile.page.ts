@@ -3,7 +3,7 @@
 // (merge-patch knobs — per-meal cadence steppers + the weekly-budget control), and meal vibes
 // (the meal-grouped palette with the pinned indicator + inline suggestions — row-attached
 // wands and per-meal-group footer cards, which replaced the standalone reconciliation queue).
-import { expect } from "@playwright/test";
+import { expect, type Route } from "@playwright/test";
 import { AppPage, type Locator } from "./base.page";
 import { SEED } from "../../../admin/visual/seed.mjs";
 
@@ -65,6 +65,14 @@ export class ProfilePage extends AppPage {
         // The remove-family spec adds a "pasta" family; a merge-patch `null` deletes it (a
         // no-op when it was never added), so a retry starts from the seed's two families only.
         pasta: null,
+      },
+      stores: {
+        primary: "kroger",
+        fulfillment: null,
+        preferred_location: SEED.app.storeAdapters.kroger.locationId,
+        preferred_location_name: SEED.app.storeAdapters.kroger.name,
+        preferred_location_address: SEED.app.storeAdapters.kroger.address,
+        location_zip: SEED.app.storeAdapters.kroger.zip,
       },
     };
     const status = await this.page.evaluate(async (p: Record<string, unknown>) => {
@@ -197,6 +205,155 @@ export class ProfilePage extends AppPage {
   async expectBudgetUnset(): Promise<void> {
     await expect(this.budgetInput()).toHaveValue("");
     await expect(this.budgetField().getByTestId("budget-off")).toBeVisible();
+  }
+
+  // --- prefs tab: shared Store adapter card ------------------------------------
+
+  storeCard(): Locator {
+    return this.page.getByTestId("store-card");
+  }
+
+  async openStoreTab(adapter: "kroger" | "instacart" | "satellites" | "offline"): Promise<void> {
+    await this.storeCard().getByTestId(`store-tab-${adapter}`).click();
+  }
+
+  storePanel(adapter: "kroger" | "instacart" | "satellites" | "offline"): Locator {
+    return this.storeCard().getByTestId(`store-panel-${adapter}`);
+  }
+
+  async openKrogerPicker(): Promise<void> {
+    await this.storePanel("kroger").getByTestId("kroger-location-open").click();
+  }
+
+  krogerModal(): Locator {
+    return this.page.getByTestId("kroger-location-modal");
+  }
+
+  async searchKrogerZip(zip: string): Promise<void> {
+    await this.krogerModal().getByLabel("ZIP code").fill(zip);
+    await this.krogerModal().getByRole("button", { name: "Search" }).click();
+  }
+
+  async submitKrogerZipWithEnter(zip: string): Promise<void> {
+    await this.krogerModal().getByLabel("ZIP code").fill(zip);
+    await this.krogerModal().getByLabel("ZIP code").press("Enter");
+  }
+
+  async chooseKrogerLocation(locationId: string): Promise<void> {
+    await this.awaitPreferencesSave(() =>
+      this.krogerModal().locator(`[data-testid="kroger-location-result"][data-location-id="${locationId}"]`).click(),
+    );
+  }
+
+  async cancelKrogerPicker(): Promise<void> {
+    await this.krogerModal().getByRole("button", { name: "Cancel" }).click();
+  }
+
+  async routeKrogerLocations(
+    response: { locations: readonly { location_id: string; name: string; address: string; zip: string }[] } | { error: string; message: string },
+    status = 200,
+  ): Promise<void> {
+    await this.page.route("**/api/profile/kroger-locations?zip=*", (route) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(response) }),
+    );
+  }
+
+  async clearKrogerLocationsRoute(): Promise<void> {
+    await this.page.unroute("**/api/profile/kroger-locations?zip=*");
+  }
+
+  async routeOverlappingKrogerLocations(
+    firstZip: string,
+    first: { locations: readonly { location_id: string; name: string; address: string; zip: string }[] },
+    secondZip: string,
+    second: { locations: readonly { location_id: string; name: string; address: string; zip: string }[] },
+  ): Promise<void> {
+    let firstRoute: Route | null = null;
+    await this.page.route("**/api/profile/kroger-locations?zip=*", async (route) => {
+      const encodedZip = route.request().url().match(/[?&]zip=([^&]+)/)?.[1];
+      const zip = encodedZip === undefined ? null : decodeURIComponent(encodedZip);
+      if (zip === firstZip) {
+        firstRoute = route;
+        return;
+      }
+      if (zip === secondZip) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(second) });
+        await firstRoute?.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(first) }).catch(() => {});
+        return;
+      }
+      await route.fallback();
+    });
+  }
+
+  async routeKrogerConnect(url: string): Promise<void> {
+    await this.page.route("**/api/profile/kroger-login-url", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ url }) }),
+    );
+  }
+
+  async connectKroger(): Promise<void> {
+    await this.storePanel("kroger").getByRole("button", { name: /^(Connect|Reconnect)$/ }).click();
+  }
+
+  async routeDisconnectProjection(): Promise<void> {
+    let linked = true;
+    const kroger = SEED.app.storeAdapters.kroger;
+    await this.page.route("**/api/profile/store-adapters", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          adapters: {
+            kroger: { kind: "kroger", linked, preferred: { location_id: kroger.locationId, name: kroger.name, address: kroger.address, zip: kroger.zip } },
+            instacart: { kind: "instacart", state: "coming_soon" },
+            satellites: { kind: "satellites", state: "freshness_unavailable", stores: [] },
+            offline: { kind: "offline", stores: [], selected_slug: null, selection_unavailable: false },
+          },
+          launcher: [{
+            id: "kroger",
+            adapter: "kroger",
+            mode: "online_order",
+            store: { slug: kroger.locationId, name: kroger.name },
+            enabled: linked,
+            disabled_reason: linked ? null : "connect_kroger",
+          }],
+        }),
+      }),
+    );
+    await this.page.route("**/api/profile/kroger-connection", (route) => {
+      linked = false;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ linked: false }) });
+    });
+  }
+
+  async grocerySnapshot(): Promise<unknown> {
+    return this.page.evaluate(async () => (await fetch("/api/grocery")).json());
+  }
+
+  async setStores(stores: Record<string, unknown>): Promise<void> {
+    const status = await this.page.evaluate(async (patch: Record<string, unknown>) => {
+      const read = await fetch("/api/profile/preferences");
+      const etag = read.headers.get("etag") ?? "";
+      const res = await fetch("/api/profile/preferences", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "X-App-Csrf": "1", "If-Match": etag },
+        body: JSON.stringify({ patch: { stores: patch } }),
+      });
+      return res.status;
+    }, stores);
+    if (status !== 200) throw new Error(`store preference write failed (${status})`);
+  }
+
+  offlineStore(slug: string): Locator {
+    return this.storePanel("offline").locator(`[data-testid="offline-store"][data-store-slug="${slug}"]`);
+  }
+
+  async selectOfflineStore(slug: string): Promise<void> {
+    await this.awaitPreferencesSave(() => this.offlineStore(slug).getByRole("button", { name: "Use this store" }).click());
+  }
+
+  async disconnectKroger(): Promise<void> {
+    await this.storePanel("kroger").getByRole("button", { name: "Disconnect" }).click();
   }
 
   // --- prefs tab: the Preferred-brands tier card ----------------------------------

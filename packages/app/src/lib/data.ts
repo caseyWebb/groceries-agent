@@ -24,6 +24,7 @@ import type {
   SubstitutionAlternative,
   SiblingSuggestion,
 } from "@yamp/worker/order-shapes";
+import type { StoreAdapterProjection } from "@yamp/worker/store-adapter-shapes";
 
 export type {
   ToBuyLine,
@@ -40,6 +41,7 @@ export type {
   LineSuggestions,
   SubstitutionAlternative,
   SiblingSuggestion,
+  StoreAdapterProjection,
 };
 
 /** Plan §6 posture: near-live reads, no long client cache. */
@@ -389,6 +391,17 @@ export function useProfile() {
     queryKey: ["profile"],
     staleTime: STALE_MS,
     queryFn: async () => jsonOf<ProfilePayload>(await api.api.profile.$get()),
+  });
+}
+
+/** Credential-bearing availability truth is deliberately non-persisted: this key
+ * is outside persist.ts's allowlist and refetches on the normal focus policy. */
+export function useStoreAdapters() {
+  return useQuery({
+    queryKey: ["store-adapters"],
+    staleTime: STALE_MS,
+    queryFn: async () =>
+      jsonOf<StoreAdapterProjection>(await appFetch("/api/profile/store-adapters")),
   });
 }
 

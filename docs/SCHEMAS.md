@@ -768,7 +768,7 @@ planning_cadence_days       INTEGER  -- how far out the caller plans/shops, in d
 lunch_strategy              TEXT     -- leftovers | buy | mixed
 ready_to_eat_default_action TEXT     -- opt-in | auto-add
 weekly_budget               REAL     -- household weekly grocery budget, dollars/week (0051); NULL or 0 = no budget line
-stores                      TEXT     -- JSON: {primary, preferred_location, location_zip}
+stores                      TEXT     -- JSON: {primary, fulfillment?, preferred_location, preferred_location_name?, preferred_location_address?, location_zip}
 dietary                     TEXT     -- JSON: {avoid[], limit[]}
 custom                      TEXT     -- JSON: arbitrary agent-added keys
 kitchen_notes               TEXT     -- JSON: freeform cook-reasoning notes (oven count, pan sizes)
@@ -789,7 +789,7 @@ Example rows (`profile`):
 
 | tenant | default_cooking_nights | planning_cadence_days | lunch_strategy | ready_to_eat_default_action | stores | dietary | freezer_capacity_estimate |
 |--------|----------------------|----------------------|----------------|----------------------------|--------|---------|--------------------------|
-| alice | 3 | 7 | leftovers | opt-in | {"primary":"kroger","preferred_location":"Kroger - 76104","location_zip":"76104"} | {"avoid":[],"limit":["cilantro"]} | moderate |
+| alice | 3 | 7 | leftovers | opt-in | {"primary":"kroger","preferred_location":"01400943","preferred_location_name":"Kroger Marketplace","preferred_location_address":"123 Main St, Fort Worth, TX 76104","location_zip":"76104"} | {"avoid":[],"limit":["cilantro"]} | moderate |
 
 Example rows (`brand_prefs`):
 
@@ -812,6 +812,12 @@ Example rows (`brand_prefs`):
 "Any brand" is a per-family **flag**, not a tier and not an absence — collapsing it into absence would delete the ask state, and a sentinel tier would put magic values in data. Exactly one representation exists per state: `{ tiers: [], any_brand: 0 }` expresses nothing and is rejected on write (`null` clears the family). Keys are the canonical id with spaces as underscores (`extra virgin olive oil` → resolve via the ingredient identity graph → `olive oil` → key `olive_oil`), unchanged by the tier model. The matcher consumes the ladder through the `readBrandPrefs` projection (tiers flattened in order; don't-care → `[]`), so an exhausted ladder without `any_brand` falls back to ambiguous.
 
 **`[stores].primary` is the fulfillment mode** (in-store-fulfillment). It is either the literal `kroger` (online mode — the agent flushes the grocery list with `place_order`, using `preferred_location` for the Kroger API) **or** a mapped store slug from `stores/` (walk mode — the agent runs the in-store walk for that store instead). The agent picks the flush from the resolved mode and SHALL NOT assume Kroger. Mode is a property of the **preference/trip, not the chain** — a store can be online-capable and/or walk-capable. **Naming a store for one trip** ("I'm going to the West 7th Tom Thumb") overrides the standing `primary` for that trip only, without rewriting it. An unknown store-slug `primary` is **not a hard failure** (preferences is parse-only curated config) — the agent resolves it conversationally (offer to map the store, or fall back to online). `preferred_location` stays meaningful in walk mode too (it still drives Kroger pricing for sale checks).
+
+For Kroger, `preferred_location` remains a string and stores the exact provider `locationId` after an explicit member selection. The additive `preferred_location_name` and `preferred_location_address` fields are display metadata from that result; `location_zip` is the selected result's five-digit ZIP. Legacy label/ZIP strings remain readable and resolvable, and converge only when the member picks an exact result. These are additive fields in the existing `stores` JSON column, so **no D1 migration is needed**.
+
+### Member store-adapter projection (secret-free wire)
+
+`GET /api/profile/store-adapters` returns the household projection assembled by `loadStoreAdapterProjection`: `adapters.kroger` (`linked` plus the exact preferred identity or null), the `instacart.state="coming_soon"` placeholder, `adapters.satellites` with configured stores and `session_fresh:null` under `state="freshness_unavailable"`, `adapters.offline` from grocery-domain rows in the shared `stores` registry, and ordered `launcher[]` entries. Launcher entries carry stable `adapter` (`kroger | satellite | offline`), `mode` (`online_order | satellite_cart_fill | store_walk`), `enabled`, and `disabled_reason` discriminants. The payload contains no OAuth token, refresh token, helper URL, or helper token.
 
 ## ingredient identity (shared corpus, D1)
 

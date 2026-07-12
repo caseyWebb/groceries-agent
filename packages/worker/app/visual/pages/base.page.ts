@@ -29,6 +29,10 @@ export abstract class AppPage {
   async captureForReview(name: string = this.area): Promise<void> {
     await this.page.screenshot({ path: `${SCREENSHOT_DIR}/${name}.png`, fullPage: true });
   }
+
+  async setViewport(width: number, height: number): Promise<void> {
+    await this.page.setViewportSize({ width, height });
+  }
 }
 
 export type { Locator, Page };

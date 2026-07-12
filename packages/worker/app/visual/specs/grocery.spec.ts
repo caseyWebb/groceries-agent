@@ -22,6 +22,33 @@ test("items group by category; household goods sit apart from groceries", async 
   await groceryPage.expectInCartGroup(G.inCart); // the seeded in_cart row
 });
 
+test("the launcher uses the shared projection: enabled Kroger, no Instacart", async ({ groceryPage }) => {
+  const kroger = SEED.app.storeAdapters.kroger;
+  await expect(groceryPage.launcherEntry("kroger")).toContainText(kroger.name);
+  await expect(groceryPage.launcherEntry("kroger").getByTestId("order-open")).toBeEnabled();
+  await expect(groceryPage.launcher()).not.toContainText("Instacart");
+  await groceryPage.captureForReview("grocery-store-launcher");
+  await groceryPage.setViewport(390, 844);
+  await groceryPage.captureForReview("grocery-store-launcher-mobile");
+});
+
+test("Satellite and Offline launcher modes degrade honestly and never mutate the list", async ({ groceryPage }) => {
+  const before = await groceryPage.rowStatus(G.active[0]);
+  const satellite = SEED.app.storeAdapters.offline[0];
+  await groceryPage.setStores({ primary: satellite.slug, fulfillment: "satellite" });
+  await groceryPage.goto();
+  await expect(groceryPage.launcherEntry(`satellite:${satellite.slug}`)).toContainText("Session freshness is unavailable");
+  await expect(groceryPage.launcherEntry(`satellite:${satellite.slug}`).getByRole("button")).toBeDisabled();
+  await expect(groceryPage.launcher()).not.toContainText("Instacart");
+
+  await groceryPage.setStores({ primary: satellite.slug, fulfillment: null });
+  await groceryPage.goto();
+  await expect(groceryPage.launcherEntry(`offline:${satellite.slug}`)).toContainText(satellite.name);
+  await expect(groceryPage.launcherEntry(`offline:${satellite.slug}`).getByRole("button")).toBeDisabled();
+  expect(await groceryPage.rowStatus(G.active[0])).toBe(before);
+  await groceryPage.setStores({ primary: "kroger", preferred_location: SEED.app.storeAdapters.kroger.locationId });
+});
+
 test("the in-cart control is an explicit set, both directions", async ({ groceryPage }) => {
   await groceryPage.toggleCart(G.active[1]);
   await groceryPage.expectInCartGroup(G.active[1]);

@@ -38,6 +38,54 @@ function freshCache(): KrogerCache {
 }
 
 describe("Kroger client", () => {
+  it("normalizes up to ten nearby locations in provider order", async () => {
+    const calls: string[] = [];
+    const fetchMock = (async (url: string) => {
+      calls.push(url);
+      if (url.startsWith(TOKEN_URL)) return json({ access_token: "T1", expires_in: 1800 });
+      return json({
+        data: [
+          { locationId: "2", name: "Second", address: { addressLine1: "2 Main", city: "Fort Worth", state: "TX", zipCode: "76104-1234" } },
+          { locationId: "1", name: "First", address: { addressLine1: "1 Main", city: "Fort Worth", state: "TX", zipCode: "76104" } },
+        ],
+      });
+    }) as unknown as typeof fetch;
+    const k = createKrogerClient(env, { fetch: fetchMock, cache: freshCache(), now: () => 1000, sleep: async () => {} });
+    await expect(k.locationsNearZip("76104", 99)).resolves.toEqual([
+      { location_id: "2", name: "Second", address: "2 Main, Fort Worth, TX, 76104", zip: "76104" },
+      { location_id: "1", name: "First", address: "1 Main, Fort Worth, TX, 76104", zip: "76104" },
+    ]);
+    expect(calls.find((url) => url.includes("/locations"))).toContain("filter.limit=10");
+  });
+
+  it("returns an empty nearby-location result unchanged", async () => {
+    const fetchMock = (async (url: string) =>
+      url.startsWith(TOKEN_URL) ? json({ access_token: "T1", expires_in: 1800 }) : json({ data: [] })) as unknown as typeof fetch;
+    const k = createKrogerClient(env, { fetch: fetchMock, cache: freshCache(), now: () => 1000, sleep: async () => {} });
+    await expect(k.locationsNearZip("76104")).resolves.toEqual([]);
+  });
+
+  it("falls back to the validated query ZIP for malformed or missing provider ZIPs", async () => {
+    const fetchMock = (async (url: string) =>
+      url.startsWith(TOKEN_URL)
+        ? json({ access_token: "T1", expires_in: 1800 })
+        : json({ data: [
+            { locationId: "bad", name: "Bad ZIP", address: { addressLine1: "1 Main", zipCode: "76x04" } },
+            { locationId: "missing", name: "Missing ZIP", address: { addressLine1: "2 Main" } },
+            { locationId: "suffix", name: "Bad suffix", address: { addressLine1: "3 Main", zipCode: "76104oops" } },
+            { locationId: "plus-four", name: "ZIP+4", address: { addressLine1: "4 Main", zipCode: "76109-1234" } },
+          ] })) as unknown as typeof fetch;
+    const k = createKrogerClient(env, { fetch: fetchMock, cache: freshCache(), now: () => 1000, sleep: async () => {} });
+    const locations = await k.locationsNearZip("76104");
+    expect(locations.map((location) => location.zip)).toEqual(["76104", "76104", "76104", "76109"]);
+    expect(locations.map((location) => location.address)).toEqual([
+      "1 Main, 76104",
+      "2 Main, 76104",
+      "3 Main, 76104",
+      "4 Main, 76109",
+    ]);
+  });
+
   it("mints one client_credentials token and reuses it across calls", async () => {
     const calls: string[] = [];
     const fetchMock = (async (url: string) => {

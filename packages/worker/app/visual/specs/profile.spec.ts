@@ -90,6 +90,126 @@ test("the preferences tab offers no retired lunch-strategy / ready-to-eat contro
   await expect(profilePage.pageText("Ready-to-eat items")).toHaveCount(0);
 });
 
+test("the Store card exposes four honest adapter tabs from one projection", async ({ profilePage }) => {
+  const adapters = SEED.app.storeAdapters;
+  await profilePage.openTab("prefs");
+  await expect(profilePage.storeCard()).toBeVisible();
+  await expect(profilePage.storePanel("kroger")).toContainText(adapters.kroger.name);
+  await expect(profilePage.storePanel("kroger")).toContainText(adapters.kroger.address);
+
+  await profilePage.openStoreTab("instacart");
+  await expect(profilePage.storePanel("instacart")).toContainText("Coming later");
+  await expect(profilePage.storePanel("instacart").getByRole("button")).toHaveCount(0);
+
+  await profilePage.openStoreTab("satellites");
+  await expect(profilePage.storePanel("satellites")).toContainText("Freshness unavailable");
+  await expect(profilePage.storePanel("satellites")).toContainText("not available in the member app yet");
+  await expect(profilePage.storePanel("satellites").getByRole("link", { name: "Open Satellites" })).toHaveCount(0);
+  await expect(profilePage.storePanel("satellites").getByRole("link", { name: "Adapter authoring guide" })).toBeVisible();
+
+  await profilePage.openStoreTab("offline");
+  for (const store of adapters.offline) await expect(profilePage.offlineStore(store.slug)).toContainText(store.name);
+  await expect(profilePage.storePanel("offline")).not.toContainText("Aisle map");
+  await profilePage.captureForReview("profile-store-adapters");
+  await profilePage.setViewport(390, 844);
+  await profilePage.captureForReview("profile-store-adapters-mobile");
+});
+
+test("the Kroger picker selects one exact provider result and cancel/empty/error never write", async ({ profilePage }) => {
+  const adapters = SEED.app.storeAdapters;
+  await profilePage.routeKrogerLocations({ locations: adapters.search });
+  await profilePage.openTab("prefs");
+  await profilePage.openKrogerPicker();
+  await profilePage.searchKrogerZip("76109");
+  await expect(profilePage.krogerModal().getByTestId("kroger-location-result")).toHaveCount(2);
+  await profilePage.captureForReview("profile-kroger-picker");
+  await profilePage.chooseKrogerLocation(adapters.search[0].location_id);
+  await expect(profilePage.storePanel("kroger")).toContainText(adapters.search[0].name);
+  await expect(profilePage.storePanel("kroger")).toContainText(adapters.search[0].address);
+
+  await profilePage.openKrogerPicker();
+  await profilePage.cancelKrogerPicker();
+  await expect(profilePage.storePanel("kroger")).toContainText(adapters.search[0].name);
+
+  await profilePage.clearKrogerLocationsRoute();
+  await profilePage.routeKrogerLocations({ locations: [] });
+  await profilePage.openKrogerPicker();
+  await profilePage.searchKrogerZip("76109");
+  await expect(profilePage.krogerModal().getByTestId("kroger-location-empty")).toBeVisible();
+  await profilePage.cancelKrogerPicker();
+
+  await profilePage.clearKrogerLocationsRoute();
+  await profilePage.routeKrogerLocations({ error: "upstream_unavailable", message: "Kroger is unavailable" }, 503);
+  await profilePage.openKrogerPicker();
+  await profilePage.searchKrogerZip("76109");
+  await expect(profilePage.krogerModal().getByTestId("kroger-location-error")).toContainText("Kroger is unavailable");
+  await expect(profilePage.krogerModal().getByTestId("kroger-location-result")).toHaveCount(0);
+  await profilePage.cancelKrogerPicker();
+});
+
+test("a later Kroger search wins when an earlier response finishes last", async ({ profilePage }) => {
+  const first = { locations: [{ location_id: "first", name: "Old result", address: "1 First St", zip: "76109" }] };
+  const second = { locations: [{ location_id: "second", name: "New result", address: "2 Second St", zip: "76116" }] };
+  await profilePage.routeOverlappingKrogerLocations("76109", first, "76116", second);
+  await profilePage.openTab("prefs");
+  await profilePage.openKrogerPicker();
+  await profilePage.submitKrogerZipWithEnter("76109");
+  await profilePage.submitKrogerZipWithEnter("76116");
+  await expect(profilePage.krogerModal().getByText("New result")).toBeVisible();
+  await expect(profilePage.krogerModal().getByText("Old result")).toHaveCount(0);
+});
+
+test("Kroger connect follows the minted URL in the same window", async ({ profilePage, page }) => {
+  await profilePage.routeKrogerConnect("/profile?connected=1");
+  await profilePage.openTab("prefs");
+  await profilePage.connectKroger();
+  await expect(page).toHaveURL(/\/profile\?connected=1$/);
+});
+
+test("disconnect refreshes the Store card and grocery launcher without mutating the list", async ({
+  profilePage,
+  groceryPage,
+}) => {
+  await profilePage.routeDisconnectProjection();
+  await profilePage.goto();
+  await profilePage.openTab("prefs");
+  const before = await profilePage.grocerySnapshot();
+  await expect(profilePage.storePanel("kroger")).toContainText("Connected");
+
+  await profilePage.disconnectKroger();
+  await expect(profilePage.storePanel("kroger")).toContainText("Not connected");
+  await groceryPage.goto();
+  await groceryPage.landmark();
+  await expect(groceryPage.launcherEntry("kroger")).toContainText("Connect Kroger in Profile first");
+  await expect(groceryPage.launcherEntry("kroger").getByRole("button")).toBeDisabled();
+  expect(await profilePage.grocerySnapshot()).toEqual(before);
+});
+
+test("legacy/missing Offline preferences remain visible without silent replacement", async ({ profilePage }) => {
+  await profilePage.setStores({
+    primary: "kroger",
+    fulfillment: null,
+    preferred_location: "Kroger - 76104",
+    preferred_location_name: null,
+    preferred_location_address: null,
+  });
+  await profilePage.goto();
+  await profilePage.openTab("prefs");
+  await expect(profilePage.storePanel("kroger")).toContainText("Kroger - 76104");
+
+  await profilePage.setStores({
+    primary: "missing-store",
+    fulfillment: null,
+    preferred_location_name: null,
+    preferred_location_address: null,
+  });
+  await profilePage.goto();
+  await profilePage.openTab("prefs");
+  await profilePage.openStoreTab("offline");
+  await expect(profilePage.storePanel("offline")).toContainText("missing-store");
+  await expect(profilePage.storePanel("offline")).toContainText("no longer available");
+});
+
 test("meal vibes group by meal, and the pinned indicator marks pinned rows (de-emphasizing debt)", async ({
   profilePage,
 }) => {

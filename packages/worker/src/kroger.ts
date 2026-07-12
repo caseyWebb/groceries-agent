@@ -10,6 +10,7 @@
 
 import type { Env } from "./env.js";
 import { Semaphore, withPermit } from "./semaphore.js";
+import type { KrogerLocation } from "./store-adapter-shapes.js";
 
 const TOKEN_URL = "https://api.kroger.com/v1/connect/oauth2/token";
 const PRODUCTS_URL = "https://api.kroger.com/v1/products";
@@ -57,6 +58,8 @@ export interface KrogerClient {
   search(term: string, opts: SearchOptions): Promise<KrogerCandidate[]>;
   /** Look up a single product by SKU at a location (for cache revalidation). */
   productById(productId: string, locationId: string): Promise<KrogerCandidate | null>;
+  /** Bounded public-client location search, preserving provider nearest-first order. */
+  locationsNearZip(zip: string, limit?: number): Promise<KrogerLocation[]>;
 }
 
 /** Mutable cache that lives for the isolate's lifetime. Holds only the app-level
@@ -245,5 +248,28 @@ export function createKrogerClient(env: Env, opts: KrogerClientOptions = {}): Kr
     return first ? normalizeProduct(first) : null;
   }
 
-  return { resolveLocationId, search, productById };
+  async function locationsNearZip(zip: string, limit = 10): Promise<KrogerLocation[]> {
+    const bounded = Math.max(1, Math.min(10, Math.floor(limit)));
+    const params = new URLSearchParams({ "filter.zipCode.near": zip, "filter.limit": String(bounded) });
+    const res = await authedGet(`${LOCATIONS_URL}?${params.toString()}`);
+    const json = (await res.json()) as { data?: Record<string, unknown>[] };
+    return (json.data ?? []).slice(0, bounded).flatMap((raw) => {
+      const locationId = typeof raw.locationId === "string" ? raw.locationId : "";
+      const name = typeof raw.name === "string" ? raw.name : "";
+      const address = raw.address && typeof raw.address === "object" ? (raw.address as Record<string, unknown>) : {};
+      if (!locationId || !name) return [];
+      const line = typeof address.addressLine1 === "string" ? address.addressLine1 : "";
+      const city = typeof address.city === "string" ? address.city : "";
+      const state = typeof address.state === "string" ? address.state : "";
+      const providerZip =
+        typeof address.zipCode === "string"
+          ? address.zipCode.trim().match(/^(\d{5})(?:-\d{4})?$/)?.[1]
+          : undefined;
+      const zipCode = providerZip ?? zip;
+      const locality = [city, state].filter(Boolean).join(", ");
+      return [{ location_id: locationId, name, address: [line, locality, zipCode].filter(Boolean).join(", "), zip: zipCode }];
+    });
+  }
+
+  return { resolveLocationId, search, productById, locationsNearZip };
 }

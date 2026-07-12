@@ -369,6 +369,8 @@ Read `read_to_buy({ enrich: true })` and `read_user_profile()` in parallel — `
 
 Surface `underived` up front in any branch — those planned recipes' items are NOT in the set. **Walk the substitute hints here too, at list review, before any branch-specific work:** a sibling flagged `in_pantry` means I may already have a stand-in and might not need to buy the line at all; an `on_sale_hint` sibling names a substitute that's on sale — cite its real price, not a bare claim. The tool proposes and *names* each relation — whether it actually fits the dish is **yours** to judge, grounded in its data; skip weak ones rather than reciting them. What I accept maps onto the existing writes right away: on an **explicit** row, `add_to_grocery_list` (note the swap) + `remove_from_grocery_list`; on a **plan-derived** row, materialize the sibling with `add_to_grocery_list` now, and — for a Kroger-online flush — stage an order-scoped `exclude` of the original to carry onto `place_order` at step 5 (the plan still lists it; nothing is suppressed until the flush runs). A branch with no cart flush (walk, in-store, satellite) has nothing to stage — just don't pick up the original at the shelf, same as any planned item I decide to skip this trip. What I decline, drop without comment.
 
+**One ready-to-eat offer, here for every branch.** Ask whether I want a heat-and-eat / grab-and-go option and wait for explicit confirmation before adding anything. With a configured catalog, make the offer specific by suggesting a low/out favorite; for a Kroger trip, an on-sale discovery may also make it specific. With an empty catalog, make a generic offer instead. Only on my explicit yes, add the chosen item to the grocery list (or `stockup.toml` for a conditional bulk buy). Do not prompt again inside the selected branch.
+
 Then detect which branch to run:
 
 | Signal | Branch |
@@ -376,7 +378,7 @@ Then detect which branch to run:
 | `primary = "kroger"` and no store named for this trip | **Kroger online** — `place_order` flush |
 | `primary = "kroger"` and I named a specific Kroger store, or I say "in-store" / "walking the Kroger" | **Kroger in-store** — API aisle ordering |
 | `primary` is a store slug marked `fulfillment: "satellite"` (from `read_user_profile()`) | **Satellite cart-fill** — point me at my local cart-fill helper; no `place_order`, no walk list |
-| `primary` is a store slug (not satellite-marked), or I named a non-Kroger store | **In-store walk** — layout/notes aisle ordering |
+| `primary` is an Offline store slug (not satellite-marked), or I named an Offline store | **In-store walk** — layout/notes aisle ordering |
 | Walking a store we've never mapped and I want to record it | **Map + walk** — concurrent map-and-shop |
 
 <!-- resource: references/kroger-online.md -->
@@ -385,11 +387,6 @@ Then detect which branch to run:
 This branch runs when my fulfillment mode is Kroger online. It may happen in the same sitting as a menu request or days later.
 
 1. **Stale-cart check first.** If the view's `in_cart` section is non-empty — items from a prior order never confirmed `ordered` — remind me to clear the Kroger cart manually before proceeding (silently flushing again double-adds). Wait for my acknowledgment.
-
-2. **Ready-to-eat adds — restock + on-sale discovery (configured catalog).** If I've set up a ready-to-eat catalog, surface heat-and-eat buys for this order before resolving — never add unilaterally:
-   - **Restock favorites.** Cross-reference `retrospective`'s `ready_to_eat_favorites` against pantry on-hand — for a favorite that's low/out, *suggest* a restock ("you're out of the frozen lasagna you keep reaching for — add it?").
-   - **On-sale discovery.** Scan `kroger_flyer` for on-sale heat-and-eat / grab-and-go items not already in my catalog, and draft 1–2 worthwhile ones via `add_draft_ready_to_eat` (`source: "kroger-flyer"`).
-   On my yes, add the item to the grocery list (or to `stockup.toml` for a conditional bulk buy) so the resolve/preview below picks it up. Skip entirely for an empty catalog.
 
 3. **Resolve and preview.** Call `place_order(preview=true)` — the tool derives the **meal plan's own ingredient needs server-side** (the same set `read_to_buy` showed), so do **not** hand-expand planned recipes into `menu_needs`; pass `menu_needs` only for true supplements (an open-world side's ingredients not yet captured, a spontaneous "also grab…" — a duplicate of a derived/listed item is harmless, it merges). Surface, as one batch, anything that needs my decision before writing:
    - `checkpoint` items (`ambiguous` → pick from candidates; `unavailable` → enumerate a few sensible Kroger alternatives yourself from world knowledge and resolve each via `match_ingredient_to_kroger_sku` / `kroger_prices`, then let me pick). Don't add these unilaterally.
@@ -403,7 +400,7 @@ This branch runs when my fulfillment mode is Kroger online. It may happen in the
 
 6. **Report honestly.** `place_order` returns the cart write and SKU-cache commit independently. Never tell me the cart is populated when `cart.written` is false. If `cart.code` is `reauth_required`, the Kroger refresh token was rejected — call `kroger_login_url` and give me the link it returns so I can re-authorize; the resolution work is preserved. Remind me to review the cart in the Kroger app before checkout. And if any cart items have **purchasing** guidance (which canned tomatoes, which olive oil), give me **one consolidated callout** to eyeball and swap them myself in the app, following the **Picking what to buy** guidance — you can't change the matched SKU for me, so this one's mine to fix.
 
-**Lifecycle past `in_cart` is user-asserted — never claim it on your own:**
+**Lifecycle past `in_cart` is user-asserted — never claim it on your own. Route both assertions through the same shared grocery-list and pantry operations every fulfillment branch uses:**
 - *"I placed the order"* → advance `in_cart` items to `ordered` (`update_grocery_list`). This advance is what records the order's spend (from the flush's price snapshot) — so don't skip it.
 - *"I picked up the groceries"* → first advance any items still `in_cart` to `ordered` via `update_grocery_list` (the collapsed placed+picked-up assertion — this is the step that records the spend), then `received` (terminal): remove the picked items with `remove_from_grocery_list` (one per item — each deletes its own D1 row; a remove never records spend) and — for `grocery`-kind items only — restock the pantry in one `update_pantry({ operations: [...] })` (all the add ops together). `household`/`other` items don't touch the pantry. Then, for the fresh perishables just received, offer a couple of storage tips following the **Putting groceries away** guidance.
 <!-- /resource -->
@@ -475,7 +472,7 @@ This branch runs when `primary` is a store slug marked `fulfillment: "satellite"
 <!-- resource: references/instore-walk.md -->
 # In-Store Walk — layout/notes aisle ordering
 
-This branch runs when `primary` is a store slug (non-Kroger), or I name a specific non-Kroger store for this trip. It's the **display front door** for in-store shopping — read-only until I commit to walking.
+This branch runs when `primary` is an Offline store slug, or I name a specific Offline store for this trip. It's the **display front door** for in-store shopping — read-only until I commit to walking.
 
 #### 1. Resolve the store and its domain
 
@@ -484,14 +481,6 @@ If I named one for this trip ("the West 7th Tom Thumb"), use it — that overrid
 #### 2. Filter to the store's domain
 
 Show only the `to_buy` lines for this trip's category — a `grocery` run excludes `home-improvement`-tagged items; a Lowe's run shows **only** those. (Item `domain` is set when it's captured; default `grocery` — plan-derived lines are food and therefore `grocery`-domain by construction.)
-
-#### 3. Ready-to-eat adds (configured catalog)
-
-Before grouping, if I've set up a ready-to-eat catalog, offer heat-and-eat items to add to the trip — never unilaterally:
-- **Restock favorites** (any grocery trip). Cross-reference `retrospective`'s `ready_to_eat_favorites` against pantry on-hand — a favorite that's low/out is a *suggest* ("you're low on the frozen lasagna you keep grabbing — want it on the list?").
-- **On-sale discovery** (Kroger store only — it needs flyer data). For a non-Kroger store there's no flyer — skip discovery.
-
-On my yes, add the item to the grocery list so it falls into the grouping below. Skip entirely for an empty catalog.
 
 #### 4. Group it — department vs aisle (graceful degradation)
 
