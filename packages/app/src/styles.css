@@ -67,6 +67,8 @@
 .instacart-cta img { width: auto; height: 22px; flex: 0 0 auto; }
 .instacart-cta:disabled { cursor: not-allowed; }
 .instacart-cta:focus-visible { outline: 3px solid #ff7009; outline-offset: 2px; }
+.instacart-preflight { display: flex; align-items: flex-start; gap: .4rem; max-width: 34rem; margin-top: .45rem; color: var(--foreground); font-size: .85rem; line-height: 1.35; }
+.instacart-preflight input { margin-top: .15rem; flex: 0 0 auto; }
 @media (max-width: 640px) {
   .store-launcher-head, .store-launcher li { align-items: stretch; flex-direction: column; }
 }

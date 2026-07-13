@@ -15,6 +15,15 @@ async function enableInstacart(page: import("@playwright/test").Page, enabled = 
 	});
 }
 
+async function setSnapshotUnderived(page: import("@playwright/test").Page, underived: string[]): Promise<void> {
+	await page.route("**/api/grocery/view", async (route) => {
+		const response = await route.fetch();
+		const body = await response.json() as { underived: string[] };
+		body.underived = underived;
+		await route.fulfill({ response, json: body });
+	}, { times: 1 });
+}
+
 test.beforeEach(async ({ asMember, groceryPage }) => {
 	await asMember();
 	await groceryPage.goto();
@@ -52,8 +61,9 @@ test("the launcher remains driven by the shared store-adapter projection", async
 	await groceryPage.captureForReview("grocery-store-launcher");
 });
 
-test("configured Instacart keeps exact CTA branding through loading and uses a real same-tab handoff after an underived warning", async ({ groceryPage, page }) => {
+test("configured Instacart preflights an underived warning before the branded one-flow handoff", async ({ groceryPage, page }) => {
 	await enableInstacart(page);
+	await setSnapshotUnderived(page, ["missing-recipe"]);
 	const result: InstacartHandoffResult = { status: "ready", url: "https://www.instacart.com/store/yamp-test", expires_at: "2026-08-11T12:00:00Z", reused: false, item_count: 2, underived: ["missing-recipe"], destination: "instacart_marketplace" };
 	let apiCalls = 0;
 	let release!: () => void;
@@ -68,27 +78,22 @@ test("configured Instacart keeps exact CTA branding through loading and uses a r
 	await expect(cta).toHaveCSS("background-color", "rgb(0, 61, 41)");
 	const logo = await cta.locator("img").boundingBox(); expect(logo?.height).toBe(22); expect(logo?.width).toBeGreaterThan(17); expect(logo?.width).toBeLessThan(18);
 	await expect(groceryPage.launcherEntry("instacart")).toContainText("Choose a retailer, review matches, add items, and check out on Instacart.");
+	await expect(page.getByTestId("instacart-preflight")).toContainText("1 planned recipe is missing ingredient details");
+	await expect(cta).toBeDisabled(); expect(apiCalls).toBe(0);
+	await page.getByTestId("instacart-incomplete-confirm").check();
+	await expect(cta).toBeEnabled();
+	await groceryPage.captureForReview("grocery-instacart-launcher");
 	await cta.click();
 	await expect(cta).toHaveText("Shop on Instacart"); await expect(cta).toHaveAttribute("aria-busy", "true");
 	await expect(cta).toHaveCSS("background-color", "rgb(0, 61, 41)"); await expect(cta).toHaveCSS("color", "rgb(250, 241, 229)"); await expect(cta).toHaveCSS("opacity", "1");
 	await expect(groceryPage.instacartStatus()).toHaveText("Creating an Instacart shopping page…");
 	release();
-	await expect(groceryPage.instacartStatus()).toContainText("missing ingredient details");
-	await expect(page.getByTestId("instacart-continue")).toBeVisible(); expect(apiCalls).toBe(1);
-	await expect(page).toHaveURL(/\/grocery$/);
-	await expect(groceryPage.launcherEntry("instacart")).not.toContainText(/cart populated|order placed|savings|delivery/i);
-	await groceryPage.captureForReview("grocery-instacart-launcher");
-	await groceryPage.addItem("pending invalidation item");
-	await expect(groceryPage.item("pending invalidation item")).toBeVisible();
-	await expect(page.getByTestId("instacart-continue")).toHaveCount(0);
-	await cta.click();
-	await expect(page.getByTestId("instacart-continue")).toBeVisible(); expect(apiCalls).toBe(2);
-	await page.getByTestId("instacart-continue").click();
-	await expect(page).toHaveURL(result.url);
+	await expect(page).toHaveURL(result.url); expect(apiCalls).toBe(1);
 });
 
 test("complete Instacart ready navigates same-tab in one click and one API request", async ({ groceryPage, page }) => {
 	await enableInstacart(page);
+	await setSnapshotUnderived(page, []);
 	const result: InstacartHandoffResult = { status: "ready", url: "https://www.instacart.com/store/yamp-complete", expires_at: "2026-08-11T12:00:00Z", reused: false, item_count: 2, underived: [], destination: "instacart_marketplace" };
 	let calls = 0;
 	await page.route("**/api/grocery/instacart", (route) => { calls += 1; return route.fulfill({ json: result }); });
@@ -96,6 +101,31 @@ test("complete Instacart ready navigates same-tab in one click and one API reque
 	await page.reload(); await groceryPage.landmark();
 	await groceryPage.instacartCta().click();
 	await expect(page).toHaveURL(result.url); expect(calls).toBe(1);
+});
+
+test("an in-flight Instacart handoff cannot navigate after the grocery snapshot changes", async ({ groceryPage, page }) => {
+	await enableInstacart(page);
+	await setSnapshotUnderived(page, []);
+	const result: InstacartHandoffResult = { status: "ready", url: "https://www.instacart.com/store/yamp-stale", expires_at: "2026-08-11T12:00:00Z", reused: false, item_count: 2, underived: [], destination: "instacart_marketplace" };
+	let calls = 0;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => { release = resolve; });
+	await page.route("**/api/grocery/instacart", async (route) => {
+		calls += 1;
+		await held;
+		await route.fulfill({ json: result }).catch(() => undefined);
+	});
+	await page.route(result.url, (route) => route.fulfill({ contentType: "text/html", body: "<title>Stale Instacart handoff</title>" }));
+	await page.reload(); await groceryPage.landmark();
+	await groceryPage.instacartCta().click();
+	await expect(groceryPage.instacartCta()).toHaveAttribute("aria-busy", "true");
+	await groceryPage.addItem("stale handoff guard");
+	await expect(groceryPage.item("stale handoff guard")).toBeVisible();
+	release();
+	await expect(groceryPage.instacartCta()).toHaveAttribute("aria-busy", "false");
+	await expect(page).toHaveURL(/\/grocery$/);
+	await expect(page.getByTestId("instacart-status")).toHaveCount(0);
+	expect(calls).toBe(1);
 });
 
 test("a disabled Instacart projection is inert and makes no request", async ({ groceryPage, page }) => {
@@ -109,7 +139,7 @@ test("a disabled Instacart projection is inert and makes no request", async ({ g
 });
 
 test("Instacart typed empty and structured errors never claim success", async ({ groceryPage, page }) => {
-	await enableInstacart(page); await page.reload(); await groceryPage.landmark();
+	await enableInstacart(page); await setSnapshotUnderived(page, []); await page.reload(); await groceryPage.landmark();
 	const states: Array<[InstacartHandoffResult, RegExp]> = [
 		[{ status: "empty", item_count: 0, underived: [] }, /to-buy list is empty/i],
 		[{ status: "unavailable", code: "not_configured" }, /not configured/i],

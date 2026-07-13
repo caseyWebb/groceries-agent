@@ -241,7 +241,8 @@ function GroceryPage() {
       <PageHead title="Grocery list" sub="Check off the store walk without changing online-cart state." />
       <StoreLauncher
         entries={adapters.data?.launcher ?? (snapshot.data.walk_context ? [{ id: `offline:${snapshot.data.walk_context.store_slug}`, adapter: "offline", mode: "store_walk", store: { slug: snapshot.data.walk_context.store_slug, name: snapshot.data.walk_context.display_name, shared_name: snapshot.data.walk_context.shared_name, domain: snapshot.data.walk_context.domain, aisle_map: snapshot.data.walk_context.aisle_map }, enabled: true, disabled_reason: null }] : [])}
-        snapshotVersion={snapshot.data.snapshot_version}
+        snapshotKey={JSON.stringify(snapshot.data)}
+        underived={snapshot.data.underived}
         online={online}
         orderOpen={orderOpen}
         launcherRef={orderLauncherRef}
@@ -272,7 +273,8 @@ function GroceryPage() {
 
 function StoreLauncher({
   entries,
-  snapshotVersion,
+  snapshotKey,
+  underived,
   online,
   orderOpen,
   launcherRef,
@@ -282,7 +284,8 @@ function StoreLauncher({
   pausedWalk,
 }: {
   entries: StoreAdapterProjection["launcher"];
-  snapshotVersion: string;
+  snapshotKey: string;
+  underived: string[];
   online: boolean;
   orderOpen: boolean;
   launcherRef: React.RefObject<HTMLButtonElement | null>;
@@ -293,25 +296,43 @@ function StoreLauncher({
 }) {
   const [instacartBusy, setInstacartBusy] = React.useState(false);
   const [instacartMessage, setInstacartMessage] = React.useState<string | null>(null);
-  const [pendingInstacartUrl, setPendingInstacartUrl] = React.useState<string | null>(null);
+  const [responseUnderived, setResponseUnderived] = React.useState<string[]>([]);
+  const [instacartIncompleteConfirmed, setInstacartIncompleteConfirmed] = React.useState(false);
+  const instacartRequestRef = React.useRef<AbortController | null>(null);
   const instacartProjectionKey = (() => {
     const entry = entries.find((candidate) => candidate.mode === "marketplace_handoff");
     return entry ? `${entry.enabled}:${entry.disabled_reason ?? "ready"}` : "absent";
   })();
+  const snapshotKeyRef = React.useRef(snapshotKey);
+  const instacartProjectionKeyRef = React.useRef(instacartProjectionKey);
+  snapshotKeyRef.current = snapshotKey;
+  instacartProjectionKeyRef.current = instacartProjectionKey;
+  const incompleteRecipes = [...new Set([...underived, ...responseUnderived])];
   React.useEffect(() => {
-    setPendingInstacartUrl(null);
+    instacartRequestRef.current?.abort();
+    instacartRequestRef.current = null;
+    setInstacartBusy(false);
     setInstacartMessage(null);
-  }, [snapshotVersion, instacartProjectionKey]);
+    setResponseUnderived([]);
+    setInstacartIncompleteConfirmed(false);
+  }, [snapshotKey, instacartProjectionKey]);
   const shopInstacart = async () => {
+    const startingSnapshotKey = snapshotKey;
+    const startingProjectionKey = instacartProjectionKey;
+    const controller = new AbortController();
+    instacartRequestRef.current?.abort();
+    instacartRequestRef.current = controller;
     setInstacartBusy(true); setInstacartMessage(null);
     try {
-      const response = await appFetch("/api/grocery/instacart", { method: "POST" });
+      const response = await appFetch("/api/grocery/instacart", { method: "POST", signal: controller.signal });
       if (!response.ok) throw await apiError(response);
       const result = await response.json() as InstacartHandoffResult;
+      if (controller.signal.aborted || snapshotKeyRef.current !== startingSnapshotKey || instacartProjectionKeyRef.current !== startingProjectionKey) return;
       if (result.status === "ready") {
-        if (result.underived.length) {
-          setPendingInstacartUrl(result.url);
-          setInstacartMessage(`The page is ready, but ${result.underived.length} planned recipe${result.underived.length === 1 ? " is" : "s are"} still missing ingredient details. Review that gap before continuing.`);
+        if (result.underived.length && !instacartIncompleteConfirmed) {
+          setResponseUnderived(result.underived);
+          setInstacartIncompleteConfirmed(false);
+          setInstacartMessage("Some planned recipes still need ingredient details. Confirm the warning before creating an Instacart shopping page.");
         } else window.location.assign(result.url);
       } else if (result.status === "empty") {
         setInstacartMessage(result.underived.length ? "Nothing is ready to send yet; some planned recipes still need ingredient details." : "Your to-buy list is empty.");
@@ -325,8 +346,16 @@ function StoreLauncher({
         } as const;
         setInstacartMessage(messages[result.code]);
       }
-    } catch { setInstacartMessage("Could not reach Instacart. Reconnect and try again."); }
-    finally { setInstacartBusy(false); }
+    } catch {
+      if (!controller.signal.aborted && snapshotKeyRef.current === startingSnapshotKey && instacartProjectionKeyRef.current === startingProjectionKey) {
+        setInstacartMessage("Could not reach Instacart. Reconnect and try again.");
+      }
+    } finally {
+      if (instacartRequestRef.current === controller) {
+        instacartRequestRef.current = null;
+        setInstacartBusy(false);
+      }
+    }
   };
   const reason = (entry: StoreAdapterProjection["launcher"][number]) => {
     if (entry.disabled_reason === "connect_kroger") return "Connect Kroger in Profile first.";
@@ -347,10 +376,25 @@ function StoreLauncher({
           {entries.map((entry) => {
             const actionable = entry.enabled && (entry.mode === "store_walk" || (entry.mode === "online_order" && online));
             if (entry.mode === "marketplace_handoff") {
+              const confirmationRequired = incompleteRecipes.length > 0 && !instacartIncompleteConfirmed;
               return (
                 <li key={entry.id} data-testid="store-launcher-entry" data-launcher-id="instacart" data-mode={entry.mode}>
-                  <span><strong>Instacart Marketplace</strong><small>Choose a retailer, review matches, add items, and check out on Instacart.</small></span>
-                  <button className="instacart-cta" data-testid="instacart-cta" disabled={!entry.enabled || !online || instacartBusy} aria-busy={instacartBusy} title={!entry.enabled ? reason(entry) : !online ? "Reconnect for store actions" : undefined} onClick={entry.enabled ? () => void shopInstacart() : undefined}>
+                  <span>
+                    <strong>Instacart Marketplace</strong>
+                    <small>Choose a retailer, review matches, add items, and check out on Instacart.</small>
+                    {incompleteRecipes.length ? (
+                      <label className="instacart-preflight" data-testid="instacart-preflight">
+                        <input
+                          type="checkbox"
+                          data-testid="instacart-incomplete-confirm"
+                          checked={instacartIncompleteConfirmed}
+                          onChange={(event) => setInstacartIncompleteConfirmed(event.currentTarget.checked)}
+                        />
+                        I understand {incompleteRecipes.length} planned recipe{incompleteRecipes.length === 1 ? " is" : "s are"} missing ingredient details, so this Instacart page may be incomplete.
+                      </label>
+                    ) : null}
+                  </span>
+                  <button className="instacart-cta" data-testid="instacart-cta" disabled={!entry.enabled || !online || instacartBusy || confirmationRequired} aria-busy={instacartBusy} title={!entry.enabled ? reason(entry) : !online ? "Reconnect for store actions" : confirmationRequired ? "Confirm the incomplete recipe warning first." : undefined} onClick={entry.enabled && !confirmationRequired ? () => void shopInstacart() : undefined}>
                     <img src="/brands/instacart-carrot.svg" alt="" />
                     Shop on Instacart
                   </button>
@@ -389,7 +433,6 @@ function StoreLauncher({
         <p className="muted">Configure a store adapter in Profile, or shop manually below.</p>
       )}
       {instacartBusy || instacartMessage ? <p className="muted" role="status" data-testid="instacart-status">{instacartBusy ? "Creating an Instacart shopping page…" : instacartMessage}</p> : null}
-      {pendingInstacartUrl && !instacartBusy ? <Button size="sm" variant="outline" data-testid="instacart-continue" onClick={() => { const url = pendingInstacartUrl; setPendingInstacartUrl(null); window.location.assign(url); }}>Continue to Instacart</Button> : null}
       <Button variant="outline" onClick={onManual}>Log a manual shop</Button>
     </section>
   );
