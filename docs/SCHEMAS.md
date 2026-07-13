@@ -548,6 +548,7 @@ provenance  TEXT
 store       TEXT
 fulfillment TEXT
 voided_at   TEXT     -- set when the row was re-listed after ordering (voided, never deleted); reads filter voided_at IS NULL
+price_source TEXT    -- shop receipt estimate source: sku_cache | flyer | last_paid | unpriced; NULL for order-send assertions
 ```
 
 **Notes:**
@@ -569,6 +570,15 @@ freshness rides the corresponding objects. A shopping line carries `staple: true
 key is a member of the household's staples list. `GroceryModelContext` extends the complete snapshot with
 an action summary/outcome; hosts publish the full context, never an event delta. A spawning payload is
 render-only and must be re-hydrated before writes.
+
+Contract v2 adds nullable `walk_context`: only the selected Offline store's secret-free slug/shared
+name/household display name/domain, effective aisle-map summary, deterministic route groups, placement
+source/warning, and observation time. It contains no adapter credentials, Kroger link/token truth,
+Satellite state, full profile, or note bodies and is the only store context persisted with the Grocery query.
+
+### Shop completion receipts (D1 `shop_commits` + `shop_commit_lines`)
+
+Migration 0054 adds one immutable completion receipt keyed by `(tenant, session_id)` and one immutable line snapshot keyed by `(tenant, session_id, line_key)`. The commit stores canonical request hash, `store_walk | manual_shop`, resolved store/domain, client `occurred_at`, server `committed_at`, and receipt JSON. Lines retain quantity/count assumption, kind/domain, pantry result, estimate source/price/amount/savings, department, and planned/impulse provenance. The receipt is the idempotency/replay and pricing source. There is deliberately **no walk-session table**: URL/local state owns navigation and grocery `checked_at` owns picked truth.
 
 ### `OrderReviewData` and disposable stage
 
@@ -826,7 +836,7 @@ planning_cadence_days       INTEGER  -- how far out the caller plans/shops, in d
 lunch_strategy              TEXT     -- leftovers | buy | mixed
 ready_to_eat_default_action TEXT     -- opt-in | auto-add
 weekly_budget               REAL     -- household weekly grocery budget, dollars/week (0051); NULL or 0 = no budget line
-stores                      TEXT     -- JSON: {primary, fulfillment?, preferred_location, preferred_location_name?, preferred_location_address?, location_zip}
+stores                      TEXT     -- JSON: {primary, fulfillment?, preferred_location, preferred_location_name?, preferred_location_address?, location_zip, nicknames?:{[store_slug]:string}}
 dietary                     TEXT     -- JSON: {avoid[], limit[]}
 custom                      TEXT     -- JSON: arbitrary agent-added keys
 kitchen_notes               TEXT     -- JSON: freeform cook-reasoning notes (oven count, pan sizes)
@@ -847,7 +857,7 @@ Example rows (`profile`):
 
 | tenant | default_cooking_nights | planning_cadence_days | lunch_strategy | ready_to_eat_default_action | stores | dietary | freezer_capacity_estimate |
 |--------|----------------------|----------------------|----------------|----------------------------|--------|---------|--------------------------|
-| alice | 3 | 7 | leftovers | opt-in | {"primary":"kroger","preferred_location":"01400943","preferred_location_name":"Kroger Marketplace","preferred_location_address":"123 Main St, Fort Worth, TX 76104","location_zip":"76104"} | {"avoid":[],"limit":["cilantro"]} | moderate |
+| alice | 3 | 7 | leftovers | opt-in | {"primary":"kroger","preferred_location":"01400943","preferred_location_name":"Kroger Marketplace","preferred_location_address":"123 Main St, Fort Worth, TX 76104","location_zip":"76104","nicknames":{"west-7th-tom-thumb":"The big store"}} | {"avoid":[],"limit":["cilantro"]} | moderate |
 
 Example rows (`brand_prefs`):
 
@@ -1759,9 +1769,9 @@ Example rows:
 - Unknown keys (`aisles` / `item_locations` / `doesnt_carry`) are **silently ignored** — identity is read, never an error.
 - Validated at Worker write time (`src/validate.ts` → `validateStoreInput`). CRUD via `list_stores` / `read_store` / `add_store` / `update_store` (identity ops only) / `remove_store` (see `docs/TOOLS.md`). `list_stores` returns identity only — whether a store has a usable map is a `read_store_notes` concern.
 
-## store_notes (per-tenant, D1 `store_notes` table)
+## store_notes (attributed shared D1 `store_notes` table)
 
-A member's **attributed notes** on one store — the store analog of recipe notes, and the **single home for everything we know about a store**: both freeform observations ("fish counter closes at 6 PM", "they have the Kerrygold I like") AND the store's **layout**, captured by tag convention. Stored in the D1 `store_notes` table (`id TEXT PRIMARY KEY`); columns: `store` (store slug), `author` (the writing tenant, set by the Worker), `body`, `tags`, `private`, `created_at`. Shared-by-default, with an optional `private` flag.
+A member's attributed notes on one store retain immutable/addressable `created_at` and gain nullable `updated_at`; effective recency is `COALESCE(updated_at, created_at)`. New notes initialize both, and an edit advances only `updated_at`. The aisle-map read returns a winner per normalized aisle by recency/note-id, the caller's complete contribution, a strong ETag over visible participating notes, and `unknown | stale | mapped` (stale is strictly older than 180 days). Conditional whole-document saves create/update/remove/collapse only the caller's layout rows; every other author and all location/stock/general rows survive.
 
 ```sql
 -- D1 store_notes table — one row per note, across all tenants
@@ -1772,6 +1782,7 @@ body        TEXT               -- required; rows with no body are dropped on rea
 tags        TEXT               -- JSON array, e.g. ["layout", "location"]; default []
 private     INTEGER            -- 1 = owner-only; default 0
 created_at  TEXT               -- ISO timestamp (required; addressable key for edit/delete)
+updated_at  TEXT               -- nullable ISO recency; edits advance it, legacy rows fall back to created_at
 ```
 
 Example rows:

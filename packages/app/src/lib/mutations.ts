@@ -21,7 +21,9 @@ import { api, apiError, type ApiError } from "./api";
 import { REGISTERED_MUTATION_KEYS } from "./persist";
 import type { GroceryRow, Overlay, PantryRow, PlanOp, PlanOpsResult, ToBuyView } from "./data";
 import { projectGroceryAction } from "@yamp/ui";
-import type { GroceryListData } from "@yamp/contract";
+import type { GroceryListData, ShopCommitRequest, ShopCommitResult } from "@yamp/contract";
+import { appFetch } from "./api";
+import { clearLocalWalk, readLocalWalk, writeLocalWalk } from "./persist";
 
 // --- variable shapes (plain JSON — they persist to IndexedDB and replay) -----------
 
@@ -102,6 +104,8 @@ export interface GroceryPantryVerifyVars {
   key: string;
   snapshot_version: string;
 }
+export type ShopCommitVars = ShopCommitRequest;
+export type ShopCommitSuccess = Extract<ShopCommitResult, { outcome: "committed" | "replayed" }>;
 
 export interface FavoriteVars {
   slug: string;
@@ -197,6 +201,24 @@ const norm = (name: string) => name.trim().toLowerCase();
  */
 function latestGroceryVersion(qc: QueryClient, captured: string): string {
   return qc.getQueryData<GroceryListData>(["grocery", "view"])?.snapshot_version ?? captured;
+}
+
+async function waitForCheckedReplay(qc: QueryClient, sessionId: string): Promise<void> {
+  const self = qc.getMutationCache().findAll({ mutationKey: ["grocery", "shop-commit"], status: "pending" })
+    .find((mutation) => (mutation.state.variables as ShopCommitVars | undefined)?.session_id === sessionId);
+  if (!self) return;
+  const pending = () => {
+    const ordered = qc.getMutationCache().getAll();
+    const selfIndex = ordered.indexOf(self);
+    return (selfIndex < 0 ? [] : ordered.slice(0, selfIndex))
+      .filter((mutation) => mutation.state.status === "pending" && mutation.options.mutationKey?.join("/") === "grocery/checked").length;
+  };
+  if (pending() === 0) return;
+  await new Promise<void>((resolve) => {
+    const unsubscribe = qc.getMutationCache().subscribe(() => {
+      if (pending() === 0) { unsubscribe(); resolve(); }
+    });
+  });
 }
 
 /** Optimistically drop a name from both to-buy view variants (enriched + plain). */
@@ -609,6 +631,51 @@ function registryRows(qc: QueryClient): RegistryRow[] {
       },
     },
     {
+      key: ["grocery", "shop-commit"],
+      defaults: {
+        mutationFn: async (vars: ShopCommitVars): Promise<ShopCommitSuccess> => {
+          // Scoped mutation replay is serial. Resolve the aggregate version only when
+          // this commit executes so queued offline checks ahead of it can settle first.
+          // The explicit barrier also protects hydration order across Query versions.
+          await waitForCheckedReplay(qc, vars.session_id);
+          const delivery = { ...vars, snapshot_version: latestGroceryVersion(qc, vars.snapshot_version) };
+          const res = await appFetch("/api/grocery/shop-commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(delivery) });
+          const body = await res.json() as ShopCommitResult;
+          if (!res.ok) {
+            const outcome = body.outcome;
+            const fallback = body as unknown as Partial<ApiError>;
+            throw {
+              error: outcome ?? fallback.error ?? "shop_commit_failed",
+              message: outcome === "checked_set_changed" ? "The checked list changed. Review it before finishing." : outcome === "idempotency_conflict" ? "This trip id was already used with different items." : fallback.message ?? "Couldn't finish the shop",
+              context: body,
+            } satisfies ApiError;
+          }
+          return body as ShopCommitSuccess;
+        },
+        onSuccess: (result: ShopCommitSuccess) => {
+          qc.setQueryData(["grocery", "view"], result.snapshot);
+          qc.setQueryData(["grocery", "shop-outcome", result.receipt.session_id], { status: "success", result });
+          clearLocalWalk(result.receipt.session_id);
+        },
+        onError: (err: ApiError, vars: ShopCommitVars) => {
+          const snapshot = err.context?.snapshot as GroceryListData | undefined;
+          if (snapshot) qc.setQueryData(["grocery", "view"], snapshot);
+          qc.setQueryData(["grocery", "shop-outcome", vars.session_id], { status: "error", error: err, vars });
+          if (vars.mode === "store_walk") {
+            const current = readLocalWalk();
+            if (current?.session_id === vars.session_id) {
+              if (err.error === "checked_set_changed" || err.error === "idempotency_conflict") {
+                const { commit: _commit, ...rest } = current;
+                writeLocalWalk({ ...rest, state: "active" });
+              } else writeLocalWalk({ ...current, state: "pending_commit", commit: current.commit ?? vars });
+            }
+          }
+          toast(messageOf(err, "Couldn't finish the shop"));
+        },
+        onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["grocery"] }), qc.invalidateQueries({ queryKey: ["pantry"] })]),
+      },
+    },
+    {
       key: ["pantry", "ops"],
       defaults: {
         mutationFn: async (vars: PantryOpsVars) => okOrThrow(await api.api.pantry.ops.$post({ json: vars })),
@@ -881,6 +948,10 @@ export function useGroceryPantryVerify() {
   return useMutation<GroceryListData, ApiError, GroceryPantryVerifyVars>({
     mutationKey: ["grocery", "pantry-verify"],
   });
+}
+
+export function useShopCommit() {
+  return useMutation<ShopCommitSuccess, ApiError, ShopCommitVars>({ mutationKey: ["grocery", "shop-commit"] });
 }
 
 export function usePantryOps() {

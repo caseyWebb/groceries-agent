@@ -3,8 +3,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   EmptyState,
   GroceryList,
+  GroceryWalk,
   PageHead,
   type GroceryAction,
   type GroceryHostAdapter,
@@ -18,11 +25,15 @@ import {
   useGroceryRelist,
   useGroceryRemove,
   useGrocerySubstitution,
+  useShopCommit,
 } from "../lib/mutations";
-import { useGrocerySnapshot, useStoreAdapters, type StoreAdapterProjection } from "../lib/data";
+import { mintRowId, useGrocerySnapshot, useStoreAdapters, type StoreAdapterProjection } from "../lib/data";
 import { useOnline } from "../lib/online";
 import { api, apiError } from "../lib/api";
 import { MemberOrderReview } from "../components/member-order-review";
+import { readLocalWalk, readTenantStamp, writeLocalWalk, type LocalWalkSession } from "../lib/persist";
+import type { ShopCommitRequest, ShopCommitResult, ShopReceipt } from "@yamp/contract";
+import type { ApiError } from "../lib/api";
 
 export const Route = createFileRoute("/_app/grocery")({ component: GroceryPage });
 
@@ -38,6 +49,12 @@ function GroceryPage() {
   const relist = useGroceryRelist();
   const remove = useGroceryRemove();
   const verify = useGroceryPantryVerify();
+  const shopCommit = useShopCommit();
+  const [walk, setWalk] = React.useState<LocalWalkSession | null>(() => readLocalWalk());
+  const [receipt, setReceipt] = React.useState<ShopReceipt | null>(null);
+  const [walkConflict, setWalkConflict] = React.useState<string | null>(null);
+  const [shopError, setShopError] = React.useState<string | null>(null);
+  const [manualDraft, setManualDraft] = React.useState<ShopCommitRequest | null>(null);
   const [orderOpen, setOrderOpen] = React.useState(false);
   const orderLauncherRef = React.useRef<HTMLButtonElement>(null);
   const closeOrder = React.useCallback(() => {
@@ -45,6 +62,55 @@ function GroceryPage() {
     requestAnimationFrame(() => orderLauncherRef.current?.focus());
   }, []);
   const contractSupported = groceryContractSupport(snapshot.data?.contract_version) === "supported";
+
+  const setWalkUrl = React.useCallback((session: LocalWalkSession | null) => {
+    const url = new URL(window.location.href);
+    if (session?.state === "active" || session?.state === "pending_commit") {
+      url.searchParams.set("mode", "walk"); url.searchParams.set("walk", session.session_id); url.searchParams.set("store", session.store_slug);
+    } else { url.searchParams.delete("mode"); url.searchParams.delete("walk"); url.searchParams.delete("store"); }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }, []);
+  const startWalk = React.useCallback((storeSlug: string) => {
+    const current = readLocalWalk();
+    const session: LocalWalkSession = current?.store_slug === storeSlug
+      ? { ...current, state: "active" }
+      : { session_id: mintRowId(), tenant_stamp: readTenantStamp() ?? "", store_slug: storeSlug, started_at: new Date().toISOString(), current_group: null, state: "active" };
+    writeLocalWalk(session); setWalk(session); setReceipt(null); setWalkConflict(null); setWalkUrl(session);
+  }, [setWalkUrl]);
+
+  React.useEffect(() => {
+    const seen = new WeakSet<object>();
+    const adoptOutcome = (outcome: { status: "success"; result: Extract<ShopCommitResult, { outcome: "committed" | "replayed" }> } | { status: "error"; error: ApiError; vars: ShopCommitRequest }) => {
+      if (outcome.status === "success") {
+        setReceipt(outcome.result.receipt); setWalkConflict(null); setShopError(null); setWalkUrl(null); setManualDraft(null);
+      } else if (outcome.vars.mode === "store_walk") {
+        const current = readLocalWalk(); if (current?.session_id === outcome.vars.session_id) setWalk(current);
+        setWalkConflict(outcome.error.message);
+      } else setShopError(outcome.error.message);
+    };
+    const adopt = (mutation: { options: { mutationKey?: readonly unknown[] }; state: { status: string; data?: unknown; error?: unknown; variables?: unknown } }) => {
+      if (mutation.options.mutationKey?.join("/") !== "grocery/shop-commit" || seen.has(mutation)) return;
+      if (mutation.state.status !== "success" && mutation.state.status !== "error") return;
+      seen.add(mutation);
+      const vars = mutation.state.variables as ShopCommitRequest | undefined;
+      if (!vars) return;
+      if (mutation.state.status === "success") {
+        const result = mutation.state.data as Extract<ShopCommitResult, { outcome: "committed" | "replayed" }>;
+        adoptOutcome({ status: "success", result });
+        qc.removeQueries({ queryKey: ["grocery", "shop-outcome", result.receipt.session_id], exact: true });
+      } else {
+        const error = mutation.state.error as ApiError;
+        adoptOutcome({ status: "error", error, vars });
+        qc.removeQueries({ queryKey: ["grocery", "shop-outcome", vars.session_id], exact: true });
+      }
+    };
+    const cache = qc.getMutationCache();
+    const outcomes = qc.getQueryCache().findAll({ queryKey: ["grocery", "shop-outcome"] }).sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt);
+    if (outcomes[0]?.state.data) adoptOutcome(outcomes[0].state.data as Parameters<typeof adoptOutcome>[0]);
+    for (const query of outcomes) qc.removeQueries({ queryKey: query.queryKey, exact: true });
+    for (const mutation of cache.getAll()) adopt(mutation);
+    return cache.subscribe((event) => { if (event.mutation) adopt(event.mutation); });
+  }, [qc, setWalkUrl]);
 
   const fresh = React.useCallback(async (): Promise<GroceryListData> => {
     const result = await snapshot.refetch();
@@ -153,16 +219,43 @@ function GroceryPage() {
       </div>
     );
 
+  const walkContext = snapshot.data.walk_context;
+  if (walk && walkContext && walk.store_slug === walkContext.store_slug && (walk.state === "active" || walk.state === "pending_commit")) {
+    return <div data-testid="grocery-page"><GroceryWalk
+      data={snapshot.data} context={walkContext} online={online} pendingCommit={walk.state === "pending_commit" || shopCommit.isPending}
+      receipt={receipt} conflict={walkConflict}
+      onCheck={(line, value) => checked.mutate({ key: line.key, checked: value, expected_row_version: line.row_version, snapshot_version: snapshot.data.snapshot_version, occurred_at: new Date().toISOString() })}
+      onPause={() => { const paused = { ...walk, state: "paused" as const }; writeLocalWalk(paused); setWalk(paused); setWalkUrl(null); }}
+      onRetry={walk.commit && walkConflict && online && !shopCommit.isPending ? () => shopCommit.mutate(walk.commit!) : undefined}
+      onFinish={(keys) => {
+        const request = walk.commit ?? { session_id: walk.session_id, mode: "store_walk" as const, store_slug: walk.store_slug, expected_checked_keys: keys, snapshot_version: snapshot.data.snapshot_version, occurred_at: new Date().toISOString() };
+        const pending = { ...walk, state: "pending_commit" as const, commit: request }; writeLocalWalk(pending); setWalk(pending);
+        shopCommit.mutate(request);
+      }}
+    /></div>;
+  }
+
   return (
     <div data-testid="grocery-page">
       <PageHead title="Grocery list" sub="Check off the store walk without changing online-cart state." />
       <StoreLauncher
-        entries={adapters.data?.launcher ?? []}
+        entries={adapters.data?.launcher ?? (snapshot.data.walk_context ? [{ id: `offline:${snapshot.data.walk_context.store_slug}`, adapter: "offline", mode: "store_walk", store: { slug: snapshot.data.walk_context.store_slug, name: snapshot.data.walk_context.display_name, shared_name: snapshot.data.walk_context.shared_name, domain: snapshot.data.walk_context.domain, aisle_map: snapshot.data.walk_context.aisle_map }, enabled: true, disabled_reason: null }] : [])}
         online={online}
         orderOpen={orderOpen}
         launcherRef={orderLauncherRef}
         onOrder={() => setOrderOpen((open) => !open)}
+        onWalk={startWalk}
+        onManual={() => setManualDraft({ session_id: mintRowId(), mode: "manual_shop", store_slug: null, expected_checked_keys: snapshot.data!.lines.filter((line) => line.checked_at != null && line.domain === "grocery").map((line) => line.key).sort(), snapshot_version: snapshot.data!.snapshot_version, occurred_at: new Date().toISOString() })}
+        pausedWalk={walk?.state === "paused" ? walk : null}
       />
+      {receipt ? <p role="status" data-testid="shop-receipt-summary">{receipt.mode === "manual_shop" ? "Manual shop logged" : "Store walk finished"} · {receipt.totals.items} items · ${receipt.totals.amount.toFixed(2)}</p> : null}
+      {shopError ? <p role="alert">{shopError}</p> : null}
+      <Dialog open={manualDraft !== null} onOpenChange={(open) => { if (!open) setManualDraft(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Log this manual shop?</DialogTitle><DialogDescription>Checked grocery items will move into the pantry and spend history. This works without a store adapter.</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setManualDraft(null)}>Cancel</Button><Button disabled={!manualDraft?.expected_checked_keys.length || shopCommit.isPending} onClick={() => { if (manualDraft) shopCommit.mutate(manualDraft); }}>{shopCommit.isPending ? "Logging…" : "Log shop"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       {orderOpen ? (
         <MemberOrderReview onClose={closeOrder} />
       ) : null}
@@ -181,12 +274,18 @@ function StoreLauncher({
   orderOpen,
   launcherRef,
   onOrder,
+  onWalk,
+  onManual,
+  pausedWalk,
 }: {
   entries: StoreAdapterProjection["launcher"];
   online: boolean;
   orderOpen: boolean;
   launcherRef: React.RefObject<HTMLButtonElement | null>;
   onOrder(): void;
+  onWalk(storeSlug: string): void;
+  onManual(): void;
+  pausedWalk: LocalWalkSession | null;
 }) {
   const reason = (entry: StoreAdapterProjection["launcher"][number]) => {
     if (entry.disabled_reason === "connect_kroger") return "Connect Kroger in Profile first.";
@@ -204,7 +303,7 @@ function StoreLauncher({
       {entries.length ? (
         <ul>
           {entries.map((entry) => {
-            const actionable = entry.enabled && entry.mode === "online_order" && online;
+            const actionable = entry.enabled && (entry.mode === "store_walk" || (entry.mode === "online_order" && online));
             return (
               <li
                 key={entry.id}
@@ -225,9 +324,9 @@ function StoreLauncher({
                   aria-controls={entry.mode === "online_order" ? "grocery-order-review" : undefined}
                   disabled={!actionable}
                   title={!online ? "Reconnect for store actions" : entry.enabled ? undefined : reason(entry)}
-                  onClick={actionable ? onOrder : undefined}
+                  onClick={actionable ? entry.mode === "store_walk" && entry.store ? () => onWalk(entry.store!.slug) : onOrder : undefined}
                 >
-                  {entry.enabled ? entry.mode === "online_order" && orderOpen ? "Close" : "Open" : reason(entry)}
+                  {entry.enabled ? entry.mode === "store_walk" ? pausedWalk?.store_slug === entry.store?.slug ? "Resume walk" : "Start walk" : entry.mode === "online_order" && orderOpen ? "Close" : "Open" : reason(entry)}
                 </Button>
               </li>
             );
@@ -236,6 +335,7 @@ function StoreLauncher({
       ) : (
         <p className="muted">Configure a store adapter in Profile, or shop manually below.</p>
       )}
+      <Button variant="outline" onClick={onManual}>Log a manual shop</Button>
     </section>
   );
 }
