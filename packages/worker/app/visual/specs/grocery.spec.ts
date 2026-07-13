@@ -1,8 +1,19 @@
 import { test, expect } from "../fixtures";
 import { SEED } from "../../../admin/visual/seed.mjs";
+import type { InstacartHandoffResult } from "@yamp/worker/instacart-shapes";
 
 const G = SEED.app.grocery;
 const TB = SEED.app.toBuy;
+
+async function enableInstacart(page: import("@playwright/test").Page): Promise<void> {
+	await page.route("**/api/profile/store-adapters", async (route) => {
+		const response = await route.fetch();
+		const body = await response.json() as { adapters: Record<string, unknown>; launcher: unknown[] };
+		body.adapters.instacart = { kind: "instacart", available: true };
+		body.launcher.push({ id: "instacart", adapter: "instacart", mode: "marketplace_handoff", store: null, enabled: true, disabled_reason: null });
+		await route.fulfill({ response, json: body });
+	});
+}
 
 test.beforeEach(async ({ asMember, groceryPage }) => {
 	await asMember();
@@ -39,6 +50,46 @@ test("the launcher remains driven by the shared store-adapter projection", async
 	).toBeEnabled();
 	await expect(groceryPage.launcher()).not.toContainText("Instacart");
 	await groceryPage.captureForReview("grocery-store-launcher");
+});
+
+test("configured Instacart renders the approved CTA and opens only a Marketplace handoff", async ({ groceryPage, page }) => {
+	await enableInstacart(page);
+	const result: InstacartHandoffResult = { status: "ready", url: "https://www.instacart.com/store/yamp-test", expires_at: "2026-08-11T12:00:00Z", reused: false, item_count: 2, underived: ["missing-recipe"], destination: "instacart_marketplace" };
+	await page.route("**/api/grocery/instacart", (route) => route.fulfill({ json: result }));
+	await page.reload(); await groceryPage.landmark();
+	await page.evaluate(() => { Reflect.set(globalThis, "open", (url: unknown) => { Reflect.set(globalThis, "__opened", String(url)); return null; }); });
+	const cta = groceryPage.instacartCta();
+	await expect(cta).toHaveText("Shop on Instacart");
+	await expect(cta.locator("img")).toHaveAttribute("src", "/brands/instacart-carrot.svg");
+	await expect(cta).toHaveCSS("height", "46px"); await expect(cta).toHaveCSS("border-radius", "29.5px");
+	await expect(cta).toHaveCSS("background-color", "rgb(0, 61, 41)");
+	await expect(groceryPage.launcherEntry("instacart")).toContainText("Choose a retailer, review matches, add items, and check out on Instacart.");
+	await cta.click();
+	await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, "__opened") as string | undefined)).toBe(result.url);
+	await expect(groceryPage.instacartStatus()).toContainText("missing ingredient details");
+	await expect(groceryPage.launcherEntry("instacart")).not.toContainText(/cart populated|order placed|savings|delivery/i);
+	await groceryPage.captureForReview("grocery-instacart-launcher");
+});
+
+test("Instacart typed empty and structured errors never claim success", async ({ groceryPage, page }) => {
+	await enableInstacart(page); await page.reload(); await groceryPage.landmark();
+	const states: Array<[InstacartHandoffResult, RegExp]> = [
+		[{ status: "empty", item_count: 0, underived: [] }, /to-buy list is empty/i],
+		[{ status: "unavailable", code: "not_configured" }, /not configured/i],
+		[{ status: "error", code: "unauthorized", retryable: false }, /not authorized/i],
+		[{ status: "error", code: "forbidden", retryable: false }, /not allowed/i],
+		[{ status: "error", code: "rate_limited", retryable: true }, /busy/i],
+		[{ status: "error", code: "upstream_unavailable", retryable: true }, /temporarily unavailable/i],
+		[{ status: "error", code: "invalid_request", retryable: false }, /could not build/i],
+		[{ status: "error", code: "invalid_response", retryable: false }, /unusable/i],
+	];
+	let next = states[0]![0];
+	await page.route("**/api/grocery/instacart", (route) => route.fulfill({ json: next }));
+	for (const [result, expected] of states) {
+		next = result; await groceryPage.instacartCta().click();
+		await expect(groceryPage.instacartStatus()).toHaveText(expected);
+		await expect(groceryPage.instacartStatus()).not.toContainText(/carted|ordered|purchased/i);
+	}
 });
 
 test("the order review is a labelled expanded disclosure", async ({

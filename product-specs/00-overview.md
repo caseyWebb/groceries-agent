@@ -122,9 +122,8 @@ bug).
    need one.
 2. **Export** — GET under `/api/*`: covered; no out-of-band signed URLs (D33).
 3. **Recovery-email verification/magic link** — SPA route + `/api`: no entry.
-4. **Instacart OAuth callback** — Worker-owned; nest under the existing `/oauth/*` (e.g.
-   `/oauth/instacart/callback`) so no new entry; anywhere else requires a same-change
-   entry + app-suite passthrough spec.
+4. **Instacart handoff** — session-gated `POST /api/grocery/instacart`; no OAuth callback
+   or new `run_worker_first` entry.
 5. **Widget resources** — MCP `resources/read`, never HTTP routes.
 6. **Satellite helper freshness observation** — rides `/satellite/*`: covered (D22).
 7. **Feed probe, walk/manual-shop, people, satellites member surfaces** — all `/api/*`:
@@ -143,7 +142,7 @@ Each band's proposal starts from this; every tool line lands in docs/TOOLS.md in
 same pass.
 
 **New tools**: `display_grocery_list`, `display_order_review` (D18/D19); post-spike
-Instacart flush sibling of `place_order` (D7).
+`create_instacart_handoff` Marketplace-link operation (D7), explicitly not a flush or order.
 
 **Renamed with alias window (D21)**: the `night_vibe` family → `meal_vibe` family; each
 vibe gains `meal`; `update_night_vibe` needs explicit-null field-clearing for the inline

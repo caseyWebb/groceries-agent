@@ -29,7 +29,8 @@ import {
 } from "../lib/mutations";
 import { mintRowId, useGrocerySnapshot, useStoreAdapters, type StoreAdapterProjection } from "../lib/data";
 import { useOnline } from "../lib/online";
-import { api, apiError } from "../lib/api";
+import { api, apiError, appFetch } from "../lib/api";
+import type { InstacartHandoffResult } from "@yamp/worker/instacart-shapes";
 import { MemberOrderReview } from "../components/member-order-review";
 import { readLocalWalk, readTenantStamp, writeLocalWalk, type LocalWalkSession } from "../lib/persist";
 import type { ShopCommitRequest, ShopCommitResult, ShopReceipt } from "@yamp/contract";
@@ -287,6 +288,32 @@ function StoreLauncher({
   onManual(): void;
   pausedWalk: LocalWalkSession | null;
 }) {
+  const [instacartBusy, setInstacartBusy] = React.useState(false);
+  const [instacartMessage, setInstacartMessage] = React.useState<string | null>(null);
+  const shopInstacart = async () => {
+    setInstacartBusy(true); setInstacartMessage(null);
+    try {
+      const response = await appFetch("/api/grocery/instacart", { method: "POST" });
+      if (!response.ok) throw await apiError(response);
+      const result = await response.json() as InstacartHandoffResult;
+      if (result.status === "ready") {
+        if (result.underived.length) setInstacartMessage(`The page is ready, but ${result.underived.length} planned recipe${result.underived.length === 1 ? " is" : "s are"} still missing ingredient details.`);
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      } else if (result.status === "empty") {
+        setInstacartMessage(result.underived.length ? "Nothing is ready to send yet; some planned recipes still need ingredient details." : "Your to-buy list is empty.");
+      } else if (result.status === "unavailable") {
+        setInstacartMessage("Instacart is not configured right now. Refresh or ask your operator.");
+      } else {
+        const messages = {
+          invalid_request: "Instacart could not build this shopping page.", unauthorized: "The Instacart key is not authorized.",
+          forbidden: "Instacart has not allowed this operation.", rate_limited: "Instacart is busy. Try again shortly.",
+          upstream_unavailable: "Instacart is temporarily unavailable. Try again.", invalid_response: "Instacart returned an unusable shopping link.",
+        } as const;
+        setInstacartMessage(messages[result.code]);
+      }
+    } catch { setInstacartMessage("Could not reach Instacart. Reconnect and try again."); }
+    finally { setInstacartBusy(false); }
+  };
   const reason = (entry: StoreAdapterProjection["launcher"][number]) => {
     if (entry.disabled_reason === "connect_kroger") return "Connect Kroger in Profile first.";
     if (entry.disabled_reason === "choose_kroger_store") return "Choose a Kroger store in Profile first.";
@@ -304,6 +331,17 @@ function StoreLauncher({
         <ul>
           {entries.map((entry) => {
             const actionable = entry.enabled && (entry.mode === "store_walk" || (entry.mode === "online_order" && online));
+            if (entry.mode === "marketplace_handoff") {
+              return (
+                <li key={entry.id} data-testid="store-launcher-entry" data-launcher-id="instacart" data-mode={entry.mode}>
+                  <span><strong>Instacart Marketplace</strong><small>Choose a retailer, review matches, add items, and check out on Instacart.</small></span>
+                  <button className="instacart-cta" data-testid="instacart-cta" disabled={!online || instacartBusy} onClick={() => void shopInstacart()}>
+                    <img src="/brands/instacart-carrot.svg" alt="" width="22" height="22" />
+                    {instacartBusy ? "Opening Instacart…" : "Shop on Instacart"}
+                  </button>
+                </li>
+              );
+            }
             return (
               <li
                 key={entry.id}
@@ -335,6 +373,7 @@ function StoreLauncher({
       ) : (
         <p className="muted">Configure a store adapter in Profile, or shop manually below.</p>
       )}
+      {instacartMessage ? <p className="muted" role="status" data-testid="instacart-status">{instacartMessage}</p> : null}
       <Button variant="outline" onClick={onManual}>Log a manual shop</Button>
     </section>
   );
