@@ -216,6 +216,26 @@ async function readFixedRealWaste(page: Page, range: WasteRange): Promise<WasteA
     status: "available",
     reason: null,
   });
+  expect(response.weeks.map((week) => ({
+    week_start: week.week_start,
+    week_end: week.week_end,
+    through: week.through,
+    is_partial: week.is_partial,
+    events: week.events,
+    status: week.status,
+    amount: week.amount,
+  }))).toEqual(SEED.app.waste.weekly[range].map((expected, index) => {
+    const weekStart = addDays(response.selected_start, index * 7);
+    const weekEnd = addDays(weekStart, 6);
+    const through = weekEnd > response.as_of ? response.as_of : weekEnd;
+    return {
+      week_start: weekStart,
+      week_end: weekEnd,
+      through,
+      is_partial: through < weekEnd,
+      ...expected,
+    };
+  }));
   expect(response.avoidability_mapping).toEqual({
     version: "waste-avoidability-v1",
     current_version: "waste-avoidability-v1",
@@ -257,6 +277,28 @@ async function readFixedRealWaste(page: Page, range: WasteRange): Promise<WasteA
   }
 
   return response;
+}
+
+async function expectRealWasteWeeksMirror(
+  retrospectivePage: { wasteWeeks: () => Locator },
+  response: WasteAnalyzer,
+): Promise<void> {
+  for (const [index, week] of response.weeks.entries()) {
+    const row = retrospectivePage.wasteWeeks().nth(index);
+    const visibleDate = new Intl.DateTimeFormat(undefined, {
+      month: "short", day: "numeric", timeZone: "UTC",
+    }).format(new Date(`${week.week_start}T00:00:00.000Z`));
+    await expect(row).toContainText(visibleDate);
+    await expect(row).toContainText(`${week.events} ${week.events === 1 ? "toss" : "tosses"}`);
+    await expect(row).toContainText(`${week.status[0]!.toUpperCase()}${week.status.slice(1)} monetary coverage`);
+    await expect(row).toContainText(
+      week.status === "empty"
+        ? "No recorded tosses"
+        : week.amount == null
+          ? "Last-paid value unavailable"
+          : `${week.status === "partial" ? "Known last-paid estimate" : "Last-paid estimate"} $${week.amount.toFixed(2)}`,
+    );
+  }
 }
 
 async function expectFixedRealWasteUiState(
@@ -586,6 +628,30 @@ const EMPTY_WASTE: WasteAnalyzer = {
   },
   most_wasted: { cap: 6, total_count: 0, items: [] },
   insight: "No recorded waste in this range.",
+};
+
+const EMPTY_WASTE_WITH_POSITIVE_DENOMINATORS: WasteAnalyzer = {
+  ...EMPTY_WASTE,
+  kpis: {
+    ...EMPTY_WASTE.kpis,
+    waste_rate: {
+      percent: 0,
+      known_waste_amount: 0,
+      qualifying_spend_amount: 80,
+      status: "available",
+      reason: null,
+      spend_coverage: {
+        status: "complete", spend_event_count: 2, qualifying_event_count: 2,
+        excluded_household_event_count: 0, pending_department_event_count: 0,
+        priced_event_count: 2, unpriced_event_count: 0, estimated_event_count: 0,
+        known_amount: 80,
+      },
+    },
+    trend: {
+      percent: -100, current_known_amount: 0, prior_known_amount: 20,
+      status: "available", reason: null,
+    },
+  },
 };
 
 const PARTIAL_WASTE_MONETARY: WasteAnalyzer["coverage"]["monetary"] = {
@@ -930,8 +996,9 @@ test("the signed-in real Waste analyzer presents returned facts, shared ranges, 
   await expect(retrospectivePage.wasteRange("8w")).toHaveAttribute("aria-pressed", "true");
   await expect(retrospectivePage.analyzerRangeGroup().locator('[aria-pressed="true"]')).toHaveCount(1);
 
-  await readFixedRealWaste(page, "8w");
+  const waste8w = await readFixedRealWaste(page, "8w");
   await expectFixedRealWasteUiState(retrospectivePage, "8w");
+  await expectRealWasteWeeksMirror(retrospectivePage, waste8w);
   await expect(retrospectivePage.wasteKpi("items")).toContainText("0.8 items per selected week");
   await expect(retrospectivePage.wasteKpi("rate")).toContainText("Waste last-paid estimate $190.00");
   await expect(retrospectivePage.wasteKpi("rate")).toContainText("Recorded grocery spend $222.00");
@@ -950,17 +1017,22 @@ test("the signed-in real Waste analyzer presents returned facts, shared ranges, 
   await expect(retrospectivePage.wasteWeeks().first()).toContainText(/toss|tosses/);
   await expect(retrospectivePage.wasteWeeksRegion()).toHaveAttribute("tabindex", "0");
   await expect(retrospectivePage.wasteBarGeometry().first()).toHaveAttribute("aria-hidden", "true");
+  await expect(retrospectivePage.wasteKpi("rate").locator(":scope > dt")).toHaveCount(1);
+  await expect(retrospectivePage.wasteKpi("rate").locator(":scope > dd")).toHaveCount(2);
+  await expect(retrospectivePage.wasteKpi("rate").locator(".waste-kpi-detail")).toHaveJSProperty("tagName", "DD");
 
   await retrospectivePage.wasteRange("4w").focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/range=4w/);
-  await readFixedRealWaste(page, "4w");
+  const waste4w = await readFixedRealWaste(page, "4w");
   await expectFixedRealWasteUiState(retrospectivePage, "4w");
+  await expectRealWasteWeeksMirror(retrospectivePage, waste4w);
 
   await retrospectivePage.selectWasteRange("12w");
   await expect(page).toHaveURL(/range=12w/);
-  await readFixedRealWaste(page, "12w");
+  const waste12w = await readFixedRealWaste(page, "12w");
   await expectFixedRealWasteUiState(retrospectivePage, "12w");
+  await expectRealWasteWeeksMirror(retrospectivePage, waste12w);
   await expect(retrospectivePage.wasteKpi("trend")).toContainText("Reason: prior_zero");
 
   await retrospectivePage.selectTab("spend");
@@ -1295,9 +1367,25 @@ test("Waste loading, structured error retry, and exact empty presentation stay d
   await expect(retrospectivePage.wasteState("empty")).toContainText("No recorded waste");
   await expect(retrospectivePage.wasteKpi("items")).toContainText("0");
   await expect(retrospectivePage.wasteKpi("tossed")).toHaveCount(0);
+  await expect(retrospectivePage.wasteKpi("rate")).toContainText("Reason: zero_denominator");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Reason: prior_zero");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Current known last-paid subtotal $0.00");
   await expect(retrospectivePage.wasteBreakdown("department")).toHaveCount(0);
   await expect(retrospectivePage.wasteWeeks()).toHaveCount(8);
   await expect(retrospectivePage.wasteInsight()).toContainText("No recorded waste in this range.");
+  await page.unroute("**/api/retrospective/waste?*");
+
+  await page.route("**/api/retrospective/waste?*", (route) =>
+    route.fulfill({ json: EMPTY_WASTE_WITH_POSITIVE_DENOMINATORS }));
+  await page.goto("/retrospective?tab=waste&range=8w");
+  await expect(retrospectivePage.wasteState("empty")).toBeVisible();
+  await expect(retrospectivePage.wasteKpi("tossed")).toHaveCount(0);
+  await expect(retrospectivePage.wasteKpi("items")).toContainText("0");
+  await expect(retrospectivePage.wasteKpi("rate")).toContainText("0.0%");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("100.0% lower");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Current last-paid estimate $0.00");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Prior last-paid estimate $20.00");
+  await expect(retrospectivePage.wasteBreakdown("department")).toHaveCount(0);
   await page.unroute("**/api/retrospective/waste?*");
 
   let calls = 0;
@@ -1331,6 +1419,10 @@ test("typed Waste presentation states preserve unavailable and partial evidence"
   await expect(retrospectivePage.wasteKpi("rate")).toContainText("Recorded grocery spend unavailable");
   await expect(retrospectivePage.wasteKpi("rate")).not.toContainText("$0.00");
   await expect(retrospectivePage.wasteKpi("items")).toContainText("2");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Reason: current_incomplete");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Current known last-paid subtotal $0.00");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Prior known last-paid subtotal $12.00");
+  await expect(retrospectivePage.wasteKpi("trend")).not.toContainText("Current last-paid estimate");
   await expect(retrospectivePage.wasteBreakdown("reason")).toContainText("Forgot");
   await expect(retrospectivePage.wasteBreakdown("reason")).toContainText("1 unmatched");
   await expect(retrospectivePage.wasteItems()).toContainText("Last-paid value unavailable");
@@ -1349,6 +1441,7 @@ test("typed Waste presentation states preserve unavailable and partial evidence"
   await expect(retrospectivePage.wasteBreakdown("reason")).toContainText("1 valued · 0 unmatched · 1 estimated");
   await expect(retrospectivePage.wasteBreakdown("reason")).toContainText("Last-paid value unavailable");
   await expect(retrospectivePage.wasteItems()).toContainText("Known last-paid estimate $4.00");
+  await expect(retrospectivePage.wasteItems().locator("li", { hasText: "Yogurt" })).toContainText("Known last-paid estimate $4.00");
   await expect(retrospectivePage.wasteItems()).toContainText("Last-paid value unavailable");
   await expect(retrospectivePage.wasteKpi("rate")).toContainText("Reason: waste_incomplete");
   await expect(retrospectivePage.wasteKpi("rate")).not.toHaveClass(/waste-kpi-rate-alert/);
@@ -1374,8 +1467,9 @@ test("pending Waste department stays orthogonal to complete money and prior tren
   await page.route("**/api/retrospective/waste?*", (route) => route.fulfill({ json: PRIOR_INCOMPLETE_WASTE }));
   await page.goto("/retrospective?tab=waste&range=8w");
   await expect(retrospectivePage.wasteKpi("trend")).toContainText("Reason: prior_incomplete");
-  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Current last-paid estimate $20.00");
-  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Prior last-paid estimate $8.00");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Current known last-paid subtotal $20.00");
+  await expect(retrospectivePage.wasteKpi("trend")).toContainText("Prior known last-paid subtotal $8.00");
+  await expect(retrospectivePage.wasteKpi("trend")).not.toContainText("Current last-paid estimate");
   await expect(retrospectivePage.wasteKpi("trend")).not.toContainText(/prior (unmatched|estimated)/i);
 });
 

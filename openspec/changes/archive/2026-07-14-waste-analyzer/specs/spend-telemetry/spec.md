@@ -3,7 +3,7 @@
 ### Requirement: Waste aggregates are agent-readable through the shared retrospective operation
 The `retrospective` tool SHALL return a read-only, household-scoped `waste` value produced by the shared `readWasteAnalyzer` operation. Its optional `waste_range` input SHALL accept exactly `4w`, `8w`, or `12w` and SHALL default to `4w` when omitted. Its optional `waste_mapping_version` input SHALL select an explicitly supported immutable avoidability mapping and SHALL default to the declared current mapping when omitted. The existing cooking `period`, Spend input, cooking result, and `.spend` value SHALL remain independent and unchanged.
 
-The existing profile retrospective result SHALL add the same shared object at `.waste`, using the compatible `4w` range and current mapping defaults without adding a profile query input. The dedicated member Waste response, MCP `.waste`, and profile `.waste` SHALL expose the same aggregate object without a transport-specific reducer or renamed field. The addition SHALL be backward-compatible for existing callers. No MCP tool SHALL accept a waste event, value, classification, or aggregate for writing.
+The existing profile retrospective result SHALL add the same shared object at `.waste`, using the compatible `4w` range and current mapping defaults without adding a profile query input. The dedicated member Waste response, MCP `.waste`, and profile `.waste` SHALL expose the same aggregate object without a transport-specific reducer or renamed field. The addition SHALL be backward-compatible for existing callers. The registered `retrospective` tool SHALL accept exactly its four read selectors — `period`, `spend_range`, `waste_range`, and `waste_mapping_version` — and SHALL leave source tables unchanged. This change SHALL add no standalone/direct Waste analyzer, derived-value, avoidability, aggregate, edit, delete, or correction writer and SHALL NOT alter the existing `update_pantry` qualitative waste-disposition capture, which accepts no dollar value.
 
 #### Scenario: Omitted MCP Waste inputs use compatible defaults
 - **WHEN** an authenticated member invokes `retrospective` without `waste_range` or `waste_mapping_version`
@@ -21,9 +21,9 @@ The existing profile retrospective result SHALL add the same shared object at `.
 - **WHEN** one authenticated identity reads retrospective while another tenant has overlapping waste and spend history
 - **THEN** `.waste` contains only facts owned by the resolved tenant, accepts no public tenant override, and the read performs no write
 
-#### Scenario: No Waste write tool exists
-- **WHEN** the MCP surface is enumerated
-- **THEN** no tool accepts a Waste event, member-entered value, avoidability result, or analyzer aggregate for writing
+#### Scenario: Retrospective remains a read while existing capture stays separate
+- **WHEN** the registered `retrospective` surface is inspected and invoked while existing source rows are recorded
+- **THEN** its input schema contains exactly the four read selectors, the call leaves those source rows unchanged, and the separate existing `update_pantry` qualitative waste-disposition capture remains unmodified and accepts no dollar value
 
 ### Requirement: The Waste analyzer uses the shared bounded UTC ISO-week contract
 `readWasteAnalyzer(env, tenant, range, mappingVersion?, now?)` SHALL accept exactly `4w`, `8w`, or `12w`, reuse the existing `SpendBounds`, `spendBounds`, and `addUtcDays` declarations exported from `packages/worker/src/spend.ts`, and map the range to N weekly buckets. The export-only Spend edit SHALL NOT alter helper bodies, Spend callers, or Spend behavior, and Waste SHALL NOT create a generic date-helper module or second range implementation. `now` SHALL default to the current clock and `as_of` SHALL equal `now.toISOString().slice(0, 10)`. Stored ISO dates SHALL be authoritative UTC calendar dates; the analyzer SHALL NOT infer a household timezone or reinterpret captured dates.
@@ -61,7 +61,7 @@ Avoidability SHALL be derived at read time from an exhaustively typed immutable 
 
 The mapping SHALL depend only on canonical reason. Item id, name, department, quantity, value, member input, and model output SHALL NOT affect it, and no member override SHALL exist. Compile-time typing and a production-registry test SHALL establish that every canonical `WASTE_REASONS` member appears exactly once and no extra reason appears.
 
-Omitting a version SHALL select `CURRENT_WASTE_AVOIDABILITY_VERSION`. An explicit supported name SHALL select that frozen table. An unknown name SHALL raise `ToolError("validation_failed", "unsupported waste avoidability mapping version; supported versions: waste-avoidability-v1")`; it SHALL NOT silently fall back. The result SHALL expose `avoidability_mapping: { version, current_version, is_current }`. Published mappings SHALL be retained unchanged; a later policy SHALL add a new immutable version and may separately advance the current pointer. An explicit historical version SHALL therefore reproduce classification for unchanged facts and range even after the default advances, while live late facts or Spend voids may still alter the live aggregate.
+Omitting a version SHALL select `CURRENT_WASTE_AVOIDABILITY_VERSION`. An explicit supported name SHALL select that frozen table. An unknown name SHALL raise `ToolError("validation_failed", "unsupported waste avoidability mapping version; supported versions: waste-avoidability-v1")`; it SHALL NOT silently fall back. `loadRetrospective` SHALL resolve this mapping synchronously before any cooking, recipe-index, overlay, preferences, or analyzer storage read, so an invalid mapping deterministically takes precedence over an unrelated index failure. The result SHALL expose `avoidability_mapping: { version, current_version, is_current }`. Published mappings SHALL be retained unchanged; a later policy SHALL add a new immutable version and may separately advance the current pointer. An explicit historical version SHALL therefore reproduce classification for unchanged facts and range even after the default advances, while live late facts or Spend voids may still alter the live aggregate.
 
 #### Scenario: Version one classifies every reason five and five
 - **WHEN** one event for each canonical Waste reason is read with version `waste-avoidability-v1`
@@ -77,7 +77,7 @@ Omitting a version SHALL select `CURRENT_WASTE_AVOIDABILITY_VERSION`. An explici
 
 #### Scenario: Unknown mappings fail explicitly
 - **WHEN** any unregistered version is requested through the shared resolver
-- **THEN** analysis fails with `validation_failed` and the exact supported-version message rather than using the current mapping
+- **THEN** analysis fails with `validation_failed` and the exact supported-version message before unrelated retrospective storage failures rather than using the current mapping
 
 #### Scenario: Avoidability ignores non-reason data
 - **WHEN** two events have the same reason but different item ids, names, departments, quantities, values, or prepared-from state
@@ -366,7 +366,7 @@ Focused tests SHALL invoke the production `readWasteAnalyzer` against the full m
 
 #### Scenario: MCP tests use exact public names and shared output
 - **WHEN** tests verify omitted and explicit Waste tool inputs
-- **THEN** they invoke registered `retrospective` with `waste_range` and `waste_mapping_version` and compare `.waste` with the shared aggregate without finding a Waste writer
+- **THEN** they invoke registered `retrospective`, prove its exact `period`/`spend_range`/`waste_range`/`waste_mapping_version` input schema, compare `.waste` with the shared aggregate, and prove the read leaves source tables unchanged
 
 #### Scenario: API and UI use the HTTP mapping name
 - **WHEN** the dedicated member surface requests mapping replay

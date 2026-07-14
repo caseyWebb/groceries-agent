@@ -171,16 +171,19 @@ export class RetrospectivePage extends AppPage {
 
   async captureWasteDesktop(): Promise<void> {
     await this.setViewport(1100, 900);
+    await expect(this.page.locator(".toast-content")).toHaveCount(0);
     await this.captureForReview("retro-waste-desktop");
   }
 
   async captureWasteTall(): Promise<void> {
     await this.setViewport(760, 1100);
+    await expect(this.page.locator(".toast-content")).toHaveCount(0);
     await this.captureForReview("retro-waste-tall");
   }
 
   async captureWasteNarrow(): Promise<void> {
     await this.setViewport(390, 844);
+    await expect(this.page.locator(".toast-content")).toHaveCount(0);
     await this.captureForReview("retro-waste-narrow");
   }
 

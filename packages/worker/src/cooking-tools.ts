@@ -17,6 +17,7 @@ import { type MealPlanOp } from "./meal-plan.js";
 import { retrospective, type RetrospectiveResult, type RetroConfig } from "./retrospective.js";
 import { readSpendAnalyzer, type SpendAnalyzer, type SpendRange } from "./spend.js";
 import { readWasteAnalyzer } from "./waste-analyzer.js";
+import { resolveWasteAvoidabilityMapping } from "./waste-avoidability.js";
 import type { WasteAnalyzer, WasteRange } from "./waste-shapes.js";
 import { loadRecipeIndex } from "./recipe-index.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
@@ -57,6 +58,7 @@ export async function loadRetrospective(
   wasteRange: WasteRange = "4w",
   wasteMappingVersion?: string,
 ): Promise<RetrospectiveResult & { spend: SpendAnalyzer; waste: WasteAnalyzer }> {
+  const resolvedWasteMapping = resolveWasteAvoidabilityMapping(wasteMappingVersion);
   const rows = await db(env).all<CookingLogJoinRow>(
     "SELECT cl.type AS type, cl.date AS date, cl.recipe AS recipe, cl.name AS name, cl.meal AS meal, " +
       "COALESCE(cl.protein, r.protein) AS protein, COALESCE(cl.cuisine, r.cuisine) AS cuisine " +
@@ -112,7 +114,7 @@ export async function loadRetrospective(
 
   const [spend, waste] = await Promise.all([
     readSpendAnalyzer(env, username, spendRange),
-    readWasteAnalyzer(env, username, wasteRange, wasteMappingVersion),
+    readWasteAnalyzer(env, username, wasteRange, resolvedWasteMapping.version),
   ]);
   return { ...retrospective(entries, effective, period, new Date(), retroConfig), spend, waste };
 }
@@ -245,7 +247,7 @@ export function registerCookingTools(
     "retrospective",
     {
       description:
-        "Aggregate cooking history over a period from the cooking log. `period` accepts 'Nd' (e.g. '30d'), 'week', 'month', 'quarter', 'year', or 'all', and scopes `recipes_cooked`, `protein_mix`, `cuisine_mix` (non-recipe entries count through inline dimensions; missing dimensions bucket under `unknown`), meal-aware `cadence` (`cooks_per_week` counts recipe + ad_hoc only; `by_meal` counts breakfast/lunch/dinner/project rows whose meal is set; `meal_unknown` counts NULL-meal rows, which remain in the overall figure and are never assigned a fabricated meal), `cook_vs_convenience`, and frequency-ranked `ready_to_eat_favorites`. `underused` is independent of period: loved recipes — the caller's favorites plus revealed favorites cooked at least 3 times in the trailing 12 months — that are never cooked or stale for a fixed 30 days and in season now; rejected recipes are excluded. Each underused item carries `why` (`favorite` or `revealed`) and all-time `cook_count`, sorts stalest-first, and the list is capped at 15 while `underused_count` reports the pre-cap total. Optional `spend_range` independently accepts `4w`, `8w`, or `12w` (default `4w`). `spend` is the household's read-only Spend analyzer, independent of cooking period: bounded UTC ISO-Monday windows over captured non-voided facts with coverage-aware totals, weekly buckets, cost per meal, matched trend, budget comparisons, captured department/store/planned-vs-impulse breakdowns, deterministic top drivers and insight, plus `awaiting_mark_placed`. Optional `waste_range` independently accepts `4w`, `8w`, or `12w` (default `4w`), and optional `waste_mapping_version` selects a supported immutable avoidability mapping (default current). `waste` is the household's read-only Waste analyzer over captured Waste and eligible last-paid Spend history, with truthful monetary/classification coverage, weekly buckets, KPIs, breakdowns, most-wasted items, and deterministic insight. Treat partial or unavailable values as such; never infer missing spend or Waste value, and never count awaiting rows as spend. This tool is read-only and no Spend- or Waste-write tool exists.",
+        "Aggregate cooking history over a period from the cooking log. `period` accepts 'Nd' (e.g. '30d'), 'week', 'month', 'quarter', 'year', or 'all', and scopes `recipes_cooked`, `protein_mix`, `cuisine_mix` (non-recipe entries count through inline dimensions; missing dimensions bucket under `unknown`), meal-aware `cadence` (`cooks_per_week` counts recipe + ad_hoc only; `by_meal` counts breakfast/lunch/dinner/project rows whose meal is set; `meal_unknown` counts NULL-meal rows, which remain in the overall figure and are never assigned a fabricated meal), `cook_vs_convenience`, and frequency-ranked `ready_to_eat_favorites`. `underused` is independent of period: loved recipes — the caller's favorites plus revealed favorites cooked at least 3 times in the trailing 12 months — that are never cooked or stale for a fixed 30 days and in season now; rejected recipes are excluded. Each underused item carries `why` (`favorite` or `revealed`) and all-time `cook_count`, sorts stalest-first, and the list is capped at 15 while `underused_count` reports the pre-cap total. Optional `spend_range` independently accepts `4w`, `8w`, or `12w` (default `4w`). `spend` is the household's read-only Spend analyzer, independent of cooking period: bounded UTC ISO-Monday windows over captured non-voided facts with coverage-aware totals, weekly buckets, cost per meal, matched trend, budget comparisons, captured department/store/planned-vs-impulse breakdowns, deterministic top drivers and insight, plus `awaiting_mark_placed`. Optional `waste_range` independently accepts `4w`, `8w`, or `12w` (default `4w`), and optional `waste_mapping_version` selects a supported immutable avoidability mapping (default current). `waste` is the household's read-only Waste analyzer over captured Waste and eligible last-paid Spend history, with truthful monetary/classification coverage, weekly buckets, KPIs, breakdowns, most-wasted items, and deterministic insight. Treat partial or unavailable values as such; never infer missing spend or Waste value, and never count awaiting rows as spend. This retrospective tool is read-only, adds no analyzer or derived-value writer, and does not alter the separate existing pantry-disposition capture operation, which accepts no dollar value.",
       inputSchema: {
         period: z.string().optional(),
         spend_range: z.enum(["4w", "8w", "12w"]).optional(),

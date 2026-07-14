@@ -84,6 +84,11 @@ export interface SeedLiterals {
       readonly amounts: Readonly<Record<"4w" | "8w" | "12w", number>>;
       readonly events: Readonly<Record<"4w" | "8w" | "12w", number>>;
       readonly rates: Readonly<Record<"4w" | "8w" | "12w", number>>;
+      readonly weekly: Readonly<Record<"4w" | "8w" | "12w", readonly {
+        readonly events: number;
+        readonly status: "empty" | "complete";
+        readonly amount: number;
+      }[]>>;
       readonly topItem: { readonly key: string; readonly name: string; readonly amount: number };
       readonly leftover: { readonly key: string; readonly name: string };
       readonly insight8w: string;

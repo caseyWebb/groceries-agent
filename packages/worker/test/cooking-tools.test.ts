@@ -94,6 +94,16 @@ describe("loadRetrospective — D1 cooking_log + recipe index", () => {
     });
   });
 
+  it("validates the Waste mapping before recipe-index storage reads", async () => {
+    const env = envWith([], [], { throwOnRecipes: true });
+    await expect(
+      loadRetrospective(env, "everett", "all", "4w", "4w", "waste-avoidability-unknown"),
+    ).rejects.toMatchObject({
+      code: "validation_failed",
+      message: "unsupported waste avoidability mapping version; supported versions: waste-avoidability-v1",
+    });
+  });
+
   it("an empty log is not an error — empty history", async () => {
     const env = envWith([], []);
     const r = await loadRetrospective(env, "everett", "all");
@@ -129,7 +139,7 @@ describe("retrospective MCP Spend and Waste adapters", () => {
     ).run(tenant, id, item, item, reason, today, `${today}T12:00:00.000Z`);
   }
 
-  it("registers independent Spend/Waste inputs, preserves cooking, and exposes no analyzer writer", async () => {
+  it("registers the exact retrospective read selectors and leaves source tables unchanged", async () => {
     const h = sqliteEnv(["everett", "casey"]);
     seedSpend(h, "everett", "OWN", 24);
     seedSpend(h, "casey", "OTHER", 900);
@@ -161,17 +171,15 @@ describe("retrospective MCP Spend and Waste adapters", () => {
       expect(retrospectiveTool.description).toMatch(/waste_mapping_version.*immutable avoidability mapping.*default current/is);
       expect(retrospectiveTool.description).toMatch(/Waste analyzer.*captured Waste.*last-paid Spend history.*coverage.*weekly buckets.*KPIs.*breakdowns.*most-wasted.*insight/is);
       expect(retrospectiveTool.description).toMatch(/read-only/is);
-      expect(tools.some((tool) => /spend/i.test(tool.name))).toBe(false);
-      expect(tools.some((tool) => /waste/i.test(tool.name))).toBe(false);
       const properties = (retrospectiveTool.inputSchema as {
         properties?: Record<string, unknown>;
       }).properties ?? {};
-      expect(Object.keys(properties)).toEqual(expect.arrayContaining([
+      expect(Object.keys(properties).sort()).toEqual([
         "period",
         "spend_range",
-        "waste_range",
         "waste_mapping_version",
-      ]));
+        "waste_range",
+      ]);
       expect(properties).not.toHaveProperty("range");
       expect(properties).not.toHaveProperty("mapping_version");
 

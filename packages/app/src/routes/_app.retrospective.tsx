@@ -479,7 +479,7 @@ function WasteResult({ result }: { result: WasteAnalyzer }) {
         </aside>
       ) : null}
 
-      {empty ? <WasteEmptyCount result={result} /> : <WasteKpis result={result} />}
+      <WasteKpis result={result} includeTossed={!empty} />
       <WasteWeeks result={result} />
       {!empty ? (
         <>
@@ -508,20 +508,7 @@ function WasteCoverageEvidence({ coverage }: { coverage: WasteAnalyzer["coverage
   );
 }
 
-function WasteEmptyCount({ result }: { result: WasteAnalyzer }) {
-  return (
-    <dl className="spend-kpis waste-kpis waste-kpis-empty" aria-label="Waste key metrics">
-      <WasteKpi
-        label="Items binned"
-        value={String(result.kpis.items_binned.count)}
-        detail={`${result.kpis.items_binned.per_week.toFixed(1)} items per selected week`}
-        testId="waste-kpi-items"
-      />
-    </dl>
-  );
-}
-
-function WasteKpis({ result }: { result: WasteAnalyzer }) {
+function WasteKpis({ result, includeTossed }: { result: WasteAnalyzer; includeTossed: boolean }) {
   const tossed = result.kpis.tossed_value;
   const items = result.kpis.items_binned;
   const rate = result.kpis.waste_rate;
@@ -529,12 +516,14 @@ function WasteKpis({ result }: { result: WasteAnalyzer }) {
   const rateHigh = rate.status === "available" && rate.percent != null && rate.percent >= 10;
   return (
     <dl className="spend-kpis waste-kpis" aria-label="Waste key metrics">
-      <WasteKpi
-        label="Tossed value"
-        value={tossed.amount == null ? "Unavailable" : money(tossed.amount)}
-        detail={`${wasteMoneyLabel(tossed.status)}${wasteEvidenceSuffix(result.coverage.monetary)}`}
-        testId="waste-kpi-tossed"
-      />
+      {includeTossed ? (
+        <WasteKpi
+          label="Tossed value"
+          value={tossed.amount == null ? "Unavailable" : money(tossed.amount)}
+          detail={`${wasteMoneyLabel(tossed.status)}${wasteEvidenceSuffix(result.coverage.monetary)}`}
+          testId="waste-kpi-tossed"
+        />
+      ) : null}
       <WasteKpi
         label="Items binned"
         value={String(items.count)}
@@ -560,7 +549,9 @@ function WasteKpis({ result }: { result: WasteAnalyzer }) {
         detail={
           <>
             {trend.status === "unavailable" ? <span>Reason: {trend.reason}</span> : <span>Against the matched prior range</span>}
-            <span>Current last-paid estimate {money(trend.current_known_amount)} · Prior last-paid estimate {money(trend.prior_known_amount)}</span>
+            <span>
+              {trend.status === "unavailable" ? "Current known last-paid subtotal" : "Current last-paid estimate"} {money(trend.current_known_amount)} · {trend.status === "unavailable" ? "Prior known last-paid subtotal" : "Prior last-paid estimate"} {money(trend.prior_known_amount)}
+            </span>
           </>
         }
         testId="waste-kpi-trend"
@@ -580,7 +571,7 @@ function WasteKpi(props: {
     <div className={`spend-kpi waste-kpi${props.alert ? " waste-kpi-rate-alert" : ""}`} data-testid={props.testId}>
       <dt>{props.label}</dt>
       <dd>{props.value}</dd>
-      <span className="waste-kpi-detail">{props.detail}</span>
+      <dd className="waste-kpi-detail">{props.detail}</dd>
     </div>
   );
 }
@@ -691,7 +682,7 @@ function WasteItemRow({ item }: { item: WasteItemGroup }) {
         <small>{item.department?.label ?? "Department pending"} · tossed {item.event_count}×</small>
       </span>
       <span>
-        <strong>{wasteGroupAmount(item.amount, item.unvalued_event_count, item.estimated_event_count)}</strong>
+        <strong>{wasteItemAmount(item)}</strong>
         <small>{item.amount_percentage == null ? "Amount share unavailable" : `${item.amount_percentage.toFixed(1)}% of known last-paid value`} · {item.valued_event_count} valued · {item.unvalued_event_count} unmatched · {item.estimated_event_count} estimated</small>
       </span>
     </li>
@@ -751,6 +742,11 @@ function wasteAmountText(amount: number | null, status: SpendCoverageStatus): st
 function wasteGroupAmount(amount: number | null, unmatched: number, estimated: number): string {
   if (amount == null) return "Last-paid value unavailable";
   return `${unmatched > 0 || estimated > 0 ? "Known last-paid estimate" : "Last-paid estimate"} ${money(amount)}`;
+}
+
+function wasteItemAmount(item: WasteItemGroup): string {
+  if (item.status === "unavailable") return "Last-paid value unavailable";
+  return `${item.status === "partial" ? "Known last-paid estimate" : "Last-paid estimate"} ${money(item.amount!)}`;
 }
 
 function knownDenominatorText(breakdown: WasteBreakdown): string {

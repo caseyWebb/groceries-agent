@@ -46,8 +46,10 @@ This analyzer keeps that stamp intact and defines an effective analytics departm
   store-quote, quantity-parsing, cross-tenant, or heuristic valuation.
 - Item-, department-, name-, quantity-, or model-based avoidability; a member override;
   or mutation of events when the current mapping changes.
-- A Waste write/edit/delete/correction tool, backfill, compensation, reconciliation,
-  materialized aggregate, value/avoidability column, analyzer table, migration, index,
+- A standalone/direct Waste analyzer, derived-value, avoidability, aggregate,
+  edit/delete/correction writer; any change to existing qualitative `update_pantry`
+  waste-disposition capture; a backfill, compensation, reconciliation, materialized
+  aggregate, value/avoidability column, analyzer table, migration, index,
   queue, binding, dependency, scheduled job, or cron change.
 - Cart recovery/ownership, pantry or grocery ownership tokens, generic CAS or error
   frameworks, re-key convergence, settlement/compensation state machines, operation
@@ -541,12 +543,17 @@ uses D2's exact HTTP-400 structured error. `requireSession` supplies tenant, and
 The MCP `retrospective` input adds optional
 `waste_range: z.enum(["4w", "8w", "12w"])` and
 `waste_mapping_version: z.string().optional()`. Omission defaults to `4w` and current
-mapping; the mapping string goes through the same resolver/error as HTTP. The existing
+mapping; `loadRetrospective` synchronously resolves it before any cooking, recipe-index,
+overlay, preferences, or analyzer storage read, so validation precedes an unrelated
+index failure. The mapping string goes through the same resolver/error as HTTP. The existing
 `period` and Spend range remain independent. `loadRetrospective` accepts additive Waste
 options defaulted to 4w/current and adds `.waste` without changing cooking or `.spend`.
 The existing `/api/profile/retrospective` keeps its public `period` input only and uses
 those compatible 4w/current defaults; the dedicated Waste API is the member replay and
-8w UI surface. No Waste write tool exists.
+8w UI surface. This change adds no standalone/direct Waste analyzer, derived-value,
+avoidability, aggregate, edit/delete/correction writer and leaves the separate existing
+qualitative `update_pantry` waste-disposition capture unchanged; that capture accepts no
+dollar value.
 
 Old MCP/profile callers therefore receive one additive field and keep all existing
 defaults. Existing databases already have every queried column/index. Existing NULL
@@ -576,8 +583,9 @@ The Waste panel renders:
 
 - an accessible status while loading (`Loading waste analysis…`);
 - a structured `role="alert"` error message and keyboard-operable Retry that refetches;
-- a distinct empty state for `status=empty`, retaining the range control and exact zero
-  item count without rendering misleading dollar breakdowns;
+- a distinct empty state for `status=empty`, retaining the range control, exact zero
+  item count, and returned Waste rate/trend while omitting the Tossed-value dollar KPI
+  and dollar breakdowns;
 - unavailable money as `Last-paid value unavailable` while exact item counts and
   reason/avoidability/department counts remain visible;
 - partial money as `Known last-paid estimate`, with unmatched and estimated counts
@@ -586,6 +594,7 @@ The Waste panel renders:
 - complete money as `Last-paid estimate`, never `receipt total`, because even an exact
   match is the last unit price, not measured tossed quantity.
 
+Each KPI definition-list group puts its value and detail evidence in `<dd>` elements.
 Pending Waste department classification is presented separately from Waste money. If
 every Waste event has an exact non-estimated match, a pending effective department does
 not change `Last-paid estimate` to the partial label; it instead makes Department
@@ -593,8 +602,8 @@ coverage incomplete. Separately, a pending department on a selected Spend row ma
 Waste rate incomplete through the qualifying Spend rules. Trend has no prior-period
 coverage fields by design: an unavailable trend renders its returned
 `current_incomplete`, `prior_incomplete`, or
-`prior_zero` reason next to the current/prior known amounts, and the UI does not invent
-unmatched or estimated counts for the prior interval.
+`prior_zero` reason next to current/prior amounts labelled known last-paid subtotals,
+and the UI does not invent unmatched or estimated counts for the prior interval.
 
 KPI labels/text expose Tossed value, exact Items binned and items/week, Waste rate with
 its unavailable reason, and matched trend. Weekly bars are a semantic chronological
@@ -602,8 +611,8 @@ list with visible week, event count, amount/unavailable label, and coverage text
 geometry is decorative and hidden from assistive technology. Breakdown rows expose
 labels, counts, known amounts, both percentages, and denominator/coverage text.
 Most-wasted rows expose name, `tossed N×`, optional effective department, and known or
-unavailable value. An available rate at 10.0% or above gets the reviewed red treatment;
-null never does.
+unavailable value formatted directly from returned item status; counts remain evidence.
+An available rate at 10.0% or above gets the reviewed red treatment; null never does.
 
 Every Waste-derived dollar amount is labelled as a spend-history last-paid estimate.
 If `qualifying_spend_amount` is displayed as the Waste-rate denominator input, it is
@@ -644,9 +653,12 @@ migrated NULL/past rows exercise the same reader; because there is no new migrat
 there is no alternate schema or migration-only model.
 
 Playwright's primary Waste case signs into the seeded app and reaches the production
-analyzer through the real member API. It verifies 8w URL canonicalization, range changes,
-tabs/range keyboard behavior, KPI/chart/breakdown/item text, rate styling, and reviewed
-desktop plus narrow/tall screenshots. Narrow interception is allowed only to hold an
+analyzer through the real member API. Fixed seed expectations pin exact chronological
+4w/8w/12w weekly starts, bounds, events, statuses, and amounts, and the case verifies SPA
+rows mirror each response in order. It also verifies 8w URL canonicalization, range
+changes, tabs/range keyboard behavior, KPI definition semantics, breakdown/item text,
+rate styling, and reviewed desktop plus narrow/tall screenshots after transient toasts
+clear. Narrow interception is allowed only to hold an
 otherwise unreachable loading/error/retry or valid unavailable/partial presentation
 state, including a prior-incomplete trend. It must use the exported production response
 type and cannot replace the seeded aggregate proof. That prior-incomplete case renders
@@ -692,6 +704,10 @@ frozen upper forecasts), and independently at more than 70 files or 7,000 added 
 No generated file is expected. `packages/worker/package.json` is the one anticipated
 authored manifest/configuration edit; `/api/*` routing, dependencies, bindings, Wrangler
 configuration, and migration state are already sufficient.
+
+The pre-review candidate actually changed **29 files with +5,937/-93**. That is 337
+lines, or 6%, above the frozen 5,600-line upper forecast while remaining below the
+ratified 7,000-line (>25%) approval stop; the file count matched the exact forecast.
 
 **Alternative rejected:** unit-test a pure fixture reducer as the primary proof. Reader,
 API, MCP, and seeded-browser entry points already make the production algorithm directly
