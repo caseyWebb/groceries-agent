@@ -10,8 +10,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env } from "./env.js";
+import type { Tenant } from "./tenant.js";
 import { db } from "./db.js";
 import { ToolError, runTool } from "./errors.js";
+import { isVisible, memberViewer, lensHouseholds } from "./visibility.js";
 import {
   readRecipeNotes,
   insertRecipeNote,
@@ -51,17 +53,19 @@ export async function groupFavorites(env: Env, slug: string, ids: string[]): Pro
 
 /**
  * @param server    the MCP server to register on
- * @param memberId  the caller's MEMBER id (member-identity-split) — author of new notes +
- *                  privacy boundary on reads; equals the tenant id for founding members
- * @param directory the tenant allowlist, scoping the group ratings aggregate
+ * @param tenant    the caller's identity pair — `tenant.member` authors new notes and is
+ *                  the privacy boundary on reads (equals the tenant id for founding
+ *                  members); `tenant.id` keys the visibility-lens gate on the read
+ * @param directory the tenant allowlist, scoping the self-hosted group aggregate
  * @param env       D1 — the `recipe_notes` + `overlay` tables back the read
  */
 export function registerNoteTools(
   server: McpServer,
-  memberId: string,
+  tenant: Tenant,
   directory: { list(): Promise<string[]> },
   env: Env,
 ): void {
+  const memberId = tenant.member;
   server.registerTool(
     "add_recipe_note",
     {
@@ -97,7 +101,7 @@ export function registerNoteTools(
     "read_recipe_notes",
     {
       description:
-        "Read the GROUP's notes and favorites for a recipe — the collaborative cookbook view. Returns { notes: [{ author, created_at, body, tags, private }], favorites: [{ author }] } aggregated across everyone in your group. You see your own private notes plus everyone's shared notes; other people's private notes are never shown. `favorites` is the group signal — surface it ('favorited by 2 others') before recommending a recipe someone hasn't tried.",
+        "Read the notes and favorites for a recipe INSIDE YOUR VISIBILITY LENS — the collaborative cookbook view. Returns { notes: [{ author, created_at, body, tags, private }], favorites: [{ author }] }, aggregated across the households in your lens (your own household, friend households, and — on a self-hosted deployment — everyone). You see your own private notes plus their shared notes; other people's private notes are never shown, and households outside your lens contribute nothing. A recipe outside your lens returns the same not_found an unknown slug does. `favorites` is the group signal — surface it ('favorited by 2 others') before recommending a recipe someone hasn't tried.",
       inputSchema: { slug: z.string() },
     },
     ({ slug }) =>
@@ -105,11 +109,18 @@ export function registerNoteTools(
         if (!SLUG_RE.test(slug)) {
           throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
         }
-        const ids = await directory.list();
-        // Both halves are now D1 queries: notes (own-private + group-shared via the
-        // privacy WHERE) and favorites (overlay scoped to the group). No GitHub read.
+        // Lens-bound (shared-corpus): the visibility check runs BEFORE any note read —
+        // an out-of-lens slug is indistinguishable from a nonexistent one, and no note
+        // content is disclosed.
+        if (!(await isVisible(env, memberViewer(tenant.id, tenant.member), slug))) {
+          throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+        }
+        // The aggregation set is the caller's LENS households: null (self-hosted) means
+        // every allowlisted household — today's read; under SaaS it is own + friends.
+        const lens = await lensHouseholds(env, tenant.id);
+        const ids = lens ?? (await directory.list());
         const [notes, favorites] = await Promise.all([
-          readRecipeNotes(env, slug, memberId),
+          readRecipeNotes(env, slug, memberId, lens),
           groupFavorites(env, slug, ids),
         ]);
         return { slug, notes, favorites };

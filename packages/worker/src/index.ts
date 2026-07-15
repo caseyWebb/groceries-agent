@@ -25,6 +25,7 @@ import { buildDupScanDeps, runDupScanJob } from "./dup-scan.js";
 import { buildFacetDeps, runFacetJob } from "./recipe-classify.js";
 import { buildProjectionDeps, runProjectionJob } from "./recipe-projection.js";
 import { buildDiscoveryDeps, runDiscoverySweepJob, DEFAULT_CONFIG } from "./discovery-sweep.js";
+import { runLensReconcileJob } from "./lens-reconcile.js";
 import { buildNormalizeDeps, runNormalizeJob } from "./ingredient-normalize.js";
 import { buildCategoryDeps, runCategoryJob } from "./ingredient-category.js";
 import { buildReconfirmDeps, runReconfirmJob } from "./ingredient-reconfirm.js";
@@ -309,6 +310,13 @@ export default {
     // Phase 4: the sweep runs after the index + embeddings are fresh (it dedups + matches against
     // them), using the operator's stored config loaded once above.
     const phase4 = await Promise.allSettled([runDiscoverySweepJob(env, buildDiscoveryDeps(env), sweepConfig)]);
+    // Phase 4b: the LENS RECONCILE (deployment-profiles-and-visibility-lens) — attaches
+    // every zero-grant corpus recipe to ≥1 household through the recipe_imports
+    // primitive (attribution-derived, else the operator household) and heals any match
+    // row missing its grant. Runs AFTER the sweep so this tick's imports (which mint
+    // their own grants at creation) are never double-processed mid-write; bounded,
+    // idempotent, and permanent — the guard that keeps the unattached class extinct.
+    const phase4b = await Promise.allSettled([runLensReconcileJob(env)]);
     // Phase 5: the pending_proposals producers — the deterministic profile signal pass (no
     // model), the generative archetype-derivation pass (self-gated to ~daily; names new
     // archetypes on the small model and enqueues add_vibe proposals), the pref-retirement
@@ -325,7 +333,7 @@ export default {
       runPrefRetirementSeedJob(env),
       runDupScanJob(env, buildDupScanDeps(env)),
     ]);
-    const failed = [...phase1, ...phase2, ...phase3, ...phase4, ...phase5].find((r) => r.status === "rejected");
+    const failed = [...phase1, ...phase2, ...phase3, ...phase4, ...phase4b, ...phase5].find((r) => r.status === "rejected");
     if (failed && failed.status === "rejected") throw failed.reason;
   },
 };

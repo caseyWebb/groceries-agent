@@ -26,6 +26,9 @@ test("browse renders the flat organic list with time chips; search narrows and c
   await expect(cookbookPage.organicRow("viz-chicken-soup")).toBeVisible();
   // The compact hit now carries time_total — rows chip it ("{n} min").
   await expect(cookbookPage.row(SEED.recipe.slug)).toContainText("35 min");
+  // Under self-hosted no "Curated" provenance badge ever renders (the curated tier is
+  // SaaS-only; here every row's grant reads as the implicit all-to-all `friend`).
+  await expect(cookbookPage.anyCuratedBadges()).toHaveCount(0);
   await cookbookPage.search("salmon");
   await cookbookPage.expectResultCount(1);
   await cookbookPage.search("zebra stew");

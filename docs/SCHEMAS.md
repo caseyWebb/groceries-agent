@@ -16,7 +16,8 @@ The data lives in three tiers (see `ARCHITECTURE.md`): the authored markdown cor
 - **Per-tenant D1 (the profile)** — each member's grocery **profile** lives in normalized D1 tables (`migrations/d1/0004_profile.sql`): a singleton `profile` row (the markdown fields `taste`/`diet_principles`, the preference scalars `planning_cadence_days`/`weekly_budget`, the per-meal `cadence` JSON map (migration 0052 — the planning-frequency preference), the JSON columns `stores`/`dietary`/`rotation`/`custom`/`kitchen_notes`, `freezer_capacity_estimate`, `last_planned_at`, and the FROZEN legacy columns `default_cooking_nights` (readable — the cadence read-fallback — but no writer) / `lunch_strategy` / `ready_to_eat_default_action` (retired; converge to NULL via the pref-retirement cron and drop, with `default_cooking_nights`, at the deprecation-window close) — the per-tenant planning watermark, migration 0016, stamped by `update_meal_plan` on an add and read by `list_new_for_me`), plus child tables `brand_prefs(tenant, term, tiers, any_brand)`, `kitchen_equipment(tenant, slug)`, `staples(tenant, name, normalized_name, perishable)`, `overlay(tenant, recipe, favorite, reject)` (the two mutually-exclusive disposition marks; there is no `status` lifecycle or `rating` column), `ready_to_eat(tenant, slug, meal, name, favorite, reject, category, source, brand, notes)`, and `stockup(tenant, name, normalized_name, unit, typical_purchase, notes, baseline_price, buy_at_or_below)`. `idx_overlay_recipe` powers the cross-tenant group-favorites query. Reads assemble the agent-facing objects from these rows (`src/profile-db.ts`); writes mutate rows — no document format on the profile path.
 - **Per-tenant D1 (session state)** — each member's working state lives in D1 row tables (`migrations/d1/0005_session_state.sql`): `pantry(tenant, name, normalized_name, quantity, category, prepared_from, added_at, last_verified_at, notes)`, `meal_plan(tenant, id /*opaque row id — PRIMARY KEY (tenant, id), migration 0052*/, recipe, meal /*breakfast|lunch|dinner|project, default dinner*/, planned_for, sides /*json*/, from_vibe /*meal-vibe slot provenance, migration 0026; advisory, never slug-resolved*/)`, `grocery_list(tenant, name, normalized_name, quantity, kind, domain, status, source, for_recipes /*json*/, note, added_at, ordered_at, sent_in /*internal send-record linkage, migration 0051*/)` — keyed by normalized name (pantry/grocery) or the opaque row id (meal plan — per-slot identity, D26-final: `id` is a client- or server-minted ULID, or the migration's one-time 32-hex mint; formats mix, so nothing ever parses or meaningfully sorts an id, and `id ASC` is only an arbitrary-but-deterministic tiebreak; there is deliberately NO unique index on `(tenant, recipe)` — a recipe may occupy several rows by explicit user action, and uniqueness lives in the op layer's slug-global coalesce; project rows carry no date and no sides, enforced at the op layer, not by a CHECK), with `meal_plan_tenant_recipe(tenant, recipe)` backing the slug ops, `idx_grocery_status(tenant, status)` and `idx_pantry_category(tenant, category)` backing the read filters. Adds are row upserts (`INSERT … ON CONFLICT DO UPDATE`), removes/status changes are targeted row statements — no whole-array rewrite, strong read-after-write consistency. (The detailed item shapes are below.) The Worker read path has **no** GitHub/KV fallback — a miss returns empty/null.
 - **Shared operational D1 (reconcile + bug reports + discovery log)** — group-wide (not per-tenant) operational tables the Worker owns: `reconcile_errors(slug, path, message, recorded_at)` (`migrations/d1/0014_reconcile_errors.sql`) — recipes the index reconcile **skipped**, replaced wholesale each pass; `bug_reports(id, reporter, title, body, created_at, status)` (`migrations/d1/0015_bug_reports.sql`) — agent-filed bug reports, `reporter`/`created_at` attributed server-side; and `discovery_log(id, url, title, source, outcome, slug, detail, created_at)` (`migrations/d1/0016_background_discovery.sql`) — the discovery sweep's per-candidate outcome log, one table serving three roles (operator audit, intake dedup, parked-error surface), retention-pruned. (The detailed shapes are below.)
-- **Sweep-/reconcile-owned per-member D1 (discovery sweep)** — group-wide *attribution + taste* tables the discovery sweep owns (`migrations/d1/0016_background_discovery.sql`): `discovery_matches(recipe, tenant, score, matched_at)` — per-member match attribution (the import gate **and** the `list_new_for_me` filter); and `taste_derived(tenant, taste_hash, embedding, updated_at)` — each member's taste-text embedding, content-hash gated like `recipe_derived`. Like `recipe_derived`, these are **siblings of `recipes`** so the index projection's wholesale `recipes` rebuild never owns them. (The detailed shapes are below.)
+- **Sweep-/reconcile-owned per-member D1 (discovery sweep)** — group-wide *attribution + taste* tables the discovery sweep owns (`migrations/d1/0016_background_discovery.sql`): `discovery_matches(recipe, tenant, member, score, matched_at)` — per-member match attribution (the import gate **and** the `list_new_for_me` filter); and `taste_derived(tenant, taste_hash, embedding, updated_at)` — each member's taste-text embedding, content-hash gated like `recipe_derived`. Like `recipe_derived`, these are **siblings of `recipes`** so the index projection's wholesale `recipes` rebuild never owns them. (The detailed shapes are below.)
+- **Visibility grants (D1 `recipe_imports`, migration 0059)** — the canonical grant relation behind the recipe **visibility lens**: one provenance row per `(recipe, household)`, written at creation by every import path and read by the one lens enforcement point (`src/visibility.ts`). Included in a tenant purge; untouched by a member revoke (the grant belongs to the household). (The detailed shape is below.)
 
 **Three-category recipe model:** a recipe's *content* (objective frontmatter + body) is shared markdown in the R2 corpus; its *overlay* (`favorite` + `reject`) is per-tenant in the D1 `overlay` table; its *notes* are per-tenant, attributed, append-mostly in the D1 `recipe_notes` table (`id TEXT PRIMARY KEY`, `recipe`, `author`, `body`, `tags`, `private`, `created_at`). `last_cooked` is **not stored** — it's derived per-tenant from the D1 `cooking_log` table (`MAX(date)` per recipe). Read tools merge shared content + the caller's overlay + cooking-log `last_cooked` at read time.
 
@@ -37,11 +38,14 @@ The shared corpus, profile, session state, cooking log, and attributed notes are
   "brands":  { "olive_oil": { "tiers": [["California Olive Ranch"]], "any_brand": false },
                "yellow_onion": { "tiers": [], "any_brand": true } },
   "dietary": { "avoid": [], "limit": ["cilantro"] },
+  "curated_hide": true,                        // boolean, defined key — true hides the CURATED recipe tier from the
+                                               //   whole household's visibility lens (profile.curated_hide column);
+                                               //   present in the export only when set (shown is the default)
   "custom":  { /* arbitrary agent-added keys */ }
 }
 ```
 
-`update_preferences` takes a `patch` and applies **JSON Merge Patch (RFC 7396)**: a present key sets, `null` deletes, nested objects merge to any depth, arrays replace wholesale. Validation is staged — an unknown top-level patch key is rejected toward `custom` (`validation_failed`), then the merged result's types are validated (`malformed_data` on a bad enum/shape, storing nothing). The whole patch applies in one D1 transaction. Each `brands` family value is a **tier object** and maps onto rows: a family present in the patch UPSERTs the **merged** family value into that `brand_prefs` row's `tiers`/`any_brand` columns (a partial family patch like `{ any_brand: true }` merges into the stored object — tiers preserved), `null` DELETEs the row (back to ambiguous = "ask me"), and an absent term leaves its row untouched. For one deprecation window a legacy flat rank list is accepted-and-converted with a `warnings` entry on the return (see docs/TOOLS.md's deprecation convention). `cadence` merges **per key** (`{ cadence: { lunch: 2 } }` sets lunch only; `{ cadence: { dinner: null } }` clears one key; `cadence: null` clears the map). For the same window `default_cooking_nights: N` is accepted as an **alias** merged onto `cadence.dinner` (the frozen column is never written), and the retired `lunch_strategy` / `ready_to_eat_default_action` keys are **accepted and dropped** — each flagged in `warnings`. The **profile export** (`read_user_profile`) always carries `cadence` (the stored map, or the read-time derivation `{ breakfast: 0, lunch: 0, dinner: default_cooking_nights ?? 5 }` when unset) and mirrors `default_cooking_nights` from the effective `cadence.dinner` for the window; the retired pair never appears in the export.
+`update_preferences` takes a `patch` and applies **JSON Merge Patch (RFC 7396)**: a present key sets, `null` deletes, nested objects merge to any depth, arrays replace wholesale. Validation is staged — an unknown top-level patch key is rejected toward `custom` (`validation_failed`), then the merged result's types are validated (`malformed_data` on a bad enum/shape, storing nothing). The whole patch applies in one D1 transaction. Each `brands` family value is a **tier object** and maps onto rows: a family present in the patch UPSERTs the **merged** family value into that `brand_prefs` row's `tiers`/`any_brand` columns (a partial family patch like `{ any_brand: true }` merges into the stored object — tiers preserved), `null` DELETEs the row (back to ambiguous = "ask me"), and an absent term leaves its row untouched. For one deprecation window a legacy flat rank list is accepted-and-converted with a `warnings` entry on the return (see docs/TOOLS.md's deprecation convention). `cadence` merges **per key** (`{ cadence: { lunch: 2 } }` sets lunch only; `{ cadence: { dinner: null } }` clears one key; `cadence: null` clears the map). `curated_hide` must be a boolean when present (`null` deletes it, back to the shown default). For the same window `default_cooking_nights: N` is accepted as an **alias** merged onto `cadence.dinner` (the frozen column is never written), and the retired `lunch_strategy` / `ready_to_eat_default_action` keys are **accepted and dropped** — each flagged in `warnings`. The **profile export** (`read_user_profile`) always carries `cadence` (the stored map, or the read-time derivation `{ breakfast: 0, lunch: 0, dinner: default_cooking_nights ?? 5 }` when unset) and mirrors `default_cooking_nights` from the effective `cadence.dinner` for the window; the retired pair never appears in the export.
 
 ## Recipe frontmatter (recipes/*.md)
 
@@ -754,25 +758,58 @@ Example rows:
 **Notes:**
 - `reporter` and `created_at` are set by the Worker — the agent supplies only `title`/`body`. `status` defaults to `open`; the operator closes it through the admin panel.
 
+## recipe_imports (D1 `recipe_imports` table, shared — the visibility-grant relation)
+
+The **canonical grant relation** behind the recipe **visibility lens** (D12): one provenance row per `(recipe, household)`, recording how the recipe first arrived for that household. Visibility is **computed at read time** from these rows — a recipe is visible to a household when its own row exists, a friend household's row exists, or the reserved curated tenant's row exists (subject to the household's `profile.curated_hide`); under the **self-hosted** deployment profile the friend input is the implicit all-to-all relation (any household's non-curated row grants visibility — computed from the profile flag, never stored). Nothing per-viewer is ever materialized. Written at creation by **every** import path — `create_recipe` (fresh create and dedup-to-grant), the discovery sweep (in the same batch as its match rows), curated intake, and the `lens-reconcile` scheduled job (legacy attachment) — through one grant primitive (`src/visibility.ts`); read only through that module's lens queries. Included in a tenant purge; a member revoke never touches it (the grant belongs to the household). Migration 0059.
+
+```sql
+-- D1 recipe_imports table — one provenance row per (recipe, household). PRIMARY KEY (recipe, tenant):
+-- a household's second import of the same recipe is INSERT OR IGNORE — first provenance wins.
+-- idx_recipe_imports_tenant on (tenant) backs the per-household lens reads.
+recipe      TEXT  -- recipe slug (joins recipes.slug)  NOT NULL
+tenant      TEXT  -- owning household; or the reserved curated tenant  NOT NULL
+member      TEXT  -- importing member  NOT NULL — no NULL-owner sentinel; reconciled/backfilled
+                  --   and curated rows stamp the founding-member value (= tenant id)
+via         TEXT  -- how the recipe first arrived for this household  NOT NULL:
+                  --   'agent' (conversational import / operator attachment) |
+                  --   'feed:<url>' (sweep feed/email intake, the canonical feed URL) |
+                  --   'satellite' (sweep import pushed by a satellite) |
+                  --   'curated' (the curated tier; tenant is the reserved curated tenant)
+imported_at TEXT  -- YYYY-MM-DD
+```
+
+Example rows:
+
+| recipe | tenant | member | via | imported_at |
+|--------|--------|--------|-----|-------------|
+| harissa-roast-chicken | alice | alice | feed:https://example.com/feed.xml | 2026-06-26 |
+| harissa-roast-chicken | ~curated | ~curated | curated | 2026-07-02 |
+| jatjuk | bob | bob | agent | 2026-07-01 |
+
+**The reserved curated tenant.** Curated-tier grants are owned by the system tenant **`~curated`** (a code constant, `CURATED_TENANT` in `src/visibility.ts`). `~` is syntactically outside the canonical tenant-username space and the product handle grammar, so no signup, onboarding, or invite path can ever claim it; it has no allowlist entry, no `tenants`-registry row, no `members` row, and can never resolve a session or token — it exists **only** as a value in `recipe_imports.tenant`/`member`. Curated rows grant visibility under the SaaS profile only (and are exactly the anonymous `/cookbook` position there); the self-hosted lens arm excludes them.
+
 ## discovery_matches (per-member, D1 `discovery_matches` table)
 
-The **discovery sweep**'s per-member match attribution: which member(s) the sweep matched an imported recipe to, and at what taste score. This one record does **double duty** — it is the sweep's **import gate** (a candidate is imported only when ≥1 member matches it, so the shared corpus never floods any one member with the group's combined discovery firehose) **and** the per-member filter behind `list_new_for_me` (a member sees only the discoveries attributed to them). Keyed by `(recipe, tenant)`; written by the sweep on an import (`src/discovery-db.ts` `recordDiscoveryMatches`), read by `readNewForMe`. **Sibling of `recipes`** (like `recipe_derived`/`taste_derived`), so the index projection's wholesale `recipes` rebuild never touches it. Migration 0016.
+The **discovery sweep**'s per-member match attribution: which member(s) the sweep matched an imported recipe to, and at what taste score. This one record does **double duty** — it is the sweep's **import gate** (a candidate is imported only when ≥1 member matches it, so the shared corpus never floods any one member with the group's combined discovery firehose) **and** the per-member filter behind `list_new_for_me` (a member sees only the discoveries attributed to them — attribution is per-**member** via the `member` column, while recipe visibility is per-household via `recipe_imports`). Keyed by `(recipe, tenant)`; written by the sweep on an import (`src/discovery-db.ts` `recordDiscoveryMatches`) **in the same batch as the household's `recipe_imports` grant** — one write path, so attribution and visibility cannot drift (the `lens-reconcile` job heals any historical match row missing its grant). Curated intake writes **no** match rows. Read by `readNewForMe`. **Sibling of `recipes`** (like `recipe_derived`/`taste_derived`), so the index projection's wholesale `recipes` rebuild never touches it. Migration 0016; `member` added by 0059.
 
 ```sql
 -- D1 discovery_matches table — one row per (recipe, member) the sweep matched. PRIMARY KEY (recipe, tenant).
 -- idx_discovery_matches_tenant on (tenant) backs the per-member new-for-me read.
 recipe     TEXT  -- recipe slug (joins recipes.slug)  NOT NULL
-tenant     TEXT  -- the member the sweep matched it to  NOT NULL
+tenant     TEXT  -- the household the sweep matched it to  NOT NULL
+member     TEXT  -- the matched member within that household (0059) — backfilled to the founding
+                 --   member (= tenant id), exact under the founding-member invariant; the sweep
+                 --   stamps real members going forward. list_new_for_me filters on it.
 score      REAL  -- the taste cosine that cleared the match threshold (provenance / log detail)
 matched_at TEXT  -- YYYY-MM-DD the match was recorded
 ```
 
 Example rows:
 
-| recipe | tenant | score | matched_at |
-|--------|--------|-------|------------|
-| harissa-roast-chicken | alice | 0.6312 | 2026-06-26 |
-| harissa-roast-chicken | bob | 0.5841 | 2026-06-26 |
+| recipe | tenant | member | score | matched_at |
+|--------|--------|--------|-------|------------|
+| harissa-roast-chicken | alice | alice | 0.6312 | 2026-06-26 |
+| harissa-roast-chicken | bob | bob | 0.5841 | 2026-06-26 |
 
 ## discovery_log (D1 table, shared)
 
@@ -879,6 +916,9 @@ freezer_capacity_estimate   TEXT     -- tight | moderate | spacious
 rotation                    TEXT     -- JSON: {resurface_after_days?, novelty_boost?}
 retrospective_prefs         TEXT     -- JSON: {stale_after_days?, revealed_months?, revealed_min_cooks?}; overrides retrospective defaults per member (0021)
 last_planned_at             TEXT     -- YYYY-MM-DD planning watermark (0016): set by update_meal_plan on an add; bounds list_new_for_me
+curated_hide                INTEGER  -- household-level curated-tier hide (0059): NULL/0 = curated shown (the default),
+                                     --   1 = the whole curated tier leaves this household's visibility lens; reversible,
+                                     --   deletes nothing; surfaced as the `curated_hide` preferences boolean
 
 -- D1 brand_prefs table — one row per (tenant, ingredient term). PRIMARY KEY (tenant, term).
 tenant    TEXT     -- owning user
@@ -1707,10 +1747,10 @@ Example row (all knobs tuned):
 
 ## operator_config (D1 singleton, operator-scoped)
 
-**Operator-scoped** — read at each MCP tool call (ranking, flyer) and at cron start (flyer warm). Written only via the admin Config panel. Follows the same sparse-override singleton pattern as `discovery_config`: only columns an operator has explicitly tuned are non-null; absent or null columns fall back to `DEFAULT_OPERATOR_CONFIG` compiled defaults. An empty or absent row runs with all defaults.
+**Operator-scoped** — read at each MCP tool call (ranking, flyer, the deployment profile) and at cron start (flyer warm, the curated source). Written only via the admin Config panel. Follows the same sparse-override singleton pattern as `discovery_config`: only columns an operator has explicitly tuned are non-null; absent or null columns fall back to `DEFAULT_OPERATOR_CONFIG` compiled defaults. An empty or absent row runs with all defaults.
 
 ```sql
--- D1 operator_config table (migration 0019). SINGLE ROW (id = 1, enforced by CHECK).
+-- D1 operator_config table (migration 0019; deployment columns 0059). SINGLE ROW (id = 1, enforced by CHECK).
 id                  INTEGER PRIMARY KEY CHECK (id = 1)  -- singleton guard
 -- Ranking weights (precedence: compiled → operator_config → per-tenant rotation)
 favorite_weight     REAL     -- boost for favorited recipes in ranking; null → 0.15
@@ -1723,6 +1763,13 @@ overlap_cap         INTEGER  -- max key-ingredient overlaps counted; null → 2
 min_flyer_discount  REAL     -- minimum savings fraction to include in flyer results; null → 0.05
 flyer_refresh_hours INTEGER  -- hours between flyer warm runs; null → 24
 flyer_batch_units   INTEGER  -- SKUs fetched per Kroger flyer batch call; null → 12
+-- Deployment (0059)
+deployment_profile  TEXT     -- CHECK IN ('self-hosted','saas'); NULL resolves to 'self-hosted'
+                             --   (existing deployments need no write)
+curated_source_url  TEXT     -- the curated tier's public feed: NULL → the compiled product
+                             --   default (DEFAULT_CURATED_SOURCE_URL, src/operator-config.ts);
+                             --   '' (empty string) → curated intake disabled; any other value →
+                             --   an operator repoint. Consumed by the sweep under SaaS only.
 ```
 
 Example row (ranking weights adjusted, flyer defaults left as-is):
@@ -1736,6 +1783,8 @@ Example row (ranking weights adjusted, flyer defaults left as-is):
 - `saveOperatorConfig(env, patch)` upserts the id=1 row with non-null fields from the patch. `validateOperatorConfig(patch, {confirm})` enforces: `favorite_weight`/`novelty_boost`/`pantry_weight` in [0, 2]; `perish_weight`/`key_weight` in [0, 10]; `min_flyer_discount` in [0, 1]; `overlap_cap` positive integer ≤ 20; `flyer_refresh_hours` integer in [1, 720]; `flyer_batch_units` integer in [1, 200].
 - Floor guards (`FLOOR_FLYER_REFRESH_HOURS = 6`, `FLOOR_FLYER_BATCH_UNITS = 4`) mirror `discovery_config`'s footgun-floor pattern: a value AT OR BELOW the floor requires `confirm: true` in the admin PUT to override — the API rejects without it (400 `validation_failed` + `needsConfirm: true`, `field`, `floor`), preventing accidental under-refresh (hammering the Kroger flyer endpoint) or under-batching (inflating per-tick embedding overhead). Validation runs only on write — a value saved below a floor before this gate existed is not retroactively rejected on read, only blocked on its next edit. The five ranking weight knobs (`favorite_weight`/`novelty_boost`/`pantry_weight`/`perish_weight`/`key_weight`) and `overlap_cap`/`min_flyer_discount` carry NO floor — `0` (or the range minimum) is a legitimate, non-dangerous value for a weight or a cap, so those knobs never need `confirm` regardless of value.
 - Ranking precedence: compiled defaults → `operator_config` → per-tenant `profile.rotation` (for `novelty_boost` / `resurface_after_days`). `resolveRankParams` in `src/semantic-search.ts` applies these three tiers in order.
+- **`deployment_profile` is the D9 profile flag's one configuration channel**, read exclusively through `loadDeploymentProfile(env)` (`src/deployment.ts`) — every profile-conditioned path (the visibility lens, the trending guard, the curated sweep, whoami, the admin card) takes that accessor's value. It is deliberately NOT a wrangler var (the operator deploy merge drops code-repo `vars`, and a var would make the flip guards unenforceable). Written via `PUT /admin/api/deployment-config` (read via the sibling GET), with **flip guards** on the write path: self-hosted → SaaS requires an explicit `confirm` (implicit all-to-all edges disappear and the public `/cookbook` narrows to the curated tier); SaaS → self-hosted is **refused** with a structured `conflict` (the consent-inversion guard — `confirm` cannot override) while more than one household owns a non-empty non-curated cookbook (≥1 own `recipe_imports` row, curated tenant excluded).
+- **`curated_source_url` is tri-state** (NULL = product default / `''` = disabled / value = repoint), resolved by `loadDeploymentConfig` (`src/operator-config.ts`); the same admin card writes it. The curated feed joins the sweep's ordinary per-tick feed rotation and volume-governance bounds, so curated intake can never starve member feeds.
 
 ## guidance/
 

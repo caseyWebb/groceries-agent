@@ -44,7 +44,17 @@ function apiEnv(overrides: Partial<Env> = {}) {
     TENANT_KV: tenantKv,
     KROGER_KV: memKv(),
     DB: {
-      prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({ meta: { changes: 0 } }) }) }),
+      // Bound and bind-less statements both resolve empty (the whoami profile read is
+      // bind-less: NULL operator_config → the self-hosted default).
+      prepare: () => {
+        const stmt = {
+          bind: () => stmt,
+          first: async () => null,
+          all: async () => ({ results: [], success: true, meta: { changes: 0 } }),
+          run: async () => ({ meta: { changes: 0 } }),
+        };
+        return stmt;
+      },
     },
     TOOL_AE: { writeDataPoint: (p: never) => points.push(p) },
     ...overrides,

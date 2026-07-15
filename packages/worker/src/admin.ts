@@ -71,6 +71,11 @@ export const TENANT_TABLES = [
   "webauthn_credentials", // enrolled passkeys (migration 0046)
   "signup_redemptions", // provenance of a self-service tenant's creating code (migration 0047)
   "members", // member-identity rows incl. the founding member (migration 0058)
+  // The household's visibility grants (migration 0059): purge removes them, so recipes
+  // visible to others only through this household's grants leave their lenses (the
+  // shared corpus rows + derived artifacts stay). Member-revoke deliberately does NOT
+  // touch recipe_imports — the household keeps its recipes when one member leaves.
+  "recipe_imports",
 ] as const;
 export const AUTHOR_TABLES = ["recipe_notes", "store_notes"] as const;
 

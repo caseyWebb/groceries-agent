@@ -209,6 +209,21 @@ export const SEED = {
       noTime: "viz-pickled-onions",
       italian: ["viz-beef-ragu", "viz-cacio-pepe", "viz-garlic-bread"],
     },
+    // Visibility-lens fixtures (deployment-profiles-and-visibility-lens): EVERY corpus
+    // recipe carries a `recipe_imports` grant owned by the PENDING household — under the
+    // default self-hosted profile any non-curated grant admits every member (implicit
+    // all-to-all), so both suites keep seeing today's full corpus, while the ACTIVE
+    // household owns ZERO non-curated imports (the app saas variant's cold-start posture)
+    // and exactly ONE household owns a cookbook (the admin flip-back guard passes).
+    // `curated` is the subset that ALSO carries a curated-tenant grant — inert under
+    // self-hosted (that lens arm excludes the curated tenant; the pending household's
+    // grant admits the same rows), the badged curated floor under the app's saas variant.
+    // `outOfLens` is a pending-household-only recipe — visible under self-hosted, absent
+    // everywhere for the active member under saas (the browse-lens assertion).
+    lens: {
+      curated: ["viz-cacio-pepe", "viz-chicken-soup", "viz-fish-tacos"],
+      outOfLens: "viz-beef-ragu",
+    },
     // The propose flow (member-app-propose D12): the shared seed keeps the PALETTE empty
     // (production's first render — the profile + propose empty states assert it), and
     // pre-plants everything the propose specs' SELF-PROVISIONED palette needs to fill a
@@ -511,6 +526,22 @@ export function d1Statements(now) {
   stmts.push(
     "INSERT INTO recipe_facets (slug, body_hash, ingredients_key, ingredients_full) VALUES " +
       facetRows.map((r) => `(${q(r[0])}, 'viz-seeded', ${q(r[7])}, ${q(r[10])})`).join(", ") +
+      ";",
+  );
+  // Visibility-lens grants (deployment-profiles-and-visibility-lens): the recipe_imports
+  // substrate every lens read computes from — see SEED.app.lens for the layout rationale
+  // (pending household owns every corpus recipe; the curated tenant owns the curated
+  // subset; the active household owns nothing). The seed owns the whole table.
+  stmts.push(`DELETE FROM recipe_imports;`);
+  stmts.push(
+    "INSERT INTO recipe_imports (recipe, tenant, member, via, imported_at) VALUES " +
+      proposeRecipes
+        .map(([slug]) => `(${q(slug)}, ${q(members.pending)}, ${q(members.pending)}, 'agent', ${q(day(now - 30 * DAY))})`)
+        .join(", ") +
+      ", " +
+      SEED.app.lens.curated
+        .map((slug) => `(${q(slug)}, '~curated', '~curated', 'curated', ${q(day(now - 20 * DAY))})`)
+        .join(", ") +
       ";",
   );
   stmts.push(`DELETE FROM cooking_log WHERE tenant IN (${q(members.active)}, ${q(members.pending)});`);
@@ -975,7 +1006,28 @@ export function d1Statements(now) {
       `(${q(groupCode.open)}, 'riley', ${now - 2 * DAY}), (${q(groupCode.open)}, 'sky', ${now - 1 * DAY});`,
   );
 
+  // Deployment card (deployment-profiles-and-visibility-lens): the specs assert the
+  // never-written default (self-hosted + the compiled curated URL) and then flip/repoint
+  // through the real PUT — reset both sparse operator_config columns so a re-run against a
+  // previously-exercised local D1 starts from the unset state again (no-op when the
+  // singleton row was never written).
+  stmts.push(`UPDATE operator_config SET deployment_profile = NULL, curated_source_url = NULL WHERE id = 1;`);
+
   return stmts;
+}
+
+/**
+ * The APP suite's SaaS-variant overlay (deployment-profiles-and-visibility-lens): applied
+ * AFTER `d1Statements` into the dedicated saas persist dir (app/visual/setup.mjs), never
+ * into the default self-hosted state the main projects run against. One write: the
+ * operator_config singleton's `deployment_profile` — the same substrate then reads as the
+ * saas lens (active household cold-start over the curated floor; pending-household rows
+ * out of lens). Idempotent upsert (the singleton row may or may not exist).
+ */
+export function saasD1Statements() {
+  return [
+    `INSERT INTO operator_config (id, deployment_profile) VALUES (1, 'saas') ON CONFLICT(id) DO UPDATE SET deployment_profile = 'saas';`,
+  ];
 }
 
 /** KV seeds ([binding, key, value]) applied via `wrangler kv key put --local`: the member

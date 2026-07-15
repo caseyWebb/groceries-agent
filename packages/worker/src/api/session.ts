@@ -11,7 +11,7 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { resolveInvite, inviteAccepted, resolveIdentity, directoryFromEnv } from "../tenant.js";
-import { deploymentProfile, operatorConfig } from "../deployment.js";
+import { loadDeploymentProfile, operatorConfig } from "../deployment.js";
 import { underRateLimit } from "../rate-limit.js";
 import {
   createSession,
@@ -66,7 +66,9 @@ export const sessionArea = new Hono<ApiEnv>()
   .get("/session", requireSession, async (c) =>
     jsonWithEtag(c, {
       tenant: c.get("tenant"),
-      profile: deploymentProfile(c.env),
+      // The ONE profile accessor (src/deployment.ts) — the shipped D1 config channel;
+      // NULL/unset resolves to "self-hosted".
+      profile: await loadDeploymentProfile(c.env),
       operator: operatorConfig(c.env),
     }),
   )

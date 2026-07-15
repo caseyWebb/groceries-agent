@@ -2091,14 +2091,33 @@ function attributedNoteOf(r: {
  * Read a subject's group notes with the privacy rule applied: the caller's own
  * private notes plus everyone's shared notes (private=0 OR author=caller). Ordered
  * by created_at (author as tiebreak) for determinism.
+ *
+ * `households` (recipe notes only) is the caller's LENS-household scope: when given
+ * (a SaaS member's own + friend households), shared notes are kept only when their
+ * author belongs to one of those households (the `members` join — authors are member
+ * ids); the caller's own notes always survive. `null`/absent = no scoping (the
+ * self-hosted deployment-wide read — today's behavior).
  */
 async function readNotes(
   env: Env,
   table: NoteTable,
   subject: string,
   caller: string,
+  households?: string[] | null,
 ): Promise<AttributedNote[]> {
   const col = noteSubjectCol(table);
+  let scopeSql = "";
+  const scopeBinds: unknown[] = [];
+  if (households != null) {
+    // Author ∈ a lens household's members, OR the caller's own note. An empty lens
+    // (impossible in practice — it always contains the caller's household) degrades to
+    // own-notes-only rather than leaking.
+    const placeholders = households.map((_, i) => `?${i + 3}`).join(", ");
+    scopeSql = households.length
+      ? ` AND (author = ?2 OR author IN (SELECT id FROM members WHERE tenant IN (${placeholders})))`
+      : " AND author = ?2";
+    scopeBinds.push(...households);
+  }
   const rows = await db(env).all<{
     author: string;
     created_at: string | null;
@@ -2108,9 +2127,10 @@ async function readNotes(
     private: number | null;
   }>(
     `SELECT author, body, tags, private, created_at${table === "store_notes" ? ", updated_at" : ", NULL AS updated_at"} FROM ${table} ` +
-      `WHERE ${col} = ?1 AND (private = 0 OR author = ?2)`,
+      `WHERE ${col} = ?1 AND (private = 0 OR author = ?2)${scopeSql}`,
     subject,
     caller,
+    ...scopeBinds,
   );
   const notes = rows.map(attributedNoteOf);
   notes.sort((a, b) =>
@@ -2119,8 +2139,8 @@ async function readNotes(
   return notes;
 }
 
-export const readRecipeNotes = (env: Env, recipe: string, caller: string) =>
-  readNotes(env, "recipe_notes", recipe, caller);
+export const readRecipeNotes = (env: Env, recipe: string, caller: string, households?: string[] | null) =>
+  readNotes(env, "recipe_notes", recipe, caller, households);
 export const readStoreNotes = (env: Env, store: string, caller: string) =>
   readNotes(env, "store_notes", store, caller);
 

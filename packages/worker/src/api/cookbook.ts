@@ -19,6 +19,14 @@ import { readNewForMe } from "../discovery-db.js";
 import { NEW_FOR_ME_WINDOW_DAYS } from "../discovery-tools.js";
 import { readTrending, readPickedForYou } from "../cookbook-rows.js";
 import {
+  isVisible,
+  memberViewer,
+  visibleSlugProvenance,
+  lensHouseholds,
+  type Viewer,
+  type Provenance,
+} from "../visibility.js";
+import {
   readRecipeNotes,
   insertRecipeNote,
   updateRecipeNote,
@@ -30,9 +38,10 @@ import type { RecipeIndex, IndexedRecipe } from "../recipes.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** The shared index read, with the same `index_unavailable` remap `search_recipes` uses. */
-async function loadIndex(env: Parameters<typeof loadRecipeIndex>[0]): Promise<RecipeIndex> {
-  return loadRecipeIndex(env).catch((e) => {
+/** The shared LENS-SCOPED index read (the member viewer's position through the shared
+ *  enforcement point), with the same `index_unavailable` remap `search_recipes` uses. */
+async function loadIndex(env: Parameters<typeof loadRecipeIndex>[0], viewer: Viewer): Promise<RecipeIndex> {
+  return loadRecipeIndex(env, viewer).catch((e) => {
     throw new ToolError(
       "index_unavailable",
       `the recipe index is unavailable: ${e instanceof Error ? e.message : String(e)}`,
@@ -42,6 +51,28 @@ async function loadIndex(env: Parameters<typeof loadRecipeIndex>[0]): Promise<Re
 
 function requireSlug(slug: string): void {
   if (!SLUG_RE.test(slug)) throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+}
+
+/** The lens gate for slug-addressed reads: out-of-lens and nonexistent slugs take the
+ *  IDENTICAL not_found path — no existence disclosure, no body read (shared-corpus D11). */
+async function requireVisible(env: Parameters<typeof loadRecipeIndex>[0], viewer: Viewer, slug: string): Promise<void> {
+  requireSlug(slug);
+  if (!(await isVisible(env, viewer, slug))) {
+    throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+  }
+}
+
+/** A member cookbook hit: the compact shape plus the row's PROVENANCE for the caller's
+ *  household — `own` | `friend` | `curated`, the highest-precedence grant admitting it —
+ *  so list surfaces render curated (and later friend) provenance without a second read. */
+export interface MemberCookbookHit extends CookbookHit {
+  provenance: Provenance;
+}
+
+function withProvenance(hits: CookbookHit[], provenance: Map<string, Provenance>): MemberCookbookHit[] {
+  // Every hit came through the lens, so a missing map entry cannot happen in practice;
+  // `own` is the inert fallback that never renders a badge.
+  return hits.map((h) => ({ ...h, provenance: provenance.get(h.slug) ?? "own" }));
 }
 
 /** Title-sorted compact hits over the whole index (the browse page's all-recipes list). */
@@ -57,14 +88,21 @@ export const cookbookArea = new Hono<ApiEnv>()
   // `index` key for a route at "/", so a literal /index segment is unreachable
   // through the typed client).
   .get("/cookbook/recipes", requireSession, async (c) => {
-    const index = await loadIndex(c.env);
-    return jsonWithEtag(c, { recipes: indexHits(index) });
+    const tenant = c.get("tenant");
+    const viewer = memberViewer(tenant.id, tenant.member);
+    const [index, provenance] = await Promise.all([
+      loadIndex(c.env, viewer),
+      visibleSlugProvenance(c.env, viewer),
+    ]);
+    return jsonWithEtag(c, { recipes: withProvenance(indexHits(index), provenance) });
   })
   // Browse: "New for you" — the per-member discovery read with its watermark (D5).
+  // Attribution is per-MEMBER (the discovery_matches.member key) while visibility is
+  // per-household; visibility events (friend links, curated landings) never feed it.
   .get("/cookbook/new-for-me", requireSession, async (c) => {
     const tenant = c.get("tenant");
     const floor = new Date(Date.now() - NEW_FOR_ME_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
-    const recipes = await readNewForMe(c.env, tenant.id, floor);
+    const recipes = await readNewForMe(c.env, tenant.id, tenant.member, floor);
     return jsonWithEtag(c, { recipes });
   })
   // Browse: "New & trending"'s trending half (member-app-differentiators D7) — the
@@ -82,37 +120,56 @@ export const cookbookArea = new Hono<ApiEnv>()
     const tenant = c.get("tenant");
     return jsonWithEtag(c, await readPickedForYou(c.env, tenant.id));
   })
-  // Keyword search — the SAME pure ranker the public /cookbook/search serves (D6).
+  // Keyword search — the SAME pure ranker the public /cookbook/search serves (D6),
+  // over the member's lens rather than the anonymous lens.
   .get("/cookbook/search", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const viewer = memberViewer(tenant.id, tenant.member);
     const q = c.req.query("q") ?? "";
-    const index = await loadIndex(c.env);
-    return jsonWithEtag(c, { q, results: rankByKeyword(index, q) });
+    const [index, provenance] = await Promise.all([
+      loadIndex(c.env, viewer),
+      visibleSlugProvenance(c.env, viewer),
+    ]);
+    return jsonWithEtag(c, { q, results: withProvenance(rankByKeyword(index, q), provenance) });
   })
-  // Recipe detail: the extracted read_recipe assembly (overlay-merged + derived description).
+  // Recipe detail: the extracted read_recipe assembly (overlay-merged + derived
+  // description; lens-gated inside the op — out-of-lens ⇒ the identical not_found).
   .get("/cookbook/recipes/:slug", requireSession, async (c) => {
     const tenant = c.get("tenant");
     const detail = await readRecipeDetail(c.env, tenant.id, c.req.param("slug"));
     return jsonWithEtag(c, detail);
   })
-  // Similar recipes: pure cosine over cron-captured vectors (same floor/cap as the cookbook).
+  // Similar recipes: pure cosine over cron-captured vectors (same floor/cap as the
+  // cookbook). The candidate set is restricted to the caller's lens BEFORE neighbor
+  // selection, so an out-of-lens recipe never occupies a slot or leaks existence.
   .get("/cookbook/recipes/:slug/similar", requireSession, async (c) => {
+    const tenant = c.get("tenant");
+    const viewer = memberViewer(tenant.id, tenant.member);
     const slug = c.req.param("slug");
-    requireSlug(slug);
-    const [embeddings, index] = await Promise.all([loadRecipeEmbeddings(c.env), loadIndex(c.env)]);
-    const similar = nearestNeighbors(slug, embeddings)
+    await requireVisible(c.env, viewer, slug);
+    const [embeddings, index] = await Promise.all([loadRecipeEmbeddings(c.env), loadIndex(c.env, viewer)]);
+    const visibleEmbeddings = new Map<string, number[]>();
+    for (const [s, vec] of embeddings) {
+      if (index[s] !== undefined) visibleEmbeddings.set(s, vec);
+    }
+    const similar = nearestNeighbors(slug, visibleEmbeddings)
       .map((s) => index[s])
       .filter((r): r is IndexedRecipe => r != null)
       .map(toHit);
     return jsonWithEtag(c, { slug, similar });
   })
-  // Group notes + favorites for a recipe (the privacy rule lives in the op).
+  // Group notes + favorites for a recipe (the privacy rule lives in the op). Lens-bound:
+  // unreachable for an out-of-lens slug (the identical not_found), and the group signal
+  // aggregates over the caller's LENS households only (every household under
+  // self-hosted — today's read; own + friend-seam households under SaaS).
   .get("/cookbook/recipes/:slug/notes", requireSession, async (c) => {
     const tenant = c.get("tenant");
     const slug = c.req.param("slug");
-    requireSlug(slug);
-    const ids = await directoryFromEnv(c.env).list();
+    await requireVisible(c.env, memberViewer(tenant.id, tenant.member), slug);
+    const lens = await lensHouseholds(c.env, tenant.id);
+    const ids = lens ?? (await directoryFromEnv(c.env).list());
     const [notes, favorites] = await Promise.all([
-      readRecipeNotes(c.env, slug, tenant.id),
+      readRecipeNotes(c.env, slug, tenant.member, lens),
       groupFavorites(c.env, slug, ids),
     ]);
     return jsonWithEtag(c, { slug, notes, favorites });

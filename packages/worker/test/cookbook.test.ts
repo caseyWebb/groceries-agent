@@ -36,13 +36,35 @@ function envWith(opts: {
 }): Env {
   const recipeRows = opts.recipeRows ?? [];
   const embeddingRows = opts.embeddingRows ?? [];
+  // Every fixture recipe (index rows, R2 bodies, embedded slugs) is GRANTED — the
+  // converged post-attachment state, so the anonymous self-hosted lens passes the whole
+  // fixture corpus (today's public site, the D9 promise these tests pin).
+  const granted = new Set<string>();
+  for (const r of recipeRows) if (typeof r.slug === "string") granted.add(r.slug);
+  for (const e of embeddingRows) granted.add(e.slug);
+  for (const path of Object.keys(opts.files ?? {})) {
+    const m = /^recipes\/(.+)\.md$/.exec(path);
+    if (m) granted.add(m[1]);
+  }
   const makeStmt = (sql: string) => {
     const isEmbeddings = /embedding IS NOT NULL/i.test(sql);
+    const isLens = /FROM recipe_imports/i.test(sql);
+    let binds: unknown[] = [];
     const stmt = {
-      bind: () => stmt,
+      bind: (...v: unknown[]) => {
+        binds = v;
+        return stmt;
+      },
       all: async () => {
         if (isEmbeddings && opts.failEmbeddings) throw new Error("embeddings unavailable");
+        if (isLens) return { results: [...granted].map((recipe) => ({ recipe })) };
         return { results: isEmbeddings ? embeddingRows : recipeRows };
+      },
+      first: async () => {
+        // The lens point read (`isVisible`) passes for granted slugs; the deployment
+        // profile read finds no operator_config row (→ the self-hosted default).
+        if (isLens) return granted.has(String(binds[0])) ? { ok: 1 } : null;
+        return null;
       },
     };
     return stmt;

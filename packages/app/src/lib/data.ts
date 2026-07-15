@@ -92,6 +92,11 @@ export interface Hit {
   /** The recipe's course facets, lowercased (`[]` when unclassified) — backs the plan
    *  page's Projects picker (project-eligible = a non-meal course) and its kind label. */
   course?: string[];
+  /** The row's visibility provenance for the caller's household — the highest-precedence
+   *  grant admitting it (own > friend > curated). Carried by the cookbook index/search
+   *  hits only (the trending/picked/similar reads omit it); `curated` renders the row's
+   *  "Curated" badge. Optional so a pre-lens Worker (deploy skew) degrades to no badge. */
+  provenance?: "own" | "friend" | "curated";
 }
 
 export interface RecipeDetail {
@@ -381,7 +386,14 @@ export function useTrending() {
     queryKey: ["cookbook", "trending"],
     staleTime: STALE_MS,
     queryFn: async () =>
-      jsonOf<{ recipes: TrendingRecipe[]; window_days: number }>(await api.api.cookbook.trending.$get()),
+      jsonOf<{
+        recipes: TrendingRecipe[];
+        window_days: number;
+        /** The deployment profile the guard ran under — conditions the cook-signal
+         *  label ("Trending" self-hosted / "Popular with Friends" SaaS) and the chip
+         *  copy. Optional so a pre-lens Worker (deploy skew) keeps today's labels. */
+        profile?: "self-hosted" | "saas";
+      }>(await api.api.cookbook.trending.$get()),
   });
 }
 

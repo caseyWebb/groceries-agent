@@ -29,7 +29,14 @@ import { promptInstall, useInstallAvailable } from "../lib/install";
 import { purgeLocalMemberData, readTenantStamp, writeTenantStamp } from "../lib/persist";
 
 export const Route = createFileRoute("/_app")({
-  loader: async (): Promise<{ tenant: { id: string }; operator: OperatorInfo }> => {
+  loader: async (): Promise<{
+    tenant: { id: string };
+    /** The deployment profile from whoami — gates the SaaS-only surfaces (cookbook
+     *  cold-start, the Preferences curated-collection card). Offline/skew degrades to
+     *  "self-hosted": the gated surfaces simply don't render. */
+    profile: "self-hosted" | "saas";
+    operator: OperatorInfo;
+  }> => {
     const res = await api.api.session.$get().catch(() => null);
     if (res === null) {
       // No server reachable (offline / network error): render the shell for the
@@ -38,7 +45,7 @@ export const Route = createFileRoute("/_app")({
       // its own member's data (D9). The operator config isn't stamped: the
       // connect modal degrades to generic copy offline.
       const stamped = readTenantStamp();
-      if (stamped) return { tenant: { id: stamped }, operator: { name: null, repo: null } };
+      if (stamped) return { tenant: { id: stamped }, profile: "self-hosted", operator: { name: null, repo: null } };
       throw redirect({ to: "/login" });
     }
     if (res.status === 401) {
@@ -50,13 +57,17 @@ export const Route = createFileRoute("/_app")({
     if (!res.ok) throw new Error(`whoami failed (${res.status})`);
     const data = (await res.json()) as {
       tenant: { id: string };
-      profile: "self-hosted" | "saas";
+      profile?: "self-hosted" | "saas";
       operator: OperatorInfo;
     };
     writeTenantStamp(data.tenant.id);
-    // Defensive: a pre-change Worker (deploy skew) omits `operator` — degrade to
-    // generic copy rather than letting the modal's templating throw.
-    return { tenant: data.tenant, operator: data.operator ?? { name: null, repo: null } };
+    // Defensive: a pre-change Worker (deploy skew) omits `operator`/`profile` — degrade
+    // to generic copy / the self-hosted default rather than throwing or over-gating.
+    return {
+      tenant: data.tenant,
+      profile: data.profile === "saas" ? "saas" : "self-hosted",
+      operator: data.operator ?? { name: null, repo: null },
+    };
   },
   component: AppShell,
 });

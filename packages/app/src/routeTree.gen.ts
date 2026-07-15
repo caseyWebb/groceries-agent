@@ -18,6 +18,7 @@ import { Route as AppRetrospectiveRouteImport } from './routes/_app.retrospectiv
 import { Route as AppProposeRouteImport } from './routes/_app.propose'
 import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppPlanRouteImport } from './routes/_app.plan'
+import { Route as AppPeopleRouteImport } from './routes/_app.people'
 import { Route as AppPantryRouteImport } from './routes/_app.pantry'
 import { Route as AppLogRouteImport } from './routes/_app.log'
 import { Route as AppGroceryRouteImport } from './routes/_app.grocery'
@@ -68,6 +69,11 @@ const AppPlanRoute = AppPlanRouteImport.update({
   path: '/plan',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPeopleRoute = AppPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPantryRoute = AppPantryRouteImport.update({
   id: '/pantry',
   path: '/pantry',
@@ -103,6 +109,7 @@ export interface FileRoutesByFullPath {
   '/grocery': typeof AppGroceryRoute
   '/log': typeof AppLogRoute
   '/pantry': typeof AppPantryRoute
+  '/people': typeof AppPeopleRoute
   '/plan': typeof AppPlanRoute
   '/profile': typeof AppProfileRoute
   '/propose': typeof AppProposeRoute
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/grocery': typeof AppGroceryRoute
   '/log': typeof AppLogRoute
   '/pantry': typeof AppPantryRoute
+  '/people': typeof AppPeopleRoute
   '/plan': typeof AppPlanRoute
   '/profile': typeof AppProfileRoute
   '/propose': typeof AppProposeRoute
@@ -134,6 +142,7 @@ export interface FileRoutesById {
   '/_app/grocery': typeof AppGroceryRoute
   '/_app/log': typeof AppLogRoute
   '/_app/pantry': typeof AppPantryRoute
+  '/_app/people': typeof AppPeopleRoute
   '/_app/plan': typeof AppPlanRoute
   '/_app/profile': typeof AppProfileRoute
   '/_app/propose': typeof AppProposeRoute
@@ -152,6 +161,7 @@ export interface FileRouteTypes {
     | '/grocery'
     | '/log'
     | '/pantry'
+    | '/people'
     | '/plan'
     | '/profile'
     | '/propose'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/grocery'
     | '/log'
     | '/pantry'
+    | '/people'
     | '/plan'
     | '/profile'
     | '/propose'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/_app/grocery'
     | '/_app/log'
     | '/_app/pantry'
+    | '/_app/people'
     | '/_app/plan'
     | '/_app/profile'
     | '/_app/propose'
@@ -262,6 +274,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlanRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/people': {
+      id: '/_app/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/pantry': {
       id: '/_app/pantry'
       path: '/pantry'
@@ -305,6 +324,7 @@ interface AppRouteChildren {
   AppGroceryRoute: typeof AppGroceryRoute
   AppLogRoute: typeof AppLogRoute
   AppPantryRoute: typeof AppPantryRoute
+  AppPeopleRoute: typeof AppPeopleRoute
   AppPlanRoute: typeof AppPlanRoute
   AppProfileRoute: typeof AppProfileRoute
   AppProposeRoute: typeof AppProposeRoute
@@ -318,6 +338,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGroceryRoute: AppGroceryRoute,
   AppLogRoute: AppLogRoute,
   AppPantryRoute: AppPantryRoute,
+  AppPeopleRoute: AppPeopleRoute,
   AppPlanRoute: AppPlanRoute,
   AppProfileRoute: AppProfileRoute,
   AppProposeRoute: AppProposeRoute,

@@ -41,6 +41,7 @@ import { commitCheckedShop } from "./shop-commit.js";
 import { registerInstacartTool } from "./instacart-tool.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
+import { isVisible, memberViewer, ANONYMOUS } from "./visibility.js";
 import { readReconcileErrors } from "./recipe-projection.js";
 import { readRejections, getQuarantine } from "./satellite-audit-db.js";
 import { recordBugReport } from "./bug-reports.js";
@@ -111,7 +112,13 @@ export async function readLastCookedMap(env: Env, tenant: string): Promise<Map<s
  * The `read_recipe` assembly as a shared operation (member-app-core D2): corpus read +
  * `parseMarkdown` + the caller's overlay/last-cooked merge + the derived description.
  * Throws the same structured `not_found` for an invalid or unknown slug. Called by the
- * MCP tool and the member API's `GET /api/cookbook/recipes/:slug`.
+ * MCP tool, the `display_recipe` widget, and the member API's
+ * `GET /api/cookbook/recipes/:slug`.
+ *
+ * Lens-bound (shared-corpus D11): visibility resolves through the shared enforcement
+ * point BEFORE any body read — a slug outside the caller's lens takes the IDENTICAL
+ * `not_found` path an unknown slug takes (same shape, same message, no R2 read), so
+ * the tool cannot be used as a slug-probing oracle.
  */
 export async function readRecipeDetail(
   env: Env,
@@ -119,6 +126,9 @@ export async function readRecipeDetail(
   slug: string,
 ): Promise<{ slug: string; frontmatter: Record<string, unknown>; body: string }> {
   if (!SLUG_RE.test(slug)) {
+    throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+  }
+  if (!(await isVisible(env, memberViewer(tenant), slug))) {
     throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
   }
   const corpus = createR2CorpusStore(env.CORPUS);
@@ -540,7 +550,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "search_recipes",
     {
       description:
-        "Find recipes in the index. Takes an array of search SPECS and returns one result group per spec — `{ results: [{ label, recipes }] }`, in input order — in ONE round-trip. Every spec applies `facets` as the hard gate over the caller's available corpus (the whole shared corpus plus the caller's personal recipes, MINUS the caller's rejects; no status/draft/activation step). A spec's `vibe` is OPTIONAL and picks the mode. WITHOUT a vibe (membership): returns EVERY recipe passing the facets, unranked, INCLUDING recipes not yet embedded (e.g. just imported) and uncapped by `k` — this is the named-dish / browse path, so a named dish is never silently dropped. To find a named dish, use a vibe-less spec with `facets.query` (the single text search over title AND tags: keeps recipes whose title or tags contain EVERY token as a case-insensitive substring after dropping connective stopwords, so \"chicken and rice\" matches \"chicken rice\", including a recipe titled \"Chicken and Rice\" whose tags omit \"rice\"), typically with include_unmakeable:true. WITH a vibe (ranked): the vibe is embedded and the survivors that HAVE an embedding are ranked by cosine to it, nudged by closeness to the caller's favorites (taste direction), cook recency (never-cooked surfaced, recently-cooked demoted), and the spec's `boost_ingredients` (a bounded perishable-weighted pantry overlap); unembedded survivors are dropped and the top-" +
+        "Find recipes in the index. Takes an array of search SPECS and returns one result group per spec — `{ results: [{ label, recipes }] }`, in input order — in ONE round-trip. Every spec applies `facets` as the hard gate over the caller's VISIBLE corpus — the recipes inside the caller's household's visibility lens (its own imports, friend households' imports, and the curated set; on a self-hosted deployment that is the whole shared corpus) MINUS the caller's rejects; no status/draft/activation step. A recipe outside the caller's lens appears in NO group, in either mode — its absence is indistinguishable from nonexistence. A spec's `vibe` is OPTIONAL and picks the mode. WITHOUT a vibe (membership): returns EVERY recipe passing the facets, unranked, INCLUDING recipes not yet embedded (e.g. just imported) and uncapped by `k` — this is the named-dish / browse path, so a named dish is never silently dropped. To find a named dish, use a vibe-less spec with `facets.query` (the single text search over title AND tags: keeps recipes whose title or tags contain EVERY token as a case-insensitive substring after dropping connective stopwords, so \"chicken and rice\" matches \"chicken rice\", including a recipe titled \"Chicken and Rice\" whose tags omit \"rice\"), typically with include_unmakeable:true. WITH a vibe (ranked): the vibe is embedded and the survivors that HAVE an embedding are ranked by cosine to it, nudged by closeness to the caller's favorites (taste direction), cook recency (never-cooked surfaced, recently-cooked demoted), and the spec's `boost_ingredients` (a bounded perishable-weighted pantry overlap); unembedded survivors are dropped and the top-" +
         `${DEFAULT_K} (max ${MAX_K}, override with \`k\`) compact rows returned. Facet notes (both modes): array filters season/dietary match ALL listed values; course is an open-vocabulary facet (main | side | dessert | breakfast | …) matched by containment — \`course: 'side'\` returns every recipe whose course includes 'side', including a dual-use \`[main, side]\` dish; exclude_cooked_within_days is a caller-supplied window; there is no tag filter. A makeability gate is applied by default in both modes: recipes needing equipment the caller doesn't own are hidden — unless the caller has no kitchen inventory recorded, in which case nothing is gated — and include_unmakeable:true instead returns those recipes annotated with missing_equipment. Each membership row carries the caller's \`favorite\` boolean and \`description\`; no status or rating. For recall, use several diverse vibe specs (a vibe, a variety/wildcard, a never-cooked novelty) in one call.`,
       inputSchema: { specs: z.array(z.object(searchSpecShape)).min(1) },
     },
@@ -554,7 +564,10 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
         // (an EMPTY table is a valid empty corpus — `{}`, so the gate returns []).
         const ranked = specs.some((s) => typeof s.vibe === "string" && s.vibe.length > 0);
         const [index, overlay, lastCooked, owned] = await Promise.all([
-          loadRecipeIndex(env).catch((e) => {
+          // The caller's LENS position (shared-corpus D11): the membership universe is
+          // the lens-visible corpus, so an out-of-lens recipe appears in no group in
+          // either mode — its absence indistinguishable from nonexistence.
+          loadRecipeIndex(env, memberViewer(tenant.id, tenant.member)).catch((e) => {
             throw new ToolError(
               "index_unavailable",
               `the recipe index is unavailable: ${e instanceof Error ? e.message : String(e)}`,
@@ -681,16 +694,29 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "recipe_site_url",
     {
       description:
-        "Resolve the URL of the hosted cookbook (the browse view of the shared corpus), served by the yamp Worker itself (no GitHub Pages, no GitHub Pro). Returns { url, enabled }: enabled:true with the cookbook URL (`<host>/cookbook`) when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. Use it during onboarding to point a new member at the full collection.",
-      inputSchema: {},
+        "Resolve a hosted cookbook URL at runtime, lens-aware. With NO arguments: returns { url, enabled } for the cookbook root — enabled:true with `<host>/cookbook` when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. With an optional `slug`: hands out a link appropriate to that recipe's visibility — a PUBLIC `/cookbook/<slug>` link (scope:'public') ONLY when the recipe is anonymously visible (so the link never 404s for a visitor); the member app's `/recipe/<slug>` detail link (scope:'member' — requires a member session) when the recipe is inside the caller's lens but not anonymous; and the same structured not_found an unknown slug returns when the recipe is outside the caller's lens — indistinguishably. Never writes. Use it to share a recipe link or point a new member at the collection.",
+      inputSchema: { slug: z.string().optional() },
     },
-    () =>
+    ({ slug }) =>
       runTool(async () => {
         // The cookbook is served by THIS Worker at `/cookbook`, built from the D1 index +
         // R2 bodies (src/cookbook.ts) — no GitHub. `origin` is the request host the member
         // connected to (the operator's domain), threaded in from the MCP handler.
         if (!origin) return { url: null, enabled: false };
-        return { url: `${origin}/cookbook`, enabled: true };
+        if (slug === undefined) return { url: `${origin}/cookbook`, enabled: true };
+        // Lens-aware slug link (data-read-tools): anonymous position first (the public
+        // link), then the caller's lens (the member detail link), else the not_found an
+        // unknown slug produces — no slug-probing oracle, no body read on any branch.
+        if (!SLUG_RE.test(slug)) {
+          throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
+        }
+        if (await isVisible(env, ANONYMOUS, slug)) {
+          return { url: `${origin}/cookbook/${slug}`, enabled: true, scope: "public" };
+        }
+        if (await isVisible(env, memberViewer(tenant.id, tenant.member), slug)) {
+          return { url: `${origin}/recipe/${slug}`, enabled: true, scope: "member" };
+        }
+        throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
       }),
   );
 
@@ -1034,14 +1060,14 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
   // data-repo root, while the discovery feeds/inbox/allowlist are shared D1 tables,
   // so any member's config feeds one group pool. Imports dedupe by
   // source URL against the shared corpus so a recipe is reused, not duplicated (§6.4).
-  registerDiscoveryTools(server, corpus, env, tenant.id);
+  registerDiscoveryTools(server, corpus, env, tenant);
 
   // Recipe notes (§8): attributed annotations in the D1 `recipe_notes` table,
   // aggregated across the group at read time with the privacy WHERE (own-private +
   // group-shared), joined with the slice-4 overlay-ratings query (fully D1).
   // Author/privacy caller is the MEMBER (attribution), not the tenant (isolation) —
   // byte-identical for founding members, correct once households hold more than one.
-  registerNoteTools(server, tenant.member, directoryFromEnv(env), env);
+  registerNoteTools(server, tenant, directoryFromEnv(env), env);
 
   // In-store fulfillment: the shared D1 `stores` registry (identity-only CRUD,
   // unattributed) + attributed D1 `store_notes` (the recipe-notes pattern, store

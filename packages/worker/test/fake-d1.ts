@@ -54,6 +54,7 @@ const PK: Record<string, string[]> = {
   pending_proposals: ["tenant", "id"],
   webauthn_credentials: ["credential_id"],
   members: ["id"],
+  recipe_imports: ["recipe", "tenant"], // visibility grants (migration 0059)
   // walled-source ingest (recipe-ingestion)
   ingest_keys: ["id"],
   ingest_candidates: ["id"],
@@ -87,6 +88,7 @@ const GLOBAL_TABLES = new Set([
   "ingest_candidates",
   "ingest_pushes",
   "job_runs",
+  "recipe_imports",
 ]);
 
 export function fakeD1(
@@ -103,6 +105,23 @@ export function fakeD1(
     ...(init.tables ?? {}),
   };
   const known = new Set(init.recipes ?? []);
+  // The visibility lens reads `recipe_imports` (migration 0059). Unless a test seeds
+  // its own grants, every known/seeded recipe is granted to a placeholder household —
+  // the converged post-reconcile state, so self-hosted lens reads pass everything
+  // (today's behavior, the D9 promise these tests pin).
+  if (!tables.recipe_imports) {
+    const grantSlugs = new Set<string>(known);
+    for (const r of tables.recipes ?? []) {
+      if (typeof r.slug === "string") grantSlugs.add(r.slug);
+    }
+    tables.recipe_imports = [...grantSlugs].map((slug) => ({
+      recipe: slug,
+      tenant: "seed-household",
+      member: "seed-household",
+      via: "agent",
+      imported_at: "2026-01-01",
+    }));
+  }
   const batches: { sql: string; binds: unknown[] }[][] = [];
 
   const tableOf = (sql: string): string | null => {
@@ -126,6 +145,14 @@ export function fakeD1(
     if (/\bdepartment IS NULL/i.test(sql)) out = out.filter((r) => r.department == null);
     if (/status = \?2/i.test(sql)) eq("status", 2);
     if (/\brecipe = \?1/i.test(sql)) eq("recipe", 1);
+    // The visibility lens's self-hosted arm (src/visibility.ts): any non-curated grant
+    // admits. fake-d1 tests never flip to SaaS (no operator_config row → self-hosted),
+    // so the single <> arm is the only lens WHERE this fake must honor.
+    const tenantNe = /i\.tenant <> \?(\d+)/i.exec(sql);
+    if (tenantNe) {
+      const n = Number(tenantNe[1]);
+      out = out.filter((r) => r.tenant !== binds[n - 1]);
+    }
     if (/\brecipe = \?2/i.test(sql)) eq("recipe", 2);
     if (/LOWER\(recipe\) = LOWER\(\?2\)/i.test(sql)) {
       out = out.filter((r) => String(r.recipe).toLowerCase() === String(binds[1]).toLowerCase());

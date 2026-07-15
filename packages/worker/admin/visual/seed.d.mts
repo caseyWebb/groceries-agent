@@ -152,6 +152,13 @@ export interface SeedLiterals {
       readonly noTime: string;
       readonly italian: readonly string[];
     };
+    /** Visibility-lens fixtures (deployment-profiles-and-visibility-lens): the curated
+     *  subset (curated-tenant grants — the saas variant's badged floor) and the
+     *  pending-household-only recipe that leaves the active member's saas lens. */
+    readonly lens: {
+      readonly curated: readonly string[];
+      readonly outOfLens: string;
+    };
     /** Propose-flow fixtures (member-app-propose D12): the self-provisioned palette's
      *  vibe ids (their derived vectors are pre-seeded), the cache-warmed freeform
      *  phrase, and the corpus rows the specs assert on. */
@@ -219,3 +226,6 @@ export declare const SEED: SeedLiterals;
 export declare function d1Statements(now: number): string[];
 /** KV seeds: [binding, key, value] triples for `wrangler kv key put --local`. */
 export declare function kvEntries(): Array<[binding: string, key: string, value: string]>;
+/** The app suite's SaaS-variant overlay statements (applied after `d1Statements` into the
+ *  dedicated saas persist dir only — never the default self-hosted state). */
+export declare function saasD1Statements(): string[];
