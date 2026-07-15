@@ -6,6 +6,7 @@
 - [ ] 1.2 Pin the migration number: expected `0061` (0059 = lens, 0060 expected = households). Take the **next free** number under `packages/worker/migrations/d1/` at implementation time; do not duplicate (0018/0045/0047 history).
 - [ ] 1.3 Rebase check on the `recipe-notes` spec: if `recipe-detail-tweaks` (band 2, tag-UI delta) has archived since planning, re-copy this change's MODIFIED blocks onto the then-current living text (tier edits and tag-UI edits touch different sentences). Same re-verification for the `shared-corpus` and `data-read-tools` blocks against the lens change's archived text, and `member-app-core` against its current text.
 - [ ] 1.4 Check the `/api` notes routes' author stamp (`packages/worker/src/api/cookbook.ts`): if the identity-split implementation already stamps `tenant.member`, task 4.3 is a no-op; either way report the observed state to the main thread.
+- [ ] 1.5 Lens-review carry-in: note WRITE paths (`add_recipe_note`, POST/PATCH notes `/api`) currently accept any slug with no visibility check — a note written against an out-of-lens slug succeeds identically to a nonexistent one (not a read oracle, but it would surface once the recipe enters the lens). Decide deliberately in this change: gate note writes on `isVisible(member viewer, slug)` (recommended — a member should only annotate recipes they can see; keep the response indistinguishable from the nonexistent-slug case) or record acceptance with rationale in the spec delta.
 
 ## 2. Migration and storage layer
 

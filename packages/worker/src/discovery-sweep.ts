@@ -1133,17 +1133,24 @@ export function buildDiscoveryDeps(env: Env, now: () => number = () => Date.now(
 
     async loadRetries(nowIso, limit) {
       const rows = await loadDueRetries(env, nowIso, limit);
-      return rows.map((r) => ({
-        url: r.url ?? "",
-        title: r.title ?? "",
-        summary: null,
-        source: r.source ?? "",
-        existingRowId: r.id,
-        attempts: r.attempts,
-        // The grant `via` from the log row's origin: a pushed row is a satellite
-        // candidate; a feed/email row carries its source provenance; else agent.
-        via: r.pushed ? "satellite" : r.source ? `feed:${r.source}` : "agent",
-      }));
+      return rows.map((r) => {
+        // A parked curated-source row must re-enter the pipeline AS curated: the curated
+        // tier skips taste matching and lands the reserved tenant's grant (D13), and a
+        // retry that lost the flag would mint discovery_matches + household grants.
+        const curated = !r.pushed && r.source === "curated";
+        return {
+          url: r.url ?? "",
+          title: r.title ?? "",
+          summary: null,
+          source: r.source ?? "",
+          existingRowId: r.id,
+          attempts: r.attempts,
+          curated,
+          // The grant `via` from the log row's origin: a pushed row is a satellite
+          // candidate; a feed/email row carries its source provenance; else agent.
+          via: r.pushed ? "satellite" : curated ? CURATED_VIA : r.source ? `feed:${r.source}` : "agent",
+        };
+      });
     },
 
     async recordLog(entry, opts) {

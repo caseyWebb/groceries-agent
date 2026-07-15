@@ -153,7 +153,11 @@ export function registerDiscoveryTools(
         // Import-path attribution at creation (shared-corpus): the caller household's
         // grant is recorded in the same operation as the R2 put, so an agent import is
         // never unattached — the recipe is visible through this household's lens the
-        // moment it becomes readable.
+        // moment it becomes readable. Deliberately NOT best-effort (unlike the seeds
+        // below): a swallowed failure would leave the recipe for the lens reconcile's
+        // OPERATOR-household fallback, hiding the import from the caller under SaaS.
+        // Surfacing the error is self-recoverable — a retried create_recipe hits the
+        // dedup path, which mints the caller's grant idempotently.
         await recordImportGrant(env, {
           recipe: finalSlug,
           tenant: tenant.id,

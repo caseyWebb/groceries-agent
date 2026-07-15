@@ -285,3 +285,56 @@ describe("curated_hide rides the preferences merge-patch path", () => {
     ]);
   });
 });
+
+// --- retry stream: a parked curated row re-enters the pipeline AS curated -------------
+// (D13: curated intake skips taste matching and lands the reserved tenant's grant; a
+// retry that lost the flag would mint discovery_matches + household grants instead.)
+
+describe("loadRetries curated provenance", () => {
+  it("re-derives curated/via from the log row's source", async () => {
+    const h = sqliteEnv(["casey"]);
+    const env = h.env;
+    const { recordDiscoveryLog } = await import("../src/discovery-db.js");
+    const { buildDiscoveryDeps } = await import("../src/discovery-sweep.js");
+    const past = "2026-01-01T00:00:00.000Z";
+    await recordDiscoveryLog(env, {
+      url: "https://curated.example/pie",
+      title: "Pie",
+      source: "curated",
+      outcome: "error",
+      createdAt: past,
+      attempts: 1,
+      nextRetryAt: past,
+    });
+    await recordDiscoveryLog(env, {
+      url: "https://blog.example/stew",
+      title: "Stew",
+      source: "https://blog.example/feed.xml",
+      outcome: "failed",
+      createdAt: past,
+      attempts: 2,
+      nextRetryAt: past,
+    });
+    await recordDiscoveryLog(env, {
+      url: "https://walled.example/cake",
+      title: "Cake",
+      source: "curated", // pushed wins: a satellite row is never curated intake
+      outcome: "error",
+      createdAt: past,
+      attempts: 1,
+      nextRetryAt: past,
+      pushed: true,
+    });
+
+    const deps = buildDiscoveryDeps(env);
+    const retries = await deps.loadRetries("2026-07-15T00:00:00.000Z", 10);
+    const bySlugUrl = Object.fromEntries(retries.map((r) => [r.url, r]));
+
+    expect(bySlugUrl["https://curated.example/pie"].curated).toBe(true);
+    expect(bySlugUrl["https://curated.example/pie"].via).toBe("curated");
+    expect(bySlugUrl["https://blog.example/stew"].curated).toBe(false);
+    expect(bySlugUrl["https://blog.example/stew"].via).toBe("feed:https://blog.example/feed.xml");
+    expect(bySlugUrl["https://walled.example/cake"].curated).toBe(false);
+    expect(bySlugUrl["https://walled.example/cake"].via).toBe("satellite");
+  });
+});
