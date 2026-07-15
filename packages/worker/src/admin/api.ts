@@ -19,6 +19,7 @@ import {
   onboard,
   rotate,
   revoke,
+  revokeMember,
   krogerConsentLink,
   randomInviteCode,
   createGroupInvite,
@@ -132,8 +133,22 @@ export function registerApiRoutes(app: Hono<{ Bindings: Env }, BlankSchema, "/ad
         c.json(await krogerConsentLink(c.env, adminDeps(c.env), decodeURIComponent(c.req.param("id")), new URL(c.req.url).origin)),
       )
       .delete("/api/tenants/:id", async (c) => {
+        // Household purge: the whole-tenant half of the split lifecycle (route + behavior unchanged).
         return c.json(await revoke(adminDeps(c.env), decodeURIComponent(c.req.param("id"))));
       })
+      // Member revoke (member-identity-split): remove ONE member — their row, passkeys,
+      // sessions, invites, authored notes — leaving the household intact; refuses the last
+      // member (structured `conflict` directing the operator to household purge). No admin
+      // UI consumes this yet (every household has one member until the People change).
+      .delete("/api/tenants/:id/members/:member", async (c) =>
+        c.json(
+          await revokeMember(
+            adminDeps(c.env),
+            decodeURIComponent(c.req.param("id")),
+            decodeURIComponent(c.req.param("member")),
+          ),
+        ),
+      )
       // Group invite codes (self-service-signup): mint a capped/expiring code (shown once,
       // never logged), list codes with live usage + provenance, revoke one (halts further
       // signups; accounts already created are untouched).

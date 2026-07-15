@@ -84,9 +84,9 @@ describe("handleAuthorize — cross-device approval + grace-gated invite fallbac
     expect((await res.text()).toLowerCase()).toContain("malformed authorization request");
   });
 
-  it("POST with a valid code completes the grant with props.tenantId and redirects", async () => {
+  it("POST with a valid code completes the grant with props { tenantId, memberId } and redirects", async () => {
     const { env, completeCalls } = fakeEnv({
-      "invite:LET-ME-IN": "alice",
+      "invite:LET-ME-IN": "alice", // a LEGACY record: no member field → founding member
       "tenant:alice": JSON.stringify({ id: "alice" }),
     });
     const res = await handleAuthorize(postForm({ invite_code: "LET-ME-IN", oauth_req: oauthReqB64 }), env);
@@ -94,8 +94,21 @@ describe("handleAuthorize — cross-device approval + grace-gated invite fallbac
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("code=GRANT");
     expect(completeCalls).toHaveLength(1);
+    // The roster grant-scan contract: userId is the TENANT id (grant:<userId>:* keys group by
+    // tenant), NEVER the member — the member rides only in props.
     expect(completeCalls[0].userId).toBe("alice");
-    expect(completeCalls[0].props).toEqual({ tenantId: "alice" });
+    expect(completeCalls[0].props).toEqual({ tenantId: "alice", memberId: "alice" });
+  });
+
+  it("POST binds a member-addressed bootstrap invite's pair into the grant props", async () => {
+    const { env, completeCalls } = fakeEnv({
+      "invite:BOOT": JSON.stringify({ v: 1, tenant: "alice", member: "m2", single_use: true, expires_at: 0 }),
+      "tenant:alice": JSON.stringify({ id: "alice" }),
+    });
+    const res = await handleAuthorize(postForm({ invite_code: "BOOT", oauth_req: oauthReqB64 }), env);
+    expect(res.status).toBe(302);
+    expect(completeCalls[0].userId).toBe("alice"); // still the tenant (roster contract)
+    expect(completeCalls[0].props).toEqual({ tenantId: "alice", memberId: "m2" });
   });
 
   it("POST with an unknown code re-renders with an error and issues NO grant", async () => {
@@ -129,7 +142,7 @@ describe("handleAuthorizeStatus — cross-device poll", () => {
     expect(pending).toEqual({ status: "pending" });
     expect(completeCalls).toHaveLength(0);
 
-    await approveApproval(env, ref, "casey");
+    await approveApproval(env, ref, "casey", "casey");
     const approved = (await (await handleAuthorizeStatus(statusReq(ref), env)).json()) as {
       status: string;
       redirect: string;
@@ -137,12 +150,24 @@ describe("handleAuthorizeStatus — cross-device poll", () => {
     expect(approved.status).toBe("approved");
     expect(approved.redirect).toContain("code=GRANT");
     expect(completeCalls).toHaveLength(1);
-    expect(completeCalls[0]).toEqual({ userId: "casey", props: { tenantId: "casey" } });
+    // userId = tenant id (the roster grant-scan contract); the approving member in props.
+    expect(completeCalls[0]).toEqual({ userId: "casey", props: { tenantId: "casey", memberId: "casey" } });
 
     // A second poll after the single completion is a no-op — the ref is consumed.
     const after = await (await handleAuthorizeStatus(statusReq(ref), env)).json();
     expect(after).toEqual({ status: "expired" });
     expect(completeCalls).toHaveLength(1);
+  });
+
+  it("a PRE-SPLIT approved authz record (no member) completes as the founding member", async () => {
+    const { env, completeCalls } = fakeEnv();
+    await env.TENANT_KV.put(
+      "authz:legacy",
+      JSON.stringify({ oauth: oauthReqB64, clientName: "Claude", code: "ABC234", status: "approved", tenant: "casey" }),
+    );
+    const approved = (await (await handleAuthorizeStatus(statusReq("legacy"), env)).json()) as { status: string };
+    expect(approved.status).toBe("approved");
+    expect(completeCalls[0]).toEqual({ userId: "casey", props: { tenantId: "casey", memberId: "casey" } });
   });
 
   it("an unknown ref is expired and issues no grant", async () => {

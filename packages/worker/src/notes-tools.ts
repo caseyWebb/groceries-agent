@@ -51,13 +51,14 @@ export async function groupFavorites(env: Env, slug: string, ids: string[]): Pro
 
 /**
  * @param server    the MCP server to register on
- * @param tenantId  the caller — author of new notes + privacy boundary on reads
+ * @param memberId  the caller's MEMBER id (member-identity-split) — author of new notes +
+ *                  privacy boundary on reads; equals the tenant id for founding members
  * @param directory the tenant allowlist, scoping the group ratings aggregate
  * @param env       D1 — the `recipe_notes` + `overlay` tables back the read
  */
 export function registerNoteTools(
   server: McpServer,
-  tenantId: string,
+  memberId: string,
   directory: { list(): Promise<string[]> },
   env: Env,
 ): void {
@@ -82,13 +83,13 @@ export function registerNoteTools(
           throw new ToolError("validation_failed", "note body must not be empty", { slug });
         }
         const created_at = nowIso();
-        await insertRecipeNote(env, slug, tenantId, {
+        await insertRecipeNote(env, slug, memberId, {
           created_at,
           body,
           tags: tags ?? [],
           private: isPrivate ?? false,
         });
-        return { slug, author: tenantId, created_at };
+        return { slug, author: memberId, created_at };
       }),
   );
 
@@ -108,7 +109,7 @@ export function registerNoteTools(
         // Both halves are now D1 queries: notes (own-private + group-shared via the
         // privacy WHERE) and favorites (overlay scoped to the group). No GitHub read.
         const [notes, favorites] = await Promise.all([
-          readRecipeNotes(env, slug, tenantId),
+          readRecipeNotes(env, slug, memberId),
           groupFavorites(env, slug, ids),
         ]);
         return { slug, notes, favorites };
@@ -136,7 +137,7 @@ export function registerNoteTools(
         if (body !== undefined && !body.trim()) {
           throw new ToolError("validation_failed", "note body must not be empty", { slug });
         }
-        const found = await updateRecipeNote(env, slug, tenantId, created_at, {
+        const found = await updateRecipeNote(env, slug, memberId, created_at, {
           body,
           tags,
           private: isPrivate,
@@ -144,7 +145,7 @@ export function registerNoteTools(
         if (!found) {
           throw new ToolError("not_found", `No note of yours on ${slug} with that created_at`, { slug, created_at });
         }
-        return { slug, author: tenantId, created_at };
+        return { slug, author: memberId, created_at };
       }),
   );
 
@@ -160,7 +161,7 @@ export function registerNoteTools(
         if (!SLUG_RE.test(slug)) {
           throw new ToolError("validation_failed", `Invalid recipe slug: ${slug}`, { slug });
         }
-        const found = await removeRecipeNote(env, slug, tenantId, created_at);
+        const found = await removeRecipeNote(env, slug, memberId, created_at);
         if (!found) {
           throw new ToolError("not_found", `No note of yours on ${slug} with that created_at`, { slug, created_at });
         }
@@ -175,7 +176,7 @@ export function registerNoteTools(
  * in the D1 `store_notes` table, read across the group with the same privacy WHERE. No
  * ratings (a store has no per-tenant disposition the way a recipe does — just notes).
  */
-export function registerStoreNoteTools(server: McpServer, tenantId: string, env: Env): void {
+export function registerStoreNoteTools(server: McpServer, memberId: string, env: Env): void {
   server.registerTool(
     "add_store_note",
     {
@@ -197,13 +198,13 @@ export function registerStoreNoteTools(server: McpServer, tenantId: string, env:
           throw new ToolError("validation_failed", "note body must not be empty", { slug });
         }
         const created_at = nowIso();
-        await insertStoreNote(env, slug, tenantId, {
+        await insertStoreNote(env, slug, memberId, {
           created_at,
           body,
           tags: tags ?? [],
           private: isPrivate ?? false,
         });
-        return { slug, author: tenantId, created_at };
+        return { slug, author: memberId, created_at };
       }),
   );
 
@@ -219,7 +220,7 @@ export function registerStoreNoteTools(server: McpServer, tenantId: string, env:
         if (!SLUG_RE.test(slug)) {
           throw new ToolError("not_found", `Unknown store: ${slug}`, { slug });
         }
-        return { slug, notes: await readStoreNotes(env, slug, tenantId) };
+        return { slug, notes: await readStoreNotes(env, slug, memberId) };
       }),
   );
 
@@ -244,7 +245,7 @@ export function registerStoreNoteTools(server: McpServer, tenantId: string, env:
         if (body !== undefined && !body.trim()) {
           throw new ToolError("validation_failed", "note body must not be empty", { slug });
         }
-        const found = await updateStoreNote(env, slug, tenantId, created_at, {
+        const found = await updateStoreNote(env, slug, memberId, created_at, {
           body,
           tags,
           private: isPrivate,
@@ -252,7 +253,7 @@ export function registerStoreNoteTools(server: McpServer, tenantId: string, env:
         if (!found) {
           throw new ToolError("not_found", `No note of yours on ${slug} with that created_at`, { slug, created_at });
         }
-        return { slug, author: tenantId, created_at };
+        return { slug, author: memberId, created_at };
       }),
   );
 
@@ -268,7 +269,7 @@ export function registerStoreNoteTools(server: McpServer, tenantId: string, env:
         if (!SLUG_RE.test(slug)) {
           throw new ToolError("validation_failed", `Invalid store slug: ${slug}`, { slug });
         }
-        const found = await removeStoreNote(env, slug, tenantId, created_at);
+        const found = await removeStoreNote(env, slug, memberId, created_at);
         if (!found) {
           throw new ToolError("not_found", `No note of yours on ${slug} with that created_at`, { slug, created_at });
         }

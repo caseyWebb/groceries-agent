@@ -6,6 +6,8 @@
 
 import { directoryFromEnv, normalizeTenantId } from "./tenant.js";
 import { getSignupInvite, redeemGroupInvite, registerExistingTenant } from "./signup-db.js";
+import { insertFoundingMember } from "./members-db.js";
+import { db } from "./db.js";
 import type { Env } from "./env.js";
 
 const TENANT_PREFIX = "tenant:"; // mirrors src/tenant.ts (the allowlist directory)
@@ -70,8 +72,10 @@ export async function redeemGroupCode(
   const outcome = await redeemGroupInvite(env, code, id, now);
   if (outcome.kind !== "ok") return outcome;
 
-  // The D1 claim won — write the KV allowlist entry now that we own the name, mirroring
-  // onboard()'s `tenant:<id>` record shape (src/admin.ts).
+  // The D1 claim won — mint the founding member (id = handle = the claimed username) in the
+  // same flow, then write the KV allowlist entry, mirroring onboard() (src/admin.ts). Member
+  // before allowlist so an allowlisted tenant always has its member row (fails under-granting).
+  await insertFoundingMember(db(env), id, now);
   await env.TENANT_KV.put(`${TENANT_PREFIX}${id}`, JSON.stringify({ id }));
   return { kind: "ok", tenant: id };
 }

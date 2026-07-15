@@ -51,6 +51,10 @@ describe("signup: username claim + slot accounting", () => {
     expect(rows<{ id: string; via_code: string }>("tenants")).toContainEqual(
       expect.objectContaining({ id: "dave", via_code: code }),
     );
+    // The founding member is minted in the same flow: id = handle = the claimed username.
+    expect(rows("members")).toContainEqual(
+      expect.objectContaining({ id: "dave", tenant: "dave", handle: "dave" }),
+    );
   });
 
   it("a taken username rolls back and spends no slot", async () => {

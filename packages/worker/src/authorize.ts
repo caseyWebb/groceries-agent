@@ -1,9 +1,10 @@
 // The OAuth `/authorize` surface (multi-tenancy §3.2, reworked by webauthn-passkey-auth).
 // The provider routes `/authorize` here. Identity is proven by CROSS-DEVICE APPROVAL: the GET
 // page mints a single-use approval reference and shows a deep link into the passkey-authenticated
-// member web app (`/connect`) plus a verification code; the member approves there; this page polls
-// `/authorize/status` and, once approved, completes the grant with `props: { tenantId }`. No passkey
-// ceremony runs in Claude's OAuth browser.
+// member web app (`/connect`) plus a verification code; the member approves there (binding their
+// `(tenant, member)` pair); this page polls `/authorize/status` and, once approved, completes the
+// grant with `props: { tenantId, memberId }` — `userId` stays the tenant id, the key the admin
+// roster's grant scan groups by. No passkey ceremony runs in Claude's OAuth browser.
 //
 // During the migration GRACE window (INVITE_GRACE ≠ "off"), the page ALSO offers a legacy
 // invite-code form (the pre-passkey path) so members who haven't enrolled can still connect; the
@@ -127,10 +128,12 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
     const tenantId = normalizeTenantId(inv.tenant);
     const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
       request: oauthReqInfo,
+      // userId stays the TENANT id (the roster's grant:<userId>:* scan contract); the
+      // member rides only in props, bound to the invite's resolved pair.
       userId: tenantId,
       scope: oauthReqInfo.scope,
       metadata: { label: tenantId },
-      props: { tenantId },
+      props: { tenantId, memberId: inv.member },
     });
     return Response.redirect(redirectTo, 302);
   }
@@ -141,7 +144,7 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
 /**
  * `/authorize/status?authz=<ref>` — the cross-device poll. Pending → `{status:"pending"}`; unknown
  * or expired → `{status:"expired"}`; approved → claim the reference (single completion), complete
- * the OAuth grant with the bound tenant, and return `{status:"approved", redirect}`.
+ * the OAuth grant with the bound `(tenant, member)` pair, and return `{status:"approved", redirect}`.
  */
 export async function handleAuthorizeStatus(request: Request, env: Env): Promise<Response> {
   const ref = new URL(request.url).searchParams.get("authz") ?? "";
@@ -164,10 +167,12 @@ export async function handleAuthorizeStatus(request: Request, env: Env): Promise
   const tenantId = normalizeTenantId(claimed.tenant);
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
     request: oauthReqInfo,
+    // userId stays the TENANT id (the roster's grant:<userId>:* scan contract); the
+    // approving member rides only in props.
     userId: tenantId,
     scope: oauthReqInfo.scope,
     metadata: { label: tenantId },
-    props: { tenantId },
+    props: { tenantId, memberId: claimed.member },
   });
   return json({ status: "approved", redirect: redirectTo });
 }

@@ -1039,13 +1039,15 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
   // Recipe notes (§8): attributed annotations in the D1 `recipe_notes` table,
   // aggregated across the group at read time with the privacy WHERE (own-private +
   // group-shared), joined with the slice-4 overlay-ratings query (fully D1).
-  registerNoteTools(server, tenant.id, directoryFromEnv(env), env);
+  // Author/privacy caller is the MEMBER (attribution), not the tenant (isolation) —
+  // byte-identical for founding members, correct once households hold more than one.
+  registerNoteTools(server, tenant.member, directoryFromEnv(env), env);
 
   // In-store fulfillment: the shared D1 `stores` registry (identity-only CRUD,
   // unattributed) + attributed D1 `store_notes` (the recipe-notes pattern, store
   // analog) — layout lives in layout/location/stock-tagged store notes.
   registerStoreTools(server, env);
-  registerStoreNoteTools(server, tenant.id, env);
+  registerStoreNoteTools(server, tenant.member, env);
 
   // read_to_buy — the derived to-buy view (member-app-grocery D1): one shared op with
   // the member API's GET /api/grocery/to-buy (computeToBuyView).
