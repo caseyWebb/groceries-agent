@@ -96,7 +96,7 @@ export default defineConfig({
     // Worker (not just the asset layer) is up. Long-running (wrangler dev is the server).
     command: "node app/visual/setup.mjs",
     url: `http://127.0.0.1:${PORT}/health`,
-    timeout: 240_000,
+    timeout: 360_000, // two wrangler dev servers + their D1/KV/R2 seeding boot in this window
     reuseExistingServer: !process.env.CI,
   },
 });

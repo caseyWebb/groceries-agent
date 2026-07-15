@@ -18,13 +18,11 @@ import { ShellPage } from "../pages/shell.page";
 
 const LENS = SEED.app.lens;
 
-test.beforeEach(async ({ asMember }) => {
-  await asMember();
-});
-
 test("curated-floor cold start: the onboarding panel carries three cards over the badged curated list", async ({
   cookbookPage,
+  asMember,
 }) => {
+  await asMember();
   await cookbookPage.landmark();
   // The onboarding panel renders ABOVE the list with its three compact action cards.
   await expect(cookbookPage.onboardingPanel()).toBeVisible();
@@ -54,7 +52,9 @@ test("curated-floor cold start: the onboarding panel carries three cards over th
 
 test("browse lens: a non-friend household's recipe renders nowhere — list, search, or badges", async ({
   cookbookPage,
+  asMember,
 }) => {
+  await asMember();
   await cookbookPage.landmark();
   // The pending household's non-curated recipe (visible under self-hosted) is out of
   // this household's saas lens: absent from the page entirely.
@@ -71,7 +71,9 @@ test("browse lens: a non-friend household's recipe renders nowhere — list, sea
 test("the Preferences curated card hides the tier for the household: the true-zero state carries the page", async ({
   profilePage,
   cookbookPage,
+  asMember,
 }) => {
+  await asMember();
   // The SaaS-only "Curated collection" card (design request #10): title, explanation,
   // one toggle, the household-scope hint — no confirm dialog.
   await profilePage.goto();
@@ -115,7 +117,9 @@ test("the Preferences curated card hides the tier for the household: the true-ze
 
 test("explicit dismiss persists for the household across reload and never returns at zero own recipes", async ({
   cookbookPage,
+  asMember,
 }) => {
+  await asMember();
   await cookbookPage.landmark();
   await expect(cookbookPage.onboardingPanel()).toBeVisible();
   // Dismiss writes the household-level preferences flag; the standard browse page
@@ -139,7 +143,8 @@ test("explicit dismiss persists for the household across reload and never return
   await expect(cookbookPage.onboardingPanel()).toBeVisible();
 });
 
-test("note composer: a curated (anonymously-visible) recipe carries the full Public copy", async ({ page }) => {
+test("note composer: a curated (anonymously-visible) recipe carries the full Public copy", async ({ page, asMember }) => {
+  await asMember();
   // The active member's saas lens holds the curated tier — curated recipes ARE the
   // anonymous position under SaaS, so `anonymously_visible` is true and Public
   // states the full audience.
@@ -159,6 +164,7 @@ test.describe("note composer: the reduced Public copy on a household-only recipe
   test("a recipe off the anonymous site states the note won't reach it", async ({ page, loginPage }) => {
     await loginPage.goto();
     await loginPage.login(SEED.inviteAlt);
+    await loginPage.skipEnroll(); // decline the first-run passkey nudge to reach the shell
     await new ShellPage(page).landmark();
     // The pending household owns this import; the anonymous lens (curated-only under
     // SaaS) does not include it — `anonymously_visible: false`.

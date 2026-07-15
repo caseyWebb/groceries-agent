@@ -114,6 +114,21 @@ const tmp = mkdtempSync(join(tmpdir(), "app-seed-"));
 const mdPath = join(tmp, "recipe.md");
 writeFileSync(mdPath, recipeMd);
 sh("npx", ["wrangler", "r2", "object", "put", `yamp-corpus/recipes/${SEED.recipe.slug}.md`, "--file", mdPath, "--local"]);
+// The lens fixture slugs (SEED.app.lens) need readable BODIES on the SAAS server —
+// the note-tier composer specs open their DETAIL pages there (readRecipeDetail reads
+// recipes/<slug>.md; without a body the page 404s regardless of the D1 lens). Only the
+// saas persist dir gets them (seeded further down): no default-server spec opens these
+// slugs' detail pages, and each `wrangler r2 object put` is a full CLI boot — four
+// puts on one server keep setup inside the webServer readiness budget.
+const lensSlugs = [...SEED.app.lens.curated, SEED.app.lens.outOfLens];
+const lensMdPath = (slug) => {
+  const p = join(tmp, `${slug}.md`);
+  writeFileSync(
+    p,
+    recipeMd.replace(`title: ${SEED.recipe.title}`, `title: ${slug}`).replace(`source: ${SEED.recipe.source}`, `source: https://example.com/${slug}`),
+  );
+  return p;
+};
 
 // Deterministic operator config (connect-modal): the connect modal's specs assert
 // TEMPLATED copy — in production MARKETPLACE_REPO is stamped by the deploy and
@@ -152,6 +167,12 @@ sh("npx", [
 ]);
 for (const [binding, key, value] of kvEntries()) {
   sh("npx", ["wrangler", "kv", "key", "put", key, value, "--binding", binding, "--local", "--persist-to", SAAS_STATE]);
+}
+// The R2 corpus bodies this server's specs open: the shared seeded recipe plus the
+// lens fixture slugs (their detail pages are only visited in the saas specs).
+for (const slug of [SEED.recipe.slug, ...lensSlugs]) {
+  const file = slug === SEED.recipe.slug ? mdPath : lensMdPath(slug);
+  sh("npx", ["wrangler", "r2", "object", "put", `yamp-corpus/recipes/${slug}.md`, "--file", file, "--local", "--persist-to", SAAS_STATE]);
 }
 // The same server-side member sessions as the default state, so the shared storageState
 // cookie authenticates against this variant too.
