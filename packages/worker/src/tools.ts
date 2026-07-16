@@ -21,13 +21,11 @@ import { ToolError, runTool } from "./errors.js";
 import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
-import { registerNightVibeTools } from "./night-vibe-tools.js";
+import { registerNightVibeTools, aliasDescription } from "./night-vibe-tools.js";
 import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
 import { registerReconcileTools, isOperator } from "./reconcile-tools.js";
-import { registerSuggestNightVibesTool } from "./night-vibe-suggest.js";
 import { registerOrderTools, type OrderWiring } from "./order-tools.js";
 import { computeToBuyView } from "./to-buy.js";
-import { suggestSubstitutions, MAX_SUBSTITUTION_LINES } from "./substitutions.js";
 import { registerDiscoveryTools } from "./discovery-tools.js";
 import { registerNoteTools, registerStoreNoteTools } from "./notes-tools.js";
 import { registerStoreTools } from "./stores-tools.js";
@@ -40,9 +38,7 @@ import { registerInstacartTool } from "./instacart-tool.js";
 import { getInstacartConfig } from "./instacart.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
-import { isVisible, memberViewer, ANONYMOUS } from "./visibility.js";
-import { readReconcileErrors } from "./recipe-projection.js";
-import { readRejections, getQuarantine } from "./satellite-audit-db.js";
+import { isVisible, memberViewer } from "./visibility.js";
 import { recordBugReport } from "./bug-reports.js";
 import { embedTextsCached } from "./embedding.js";
 import {
@@ -52,7 +48,7 @@ import {
   MAX_K,
   type SearchCandidate,
 } from "./semantic-search.js";
-import { listGuidance, readGuidance, saveGuidance } from "./guidance.js";
+import { listGuidance, readGuidance } from "./guidance.js";
 import { loadOperatorConfig, DEFAULT_OPERATOR_CONFIG } from "./operator-config.js";
 import { fetchWeatherForecast, type WeatherForecast, type WeatherError } from "./weather.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
@@ -86,7 +82,6 @@ import {
   type MatchDeps,
   type MatchResult,
 } from "./matching.js";
-import { compareUnitPrice } from "./unit-price.js";
 import { readStoreFlyer, filterByMinSavings, isSatelliteRollupStale, KROGER_STORE } from "./flyer-warm.js";
 import type { KvStore } from "./kroger-user.js";
 
@@ -480,20 +475,6 @@ const flyerFilterShape = {
   min_savings_pct: z.number().optional(),
 };
 
-const matchContextShape = {
-  recipe_slug: z.string().optional(),
-  dietary: z.array(z.string()).optional(),
-  quantity_hint: z.string().optional(),
-};
-
-const unitPriceItemShape = {
-  id: z.string(),
-  price: z.union([z.string(), z.number()]),
-  size: z.string(),
-  quantity_override: z.number().optional(),
-  unit_override: z.string().optional(),
-};
-
 const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"] as const;
 
 /** One product row for the list-returning Kroger lookups (kroger_prices, ready_to_eat). */
@@ -594,8 +575,7 @@ export function buildServer(
 
   // The authored corpus (recipes/ + guidance/) is read/listed/written through the R2
   // corpus store — no GitHub App, installation token, or GitHub API call on the data
-  // path. `report_bug` writes D1 and `recipe_site_url` resolves the Worker-hosted
-  // cookbook, so GitHub is no longer on the tool surface at all.
+  // path. `report_bug` writes D1, so GitHub is no longer on the tool surface at all.
   const corpus = createR2CorpusStore(env.CORPUS);
   const kroger = createKrogerClient(env);
 
@@ -615,18 +595,18 @@ export function buildServer(
     return prefsPromise;
   }
 
-  // The order wiring (member-app-grocery D8): resolveIngredient / revalidateSku /
-  // getLocationId over lazily-memoized preferences/brands/ingredient-context/SKU-cache
-  // reads — built ONCE per request and shared by every tool below that needs them
-  // (match_ingredient_to_kroger_sku, place_order, the Kroger price/flyer lookups).
+  // The order wiring (member-app-grocery D8): revalidateSku / getLocationId over
+  // lazily-memoized preferences/brands/ingredient-context/SKU-cache reads — built ONCE
+  // per request and shared by every tool below that needs them (place_order, the Kroger
+  // price/flyer lookups). The matcher's own resolve() rides place_order's resolution and
+  // the order-review widget's ops now (ingredient-matching) — no tool calls it directly.
   const orderWiring = buildOrderWiring(env, tenant.id);
   const getLocationId = orderWiring.getLocationId;
-  const resolveIngredient = orderWiring.resolve;
 
   /**
-   * Resolve the caller's PRIMARY fulfillment store for `store_flyer`: its slug (`stores.primary`,
+   * Resolve the caller's PRIMARY fulfillment store for `flyer`: its slug (`stores.primary`,
    * default "kroger") + the rollup `locationId`. For Kroger the human `preferred_location` label is
-   * resolved to a numeric locationId (as `kroger_flyer` does); for a satellite-scanned store the
+   * resolved to a numeric locationId; for a satellite-scanned store the
    * Worker has no API, so the operator's `preferred_location` label IS the locationId the producer
    * enqueues and the satellite reports under (the `flyer:{store}:{locationId}` rollup key). Throws
    * `not_found` when no preferred location is set — the tool catches it and degrades to empty.
@@ -830,36 +810,6 @@ export function buildServer(
       }),
   );
 
-  server.registerTool(
-    "recipe_site_url",
-    {
-      description:
-        "Resolve a hosted cookbook URL at runtime, lens-aware. With NO arguments: returns { url, enabled } for the cookbook root — enabled:true with `<host>/cookbook` when the host is resolvable, or enabled:false (url:null) on the rare path where it isn't. With an optional `slug`: hands out a link appropriate to that recipe's visibility — a PUBLIC `/cookbook/<slug>` link (scope:'public') ONLY when the recipe is anonymously visible (so the link never 404s for a visitor); the member app's `/recipe/<slug>` detail link (scope:'member' — requires a member session) when the recipe is inside the caller's lens but not anonymous; and the same structured not_found an unknown slug returns when the recipe is outside the caller's lens — indistinguishably. Never writes. Use it to share a recipe link or point a new member at the collection.",
-      inputSchema: { slug: z.string().optional() },
-    },
-    ({ slug }) =>
-      runTool(async () => {
-        // The cookbook is served by THIS Worker at `/cookbook`, built from the D1 index +
-        // R2 bodies (src/cookbook.ts) — no GitHub. `origin` is the request host the member
-        // connected to (the operator's domain), threaded in from the MCP handler.
-        if (!origin) return { url: null, enabled: false };
-        if (slug === undefined) return { url: `${origin}/cookbook`, enabled: true };
-        // Lens-aware slug link (data-read-tools): anonymous position first (the public
-        // link), then the caller's lens (the member detail link), else the not_found an
-        // unknown slug produces — no slug-probing oracle, no body read on any branch.
-        if (!SLUG_RE.test(slug)) {
-          throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
-        }
-        if (await isVisible(env, ANONYMOUS, slug)) {
-          return { url: `${origin}/cookbook/${slug}`, enabled: true, scope: "public" };
-        }
-        if (await isVisible(env, memberViewer(tenant.id, tenant.member), slug)) {
-          return { url: `${origin}/recipe/${slug}`, enabled: true, scope: "member" };
-        }
-        throw new ToolError("not_found", `Unknown recipe slug: ${slug}`, { slug });
-      }),
-  );
-
   // Kroger-gated (mcp-tool-gating): registers only when the deployment carries Kroger
   // API credentials — a walk-only deployment advertises no Kroger tools.
   if (ctx.kroger) {
@@ -889,36 +839,6 @@ export function buildServer(
         }),
     );
   }
-
-  server.registerTool(
-    "read_reconcile_errors",
-    {
-      description:
-        "List recipes the index reconcile SKIPPED because they failed validation — the shared corpus's current indexing failures ({ errors: [{ slug, path, message, recorded_at }] }). The recipe index is rebuilt from the R2 corpus by a background reconcile; a recipe whose frontmatter breaks the required-field/vocabulary contract, is missing a `## Ingredients`/`## Instructions` body section, duplicates another slug, or has a dangling `pairs_with` is NOT indexed (so it won't appear in search_recipes) and is recorded here with the first actionable error. An empty list means every recipe indexed cleanly. Use it when a member reports a recipe they authored/edited (e.g. via Obsidian) isn't showing up, or proactively after a bulk edit — then relay the specific fix (e.g. \"`thai-curry`: `protein: poltry` isn't a valid value\") so they can correct the source. Shared across the group; takes no parameters.",
-      inputSchema: {},
-    },
-    () => runTool(async () => ({ errors: await readReconcileErrors(env) })),
-  );
-
-  server.registerTool(
-    "read_satellite_rejections",
-    {
-      description:
-        "List a satellite's recently REJECTED observations — the source-audit rear-view mirror ({ rejections: [{ kind, source, origin, reason, provenance, count, rejected_at }], quarantined: [{ kind, source, quarantined_at }] }), most-recent-first and bounded. A satellite is a member's home helper that scrapes recipes / scans a non-Kroger store's sale flyer / fills a store cart; the Worker re-validates everything it sends and DROPS what fails. This read reflects ONLY rejected observations — an accepted one NEVER appears (so an empty `rejections` means everything the satellite sent lately landed cleanly). Fields: `kind` is recipe | sale | order; `source` is the feed/site (recipe) or the store slug (sale/order); `origin` is `worker` (the Worker rejected it at intake — a bad shape, a wrong-endpoint item, or a quarantined source with `reason: \"quarantined\"`) or `local` (a satellite-reported, pre-aggregated summary of what its own validators dropped before the wire — `reason` is the reported category); `count` is 1 for a worker reject or N for a pre-aggregated local-summary entry; `provenance` is the offending url/id or a redacted sample. `quarantined` lists the sources an operator has flagged as a Worker-side reject (their observations are dropped until un-flagged). Optional `source` filters to one exact source. Visibility: recipe and sale rejections/quarantines are operator-global (shared across the whole group), but `order`-kind rows are per-member PRIVATE (order-fill is a member's own store cart) — you see only your own order rejections, never another member's. Use it when a member says their satellite's recipes/sales aren't showing up: read it and relay the specific defect (e.g. \"seriouseats: 12 rejects in the last day — the adapter likely broke\"). The only parameter is the optional `source`.",
-      inputSchema: { source: z.string().optional() },
-    },
-    ({ source }) =>
-      runTool(async () => ({
-        // Tenant isolation: recipe/sale rejections are operator-global (tenant IS NULL → household-wide),
-        // but `order`-kind rejections are tenant-PRIVATE (provenance = product url/id) — so scope the read
-        // to rows VISIBLE to the caller (operator-global OR this tenant), never another member's orders.
-        rejections: await readRejections(env, { source, tenantScope: tenant.id }),
-        // Same visibility rule for the quarantine set, trimmed to design F's {kind, source, quarantined_at}.
-        quarantined: (await getQuarantine(env))
-          .filter((q) => q.tenant == null || q.tenant === tenant.id)
-          .map((q) => ({ kind: q.kind, source: q.source, quarantined_at: q.quarantined_at })),
-      })),
-  );
 
   server.registerTool(
     "read_recipe",
@@ -959,45 +879,42 @@ export function buildServer(
     () => runTool(() => assembleUserProfile(env, tenant.id, tenant.member)),
   );
 
-  server.registerTool(
-    "list_guidance",
-    {
-      description:
-        'List the curated guidance slugs (each a slug + an optional one-line description) from the shared guidance/ trees. Pass `domain` for one corpus, or omit it to get every domain grouped (returns { domains: [{ domain, entries }] }; with a domain it returns { domain, entries }). Domains: "ingredient_storage" — put-away advice keyed by storage BEHAVIOR CLASS ("tender-herbs", "alliums", "leafy-greens"), a few singletons that break their class\'s rule ("basil", "tomatoes", "avocados"), and "_ethylene" for relational "don\'t store together" rules; "cooking_techniques" — general technique memories keyed by technique ("browning-meat", "searing", "resting-meat"); "purchasing" — buy-side selection keyed by PRODUCT/ITEM ("canned-tomatoes", "olive-oil"): what kind to get, plus the non-obvious "how to tell if it\'s good/ripe" judgments, surfaced while shopping. Map a just-bought item, a recipe step, or a thing on the grocery list to the right slug with your own world knowledge (cilantro → tender-herbs; "brown the beef" → browning-meat; canned tomatoes on the list → canned-tomatoes), then call read_guidance for the relevant ones. An absent tree yields an empty listing, not an error.',
-      inputSchema: { domain: z.string().optional() },
-    },
-    ({ domain }) => runTool(() => listGuidance(corpus, domain)),
-  );
+  // Fused guidance read (cooking-techniques): absent `slugs` returns list_guidance's old
+  // listing (per-domain, or all domains grouped when `domain` is also absent); present
+  // `slugs` returns today's content read. `list_guidance` stays registered for one
+  // deprecation window as a dispatch alias onto the listing mode (identical responses,
+  // no `warnings` injection — the `*_night_vibe` D21 precedent). `save_guidance` is a
+  // hard removal (no member guidance-write surface); `saveGuidance` itself stays for the
+  // admin guidance editor.
+  const guidanceListingHandler = (domain?: string) => runTool(() => listGuidance(corpus, domain));
 
   server.registerTool(
     "read_guidance",
     {
       description:
-        "Read curated guidance content for the named slugs within a domain (from list_guidance). Returns { domain, entries: [{ slug, content }] } where content is the file's markdown. An unknown slug or domain yields a structured error. This is vetted, curated advice — relay any contested tip WITH the hedge written into its prose, and give NO tip for an item/step that has no matching entry (never improvise). Domains: \"ingredient_storage\", \"cooking_techniques\", \"purchasing\".",
-      inputSchema: { domain: z.string(), slugs: z.array(z.string()) },
+        'Read or list curated guidance from the shared guidance/ trees. With `slugs` ABSENT: lists available slugs (each with an optional one-line description) — pass `domain` for one corpus, or omit it to get every domain grouped ({ domains: [{ domain, entries }] }; with a domain, { domain, entries }). With `slugs` PRESENT (domain required): returns their content, { domain, entries: [{ slug, content }] } — an unknown slug or domain yields a structured error. Domains: "ingredient_storage" — put-away advice keyed by storage BEHAVIOR CLASS ("tender-herbs", "alliums", "leafy-greens"), a few singletons that break their class\'s rule ("basil", "tomatoes", "avocados"), and "_ethylene" for relational "don\'t store together" rules; "cooking_techniques" — general technique memories keyed by technique ("browning-meat", "searing", "resting-meat"); "purchasing" — buy-side selection keyed by PRODUCT/ITEM ("canned-tomatoes", "olive-oil"): what kind to get, plus the non-obvious "how to tell if it\'s good/ripe" judgments, surfaced while shopping. Map a just-bought item, a recipe step, or a thing on the grocery list to the right slug with your own world knowledge (cilantro → tender-herbs; "brown the beef" → browning-meat; canned tomatoes on the list → canned-tomatoes), then read the content of the relevant ones. This is vetted, curated advice — relay any contested tip WITH the hedge written into its prose, and give NO tip for an item/step that has no matching entry (never improvise). An absent tree yields an empty listing, not an error.',
+      inputSchema: { domain: z.string().optional(), slugs: z.array(z.string()).optional() },
     },
-    ({ domain, slugs }) => runTool(() => readGuidance(corpus, domain, slugs)),
+    ({ domain, slugs }) =>
+      runTool(async () => {
+        if (slugs === undefined) return listGuidance(corpus, domain);
+        if (domain === undefined) {
+          throw new ToolError("validation_failed", "reading specific guidance slugs requires a `domain`");
+        }
+        return readGuidance(corpus, domain, slugs);
+      }),
   );
 
   server.registerTool(
-    "save_guidance",
+    "list_guidance",
     {
-      description:
-        "Create or REFINE a single guidance memory (one file per slug — refining overwrites, never appends; read the existing entry first and merge). The \"cooking_techniques\" and \"purchasing\" domains are writable; a write to \"ingredient_storage\" (curated, read-only) is rejected with validation_failed. `content` is the full markdown you compose — distilled, imperative, non-obvious advice (with a one-line `description:` frontmatter), NOT the verbatim article. `source` (optional) records provenance (e.g. an ATK/Serious Eats URL) into the frontmatter. Use it when the member posts an article/technique or a buying guide to internalize. Returns { domain, slug, path }.",
-      inputSchema: {
-        domain: z.string(),
-        slug: z.string(),
-        content: z.string(),
-        source: z.string().optional(),
-      },
+      description: aliasDescription("read_guidance"),
+      inputSchema: { domain: z.string().optional() },
     },
-    ({ domain, slug, content, source }) =>
-      runTool(() => saveGuidance(corpus, domain, slug, content, source)),
+    ({ domain }) => guidanceListingHandler(domain),
   );
 
-  // Kroger-gated (mcp-tool-gating): kroger_prices and kroger_flyer both need a working
-  // Kroger client; store_flyer (below) stays ungated — it degrades to empty on any
-  // unconfigured/unresolvable store rather than requiring Kroger specifically.
+  // Kroger-gated (mcp-tool-gating): kroger_prices needs a working Kroger client.
   if (ctx.kroger) {
     server.registerTool(
       "kroger_prices",
@@ -1023,71 +940,59 @@ export function buildServer(
         }),
     );
 
+    // flyer (kroger-integration + satellite-sale-scan): unifies the former kroger_flyer +
+    // store_flyer under one name — resolves the caller's PRIMARY fulfillment store (Kroger
+    // or a satellite-scanned store) from `stores.primary` + `stores.preferred_location`,
+    // reads that store's background-warmed rollup (never a live fan-out), and applies the
+    // read-time deal floor. Kroger-gated per mcp-tool-gating (a walk-only deployment has no
+    // flyer producer today); ungating for a hypothetical satellite-only deployment is a
+    // one-line change if one ever materializes.
     server.registerTool(
-      "kroger_flyer",
+      "flyer",
       {
         description:
-          "Synthesized sale scan for the caller's store, served from a cache warmed in the background (the public API has no flyer/circular endpoint, and a live per-call fan-out would exceed the Worker's per-request subrequest limit). Returns `{ items, as_of }`: `items` are fulfillable products genuinely on sale (deduped by productId, each carrying every broad term that surfaced it in `matched_terms`), kept only when marked down at least `min_savings_pct` of the regular price — default 5%, applied at read so you can widen with a lower value. `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when the store has not been swept yet — in which case `items` is empty, NOT an error. Explicitly non-exhaustive and may be a few hours stale; for a specific purchase the order path re-prices live. This tool takes no ad-hoc terms — checking whether a specific stockup item or substitute candidate is on sale is handled in the place-groceries flow, not here.",
+          "Synthesized sale scan for the caller's PRIMARY fulfillment store — Kroger or a satellite-scanned store — served from a background-warmed cache (never a live fetch; the public API has no flyer/circular endpoint, and a live per-call fan-out would exceed the Worker's per-request subrequest limit). Returns `{ items, as_of }`: `items` are fulfillable products genuinely on sale (deduped by productId, each carrying every broad term that surfaced it in `matched_terms`), kept only when marked down at least `min_savings_pct` of the regular price — default 5%, applied at read so you can widen with a lower value. `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when it has not been swept/scanned yet — in which case `items` is empty, NOT an error. A satellite-scanned store's rollup older than the operator's staleness ceiling reads as empty (with `as_of` still surfaced) rather than steering on stale sales; Kroger and satellite sales are indistinguishable here except by which store they came from. Resolves the store from the caller's profile (`stores.primary` + `stores.preferred_location`). Issues no flyer FAN-OUT subrequest (the background sweep already did that) — a pure cache read; for a Kroger primary, resolving `preferred_location` to a numeric locationId may cost one Kroger Locations API call (a satellite store's label IS its rollup locationId, so it needs none). A missing/unresolvable store degrades to `{ items: [], as_of: null }`, never an error. This tool takes no ad-hoc terms — checking whether a specific stockup item or substitute candidate is on sale is handled in the place-groceries flow, not here.",
         inputSchema: { filter: z.object(flyerFilterShape).optional() },
       },
       ({ filter }) =>
         runTool(async () => {
-          const locationId = await getLocationId();
-          // min_savings_pct is a percent (5 = 5%); convert to a fraction of regular price.
-          // Fall back to the operator-configured default, then the compiled constant.
-          const operatorFlyerConfig = await loadOperatorConfig(env).catch(() => null);
-          const defaultDiscount = operatorFlyerConfig?.minFlyerDiscount ?? MIN_FLYER_DISCOUNT;
+          // Resolve the caller's primary fulfillment store (slug + location). A missing/unresolvable
+          // store degrades to empty items (never an error) — the same posture as a cold cache. No
+          // external store subrequest is issued for a satellite store (its label IS the locationId);
+          // a Kroger store resolves its location via the Locations API.
+          const target = await resolveStoreFlyerTarget().catch(() => null);
+          if (!target) return { items: [], as_of: null };
+          const { store, locationId } = target;
+
+          const operatorConfig = await loadOperatorConfig(env).catch(() => null);
+          const defaultDiscount = operatorConfig?.minFlyerDiscount ?? MIN_FLYER_DISCOUNT;
           const minDiscount =
             typeof filter?.min_savings_pct === "number" ? filter.min_savings_pct / 100 : defaultDiscount;
+
           // Pure cache read: the warm (flyer-warm.ts) stores noise-floor candidates per location at
-          // the Kroger-namespaced key `flyer:kroger:{locationId}` (readStoreFlyer falls back to the
-          // legacy `flyer:{locationId}` while the first namespaced sweep is pending). The 5% deal
+          // the `flyer:{store}:{locationId}` rollup key (readStoreFlyer falls back to the legacy
+          // un-namespaced Kroger key while a deploy's first namespaced sweep is pending). The deal
           // floor is applied HERE so it stays caller-tunable.
-          const rollup = await readStoreFlyer(env.KROGER_KV as unknown as KvStore, KROGER_STORE, locationId);
+          const rollup = await readStoreFlyer(env.KROGER_KV as unknown as KvStore, store, locationId);
           if (!rollup) return { items: [], as_of: null };
-          return { items: filterByMinSavings(rollup.items, minDiscount), as_of: new Date(rollup.as_of).toISOString() };
+          const as_of = new Date(rollup.as_of).toISOString();
+
+          // Staleness ceiling — SATELLITE-scanned stores only (see `isSatelliteRollupStale`):
+          // past the ceiling a scanned store reads as empty rather than steering on stale sales.
+          const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
+          if (isSatelliteRollupStale(store, rollup.as_of, stalenessDays)) {
+            return { items: [], as_of };
+          }
+          return { items: filterByMinSavings(rollup.items, minDiscount), as_of };
         }),
     );
   }
 
-  server.registerTool(
-    "store_flyer",
-    {
-      description:
-        "Synthesized sale scan for the caller's PRIMARY fulfillment store — Kroger or a satellite-scanned store — served from a background-warmed cache (never a live fetch). Returns `{ items, as_of }` in the SAME shape as kroger_flyer: `items` are fulfillable products genuinely on sale (deduped by productId), kept only when marked down at least `min_savings_pct` of the regular price (default 5%, applied at read so you can widen with a lower value); `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when it has not been scanned yet — in which case `items` is empty, NOT an error. A satellite-scanned store's rollup that is older than the operator's staleness ceiling reads as empty (with `as_of` still surfaced) rather than steering on stale sales. Resolves the store from the caller's profile (`stores.primary` + `stores.preferred_location`); Kroger and satellite sales are indistinguishable here except by which store they came from. Issues no flyer FAN-OUT subrequest (the background sweep already did that) — a pure cache read; for a Kroger primary, resolving the `preferred_location` to a numeric locationId may cost one Kroger Locations API call, exactly like kroger_flyer (a satellite store's label IS its rollup locationId, so it needs none). Use this as the general menu-gen flyer read; kroger_flyer remains the Kroger-specific read.",
-      inputSchema: { filter: z.object(flyerFilterShape).optional() },
-    },
-    ({ filter }) =>
-      runTool(async () => {
-        // Resolve the caller's primary fulfillment store (slug + location). A missing/unresolvable
-        // store degrades to empty items (never an error) — the same posture as a cold cache. No
-        // external store subrequest is issued for a satellite store (its label IS the locationId);
-        // a Kroger store resolves its location exactly as kroger_flyer does.
-        const target = await resolveStoreFlyerTarget().catch(() => null);
-        if (!target) return { items: [], as_of: null };
-        const { store, locationId } = target;
-
-        const operatorConfig = await loadOperatorConfig(env).catch(() => null);
-        const defaultDiscount = operatorConfig?.minFlyerDiscount ?? MIN_FLYER_DISCOUNT;
-        const minDiscount =
-          typeof filter?.min_savings_pct === "number" ? filter.min_savings_pct / 100 : defaultDiscount;
-
-        const rollup = await readStoreFlyer(env.KROGER_KV as unknown as KvStore, store, locationId);
-        if (!rollup) return { items: [], as_of: null };
-        const as_of = new Date(rollup.as_of).toISOString();
-
-        // Staleness ceiling — SATELLITE-scanned stores only (see `isSatelliteRollupStale`):
-        // past the ceiling a scanned store reads as empty rather than steering on stale sales.
-        const stalenessDays = operatorConfig?.scanStalenessDays ?? DEFAULT_OPERATOR_CONFIG.scanStalenessDays;
-        if (isSatelliteRollupStale(store, rollup.as_of, stalenessDays)) {
-          return { items: [], as_of };
-        }
-        return { items: filterByMinSavings(rollup.items, minDiscount), as_of };
-      }),
-  );
-
-  // Kroger-gated (mcp-tool-gating): all three need a working Kroger client (ready-to-eat
-  // cross-reference, unit-price compare feeding the Kroger order flow, and the matcher).
+  // Kroger-gated (mcp-tool-gating): needs a working Kroger client (ready-to-eat
+  // cross-reference). `compare_unit_price` and `match_ingredient_to_kroger_sku` are cut
+  // from the member surface (ingredient-matching, data-write-tools) — their cores
+  // (`compareUnitPrice`, `matchIngredient`) stay for the order/review paths via
+  // `resolveIngredient` (buildOrderWiring) and order-review-widget.ts.
   if (ctx.kroger) {
     server.registerTool(
       "ready_to_eat_available",
@@ -1134,37 +1039,13 @@ export function buildServer(
           return { available, unavailable };
         }),
     );
-
-    server.registerTool(
-      "compare_unit_price",
-      {
-        description:
-          "Deterministic price-per-unit comparison from raw price + size strings. The LLM never does the arithmetic. Ranks only WITHIN a dimension (volume/weight/count); cross-dimension or unparseable items land in incomparable, where the LLM may add quantity_override/unit_override and re-call.",
-        inputSchema: { items: z.array(z.object(unitPriceItemShape)) },
-      },
-      ({ items }) => runTool(async () => compareUnitPrice(items)),
-    );
-
-    server.registerTool(
-      "match_ingredient_to_kroger_sku",
-      {
-        description:
-          "Run the resolve-only 7-step matching pipeline for one ingredient. Returns a confident match, OR the FULL set of ambiguous candidates (every fulfillable product for the term, relevance-ranked — not truncated, so you can list/compare them all without re-searching), OR unavailable. Never writes the cache (that rides place_order) and never substitutes — when a swap is wanted, enumerate candidate ingredients from world knowledge and resolve each. bypass_cache forces re-resolution.",
-        inputSchema: {
-          ingredient: z.string(),
-          context: z.object(matchContextShape).optional(),
-          bypass_cache: z.boolean().optional(),
-        },
-      },
-      ({ ingredient, context, bypass_cache }) =>
-        runTool(() => resolveIngredient(ingredient, context ?? {}, bypass_cache ?? false)),
-    );
   }
 
-  // Repo-data write tools route by category internally (objective recipe content →
-  // R2 corpus store; personal profile/overlay → D1 profile tables; session state
-  // pantry → D1 pantry table), so they take the corpus store + D1 (env) + tenant id.
-  registerWriteTools(server, corpus, env, tenant.id);
+  // Repo-data write tools route by category internally (personal profile/overlay →
+  // D1 profile tables; session state pantry+kitchen → D1 pantry/profile tables), so
+  // they take D1 (env) + tenant id. `update_recipe` (the one R2-corpus write here)
+  // left the MCP surface — this group no longer needs the corpus store.
+  registerWriteTools(server, env, tenant.id);
   registerGroceryListTools(server, env, tenant.id);
 
   // The bespoke in-chat recipe card (recipe-card-widget): the `display_recipe` tool +
@@ -1206,9 +1087,10 @@ export function buildServer(
     registerReconcileTools(server, env, tenant);
   }
 
-  // Archetype derivation: suggest_night_vibes derives + enqueues add_vibe proposals from the
-  // caller's favorites + cook history (with a taste-text cold start). Never writes the palette.
-  registerSuggestNightVibesTool(server, env, tenant);
+  // Archetype derivation (meal-vibe-archetype-derivation) is a scheduled generative
+  // reconcile pass now (runArchetypeDerivationJob, src/index.ts's cron) — there is no
+  // on-demand suggest_meal_vibes/suggest_night_vibes MCP tool; candidates land as
+  // pending proposals for the member app's reconciliation queue.
 
   // Cooking history + meal plan: read_meal_plan (resume), update_meal_plan, and
   // retrospective. Meal plan reads/writes go through the D1 `meal_plan` table; the
@@ -1254,25 +1136,9 @@ export function buildServer(
     registerInstacartTool(server, env, tenant.id);
   }
 
-  // suggest_substitutions — the alternatives-only substitution read (inline-
-  // substitution-hints D4, refactored from member-app-differentiators): one shared op
-  // with POST /api/grocery/substitutions, over the same per-request order wiring
-  // (location, revalidation, term search). The cheap sibling/pantry/flyer hints this
-  // tool used to also carry now ride `read_to_buy`'s `enrich` read instead.
-  server.registerTool(
-    "suggest_substitutions",
-    {
-      description:
-        "Deterministic same-identity ALTERNATIVES for to-buy lines — READ-ONLY: it NEVER writes the cart, the SKU cache, or the grocery list; nothing is applied implicitly. Acting on a suggestion is a separate, explicit call: a same-identity swap (different SKU, same ingredient) is a `place_order` `overrides` entry. (Cross-ingredient substitute hints — a sibling already on hand or on sale — live on `read_to_buy`'s `enrich` read instead; act on one of those the same way you'd act on any list edit: add the replacement + remove the row, or — for a plan-derived virtual line — add the replacement and pass an order-scoped `exclude` for the original.) Input: `names` (optional — omitted means the caller's current derived to-buy set, in view order; supplied names resolve through the ingredient funnel) and `max_lines` (default and cap " +
-        `${MAX_SUBSTITUTION_LINES}` +
-        "). Per line it returns: `current` — the cached SKU pick revalidated live (fresh price/availability/aisle) with `status` ok | current_unavailable | no_cached_pick; `alternatives` — same-ingredient products from ONE term search, fulfillable only, ranked by the unit-price core, each carrying a CLOSED reason vocabulary and nothing else: `cheaper` (strictly lower unit price than the current pick, only when both are comparable in one size dimension — real numbers ride along as `unit_price`/`base_unit`), `on_sale` (a genuine promo discount), `in_stock` (fulfillable while the current pick is not). Qualitative reasons (\"lower fat\", \"better fit\") are NOT produced here — that judgment is yours, grounded in this data. Budget: at most one revalidation + one search per line, `max_lines` lines per call — unprocessed names return in `remaining`; call again with them to continue. A caller with no resolvable Kroger location gets nothing from this tool at all (`location: null`, empty `alternatives` for every line) — call `read_to_buy` with `enrich: true` instead for the store-independent sibling/pantry hints. Empty `alternatives` for every line means there is genuinely nothing cheaper/on-sale/back-in-stock to suggest — say so rather than inventing swaps.",
-      inputSchema: {
-        names: z.array(z.string()).optional(),
-        max_lines: z.number().int().positive().optional(),
-      },
-    },
-    (input) => runTool(() => suggestSubstitutions(env, tenant.id, input, orderWiring)),
-  );
+  // suggest_substitutions is cut from the member surface (data-write-tools,
+  // ingredient-matching): read_to_buy(enrich) already carries substitutes[], and
+  // same-identity SKU alternatives live on the order-review widget's app ops.
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
@@ -1281,24 +1147,11 @@ export function buildServer(
     registerOrderTools(server, env, tenant.id, orderWiring);
   }
 
-  // get_weather_forecast — read-only Open-Meteo fetch; location resolved from
-  // the caller's preferences (location_zip → parse preferred_location). Used by
-  // the meal-plan flow as silent context for weather-appropriate recipe selection.
-  server.registerTool(
-    "get_weather_forecast",
-    {
-      description:
-        "Fetch a daily weather forecast for the user's location (resolved from preferences.location_zip, or parsed from preferred_location). Returns high/low temps, precipitation chance, and meal_vibes hints (no-grill, comfort, soup, grill-friendly, light) per day. Use as silent context in meal planning — weight meal_vibes as soft hints when assigning recipes to planned_for dates; do not narrate the weather to the user unless asked. Structured errors: no_location (ZIP not resolvable from preferences), forecast_unavailable (Open-Meteo unreachable), no_results (location string geocoded to nothing).",
-      inputSchema: {
-        days: z
-          .number()
-          .int()
-          .optional()
-          .describe("Number of forecast days to return (default 7, max 16)."),
-      },
-    },
-    ({ days }) => runTool(() => resolveTenantForecast(env, tenant.id, days ?? 7)),
-  );
+  // get_weather_forecast is cut from the member surface (data-read-tools,
+  // member-app-propose): weather is engine context, not an agent verb.
+  // propose_meal_plan already loads the forecast server-side through
+  // resolveTenantForecast (this module), exposed to the member app via
+  // GET /api/propose/weather — no forecast tool appears on the MCP surface.
 
   // report_bug — record an attributed bug report into the D1 `bug_reports` table the
   // operator reviews via the admin panel (the GitHub App / issues path is gone for
