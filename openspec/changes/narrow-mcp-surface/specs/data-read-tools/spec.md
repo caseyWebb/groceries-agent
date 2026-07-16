@@ -36,4 +36,4 @@
 ### Requirement: get_weather_forecast returns a daily forecast with meal_vibes hints
 
 **Reason**: Weather is engine context, not an agent verb. The shared propose operation already loads the tenant forecast server-side (`resolveTenantForecast`), and the persona was already forbidden from narrating weather; a model-visible forecast tool only invites narration and misuse.
-**Migration**: `propose_meal_plan` (and the member app's propose surface) keep loading the forecast internally through the same shared operation, exposed to the member app via `GET /api/propose/weather` (`member-app-propose`). The location-resolution order, structured errors, and Worker-derived hint thresholds live on in that operation.
+**Migration**: `propose_meal_plan` (and the member app's propose surface) keep loading the forecast internally through the same shared operation (`member-app-propose`) — there is no standalone weather read on either surface. The location-resolution order, structured errors, and Worker-derived hint thresholds live on in that operation.

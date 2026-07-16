@@ -18,7 +18,7 @@ The member MCP surface accreted to ~84 advertised tools; weak models pick the wr
 - **BREAKING** `kroger_flyer` + `store_flyer` unify into one config-gated `flyer` tool (same `{ items, as_of }` contract, store resolved from the profile, satellite staleness ceiling retained).
 - **NEW** `update_taste` gains a `mode: "replace" | "append"` (default `replace`) so silent captures can't clobber the narrative.
 - **NEW `attention` block on `read_user_profile`**: server-computed `{ retrospective_due, unverified_perishables, stale_areas }` (deterministic Worker math; one new nullable `profile.last_retrospective_at` watermark column, stamped by the retrospective surfaces — the `last_planned_at` precedent). Data capability only; the persona's one-light-nudge rule is a later change.
-- **BREAKING** propose absorbs weather: `get_weather_forecast` is removed as a tool; the shared propose operation already loads the tenant forecast server-side (`resolveTenantForecast`), and `GET /api/propose/weather` remains.
+- **BREAKING** propose absorbs weather: `get_weather_forecast` is removed as a tool; the shared propose operation already loads the tenant forecast server-side (`resolveTenantForecast`), and the member app's propose surface rides the same operation.
 - **BREAKING** Hard removals from the member surface (no shim; stale calls get the generic unknown-tool rejection after a coordinated plugin publish): `read_grocery_list`, `recipe_site_url`, `get_weather_forecast`, `suggest_substitutions`, `match_ingredient_to_kroger_sku`, `compare_unit_price` (both live on as internal/pipeline cores), `parse_recipe`, `create_recipe`, `update_recipe`, `update_recipe_note`, `remove_recipe_note`, `list_meal_vibes`, `update_meal_vibe`, `remove_meal_vibe`, `suggest_meal_vibes` (+ its `suggest_night_vibes` alias), `update_aliases`, `update_staples`, `update_stockup`, `update_kitchen`, `mark_pantry_verified`, `list_stores`, `read_store`, `update_store`, `remove_store`, `update_store_note`, `remove_store_note`, `read_store_notes`, `update_feeds`, `update_discovery_sources`, `reject_discovery`, `read_discovery_errors`, `read_reconcile_errors`, `read_satellite_rejections`, `save_guidance`, `list_guidance` (aliased), `kroger_flyer`, `store_flyer`, `toggle_favorite`/`toggle_reject` (aliased). The kept store-capture pair is `add_store` + `add_store_note` only. Cut member flows land on the member web app / operator admin surfaces over the same shared operations.
 - `docs/TOOLS.md` rewritten to the new surface; `docs/SCHEMAS.md` (attention block, `last_retrospective_at`); `docs/ARCHITECTURE.md` (registration planes and gating).
 
@@ -57,7 +57,7 @@ The member MCP surface accreted to ~84 advertised tools; weak models pick the wr
 - `satellite-source-audit`: the rejection ledger read moves from an agent tool to the operator admin surface.
 - `recipe-dedup`: merge resolution moves off the chat surface — proposals still queue and never auto-merge; folding/tombstoning defers to the fast-follow admin merge screen; operator rejection stays available.
 - `claude-ai-connector`: the end-to-end write acceptance names `set_recipe_disposition`.
-- `member-app-propose`: the shared weather operation is served by `GET /api/propose/weather` and the propose engine only — no `get_weather_forecast` tool.
+- `member-app-propose`: the shared weather operation feeds the propose engine server-side only — no `get_weather_forecast` tool and no client-side weather read.
 
 ## Impact
 

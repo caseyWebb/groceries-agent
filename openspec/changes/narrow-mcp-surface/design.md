@@ -112,7 +112,7 @@ Pure Worker math over tables the profile assembly already reads, plus one bounde
 
 ### D9: Weather absorbed — remove the tool, keep the operation
 
-`propose_meal_plan` already loads the forecast server-side (`resolveTenantForecast` in `tools.ts`, threaded through the shared propose op; window-clamped per `weather-bucket-planning`). Removing `get_weather_forecast` changes no engine behavior and no `GET /api/propose/weather` adapter — only the model stops seeing a weather verb (weather is silent context by design; the persona was already forbidden from narrating it).
+`propose_meal_plan` already loads the forecast server-side (`resolveTenantForecast` in `tools.ts`, threaded through the shared propose op; window-clamped per `weather-bucket-planning`). Removing `get_weather_forecast` changes no engine behavior — only the model stops seeing a weather verb (weather is silent context by design; the persona was already forbidden from narrating it).
 
 ### D10: Cut member flows land on existing surfaces — no operation moves
 

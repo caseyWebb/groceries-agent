@@ -20,7 +20,6 @@ import { serializeMarkdown } from "./serialize.js";
 import { ToolError, runTool } from "./errors.js";
 import { applyOverlayEdit, type OverlayRow } from "./overlay.js";
 import { applyKitchenOperations, type KitchenOperation } from "./kitchen.js";
-import { slugify } from "./discovery.js";
 import {
   applyRetiredKeyShim,
   convertLegacyBrandRanks,
@@ -35,7 +34,6 @@ import {
   readOverlay,
   setOverlay,
   setKitchen,
-  setReadyToEat,
   setProfileFields,
   profileUpsertStmt,
   brandStmt,
@@ -43,8 +41,6 @@ import {
 import { applyPantryRowOps } from "./session-db.js";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const MEALS = ["breakfast", "lunch", "dinner"] as const;
-type Meal = (typeof MEALS)[number];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -59,16 +55,6 @@ function today(): string {
  * writing them as objective content.
  */
 export const SUBJECTIVE_KEYS = ["favorite", "reject", "rating", "status"] as const;
-
-/**
- * The mutable fields of a ready-to-eat item — `update_ready_to_eat`'s documented
- * contract: the two disposition marks plus the in-place content edits. Everything
- * else is identity/provenance (`slug`, `meal`, `discovery_source`/`source`, any
- * added/discovered timestamp) and is rejected (validation_failed, nothing
- * committed) rather than silently written — mirroring `update_recipe`'s
- * protected-key rejection.
- */
-const READY_TO_EAT_MUTABLE_KEYS = ["name", "category", "brand", "notes", "favorite", "reject"] as const;
 
 // --- file-level builders (return a TreeFile for the atomic commit) -----------
 
@@ -104,76 +90,6 @@ export async function buildRecipeUpdate(
   // that strips or empties a required field, or sets an off-vocabulary value, is rejected
   // (validation_failed) and nothing is written.
   return { path, content: serializeMarkdown(merged, body) };
-}
-
-/**
- * In-memory manager for the per-tenant ready-to-eat catalog. Takes the existing
- * items (from the D1 ready_to_eat table). Call `items()` to get the updated list to
- * persist; `touched()` reports whether anything changed.
- */
-export function readyToEatManager(existing: Record<string, unknown>[]) {
-  const list: Record<string, unknown>[] = existing.map((it) => ({ ...it }));
-  let changed = false;
-
-  function uniqueSlug(name: string): string {
-    const taken = new Set(list.map((it) => it.slug).filter((s): s is string => typeof s === "string"));
-    const base = slugify(name) || "item";
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base}-${n}`)) n++;
-    return `${base}-${n}`;
-  }
-
-  return {
-    /** Append a new item (available by default — no draft/active state); returns its slug. */
-    add(item: Record<string, unknown>): string {
-      const slug = uniqueSlug(String(item.name ?? ""));
-      list.push({
-        name: item.name,
-        slug,
-        meal: item.meal,
-        category: item.category ?? null,
-        discovery_source: item.source ?? null,
-        brand: item.brand ?? null,
-        notes: item.notes ?? null,
-      });
-      changed = true;
-      return slug;
-    },
-    /**
-     * Find an item by slug (not_found if absent — checked FIRST, so an unknown slug
-     * is reported as such regardless of what the patch carries), then apply updates.
-     * Only the documented mutable fields (READY_TO_EAT_MUTABLE_KEYS) may change — any
-     * other key throws validation_failed listing the offenders, and nothing is
-     * committed. `favorite` and `reject` are mutually exclusive: setting one true
-     * clears the other.
-     */
-    update(slug: string, updates: Record<string, unknown>) {
-      const idx = list.findIndex((it) => it.slug === slug);
-      if (idx < 0) throw new ToolError("not_found", `No ready-to-eat item with slug: ${slug}`, { slug });
-      const rejected = Object.keys(updates).filter(
-        (k) => !(READY_TO_EAT_MUTABLE_KEYS as readonly string[]).includes(k),
-      );
-      if (rejected.length > 0) {
-        throw new ToolError(
-          "validation_failed",
-          `${rejected.join("/")} ${rejected.length > 1 ? "are" : "is"} not updatable on a ready-to-eat item — only ${READY_TO_EAT_MUTABLE_KEYS.join("/")} may change (slug, meal, discovery source, and timestamps are identity/provenance); nothing was written`,
-          { fields: rejected },
-        );
-      }
-      const next = { ...list[idx], ...updates };
-      if (updates.favorite) next.reject = false;
-      if (updates.reject) next.favorite = false;
-      list[idx] = next;
-      changed = true;
-    },
-    items(): Record<string, unknown>[] {
-      return list;
-    },
-    touched(): boolean {
-      return changed;
-    },
-  };
 }
 
 /** Profile markdown fields written to the D1 `profile` row (preferences uses merge-patch). */
@@ -297,7 +213,7 @@ export async function applyPreferencesPatch(
 
 /**
  * `env` is D1: the `recipes` index (queried by `set_recipe_disposition` to validate a
- * slug), the profile tables (preferences/taste/diet/kitchen/overlay/ready_to_eat — via
+ * slug), the profile tables (preferences/taste/diet/kitchen/overlay — via
  * src/profile-db.ts) AND the session-state pantry table (via src/session-db.ts).
  * meal_plan/grocery_list live in their own tool groups. This group no longer touches
  * the R2 corpus store directly — `update_recipe` (the one recipe-content write here)
@@ -454,59 +370,6 @@ export function registerWriteTools(
   // update_kitchen is folded into update_pantry's equip/unequip/set_kitchen_note ops
   // above (kitchen-equipment); mark_pantry_verified is already update_pantry's `verify`
   // op — both standalone tools just unregister here.
-
-  server.registerTool(
-    "add_draft_ready_to_eat",
-    {
-      description:
-        "Append ready-to-eat items to the caller's personal ready-to-eat catalog. Each item needs a meal (breakfast|lunch|dinner). Items are available (suggestible) immediately — there is no draft/active state. Returns the generated slug for each.",
-      inputSchema: {
-        items: z.array(
-          z.object({
-            meal: z.enum(MEALS),
-            name: z.string(),
-            category: z.string().optional(),
-            source: z.string().optional(),
-            brand: z.string().optional(),
-            notes: z.string().optional(),
-          }),
-        ),
-      },
-    },
-    ({ items }) =>
-      runTool(async () => {
-        const existing = (await readProfile(env, username)).ready_to_eat;
-        const mgr = readyToEatManager(existing);
-        const added: { meal: Meal; name: string; slug: string }[] = [];
-        for (const it of items) {
-          const slug = mgr.add(it);
-          added.push({ meal: it.meal, name: it.name, slug });
-        }
-        if (mgr.touched()) {
-          await setReadyToEat(env, username, mgr.items());
-        }
-        return { added };
-      }),
-  );
-
-  server.registerTool(
-    "update_ready_to_eat",
-    {
-      description:
-        "Disposition or update a ready-to-eat item in the caller's catalog, addressed by slug. Set `favorite` (loved) and/or `reject` (stop suggesting it) — mutually exclusive, mirroring recipes; there is no status or rating. Other fields (name, category, brand, notes) update in place. Those six are the ONLY updatable keys: any other key — `slug`, `meal`, the discovery source, timestamps — is identity/provenance and is rejected (validation_failed listing the offending keys, nothing written). Unknown slug → not_found.",
-      inputSchema: { slug: z.string(), updates: z.record(z.string(), z.unknown()) },
-    },
-    ({ slug, updates }) =>
-      runTool(async () => {
-        const existing = (await readProfile(env, username)).ready_to_eat;
-        const mgr = readyToEatManager(existing);
-        mgr.update(slug, updates);
-        if (mgr.touched()) {
-          await setReadyToEat(env, username, mgr.items());
-        }
-        return { slug, updated_fields: Object.keys(updates) };
-      }),
-  );
 
   // User-curated config writers — content-faithful: write exactly what the caller
   // supplies. The discipline of WHEN to call these (only on explicit user

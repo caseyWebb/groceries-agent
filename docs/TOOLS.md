@@ -21,7 +21,7 @@ The complete tool surface exposed by `yamp` to Claude. Each tool encodes a deter
 `buildServer` resolves a per-request `RegistrationContext` before a single tool registers, and every tool's plane is decided there — not by a runtime permission check. A tool outside the caller's planes never registers: it is absent from `tools/list`, and a call to it gets the generic unknown-tool rejection, indistinguishable from a tool that never existed (never an `insufficient_permission` that would reveal it exists).
 
 - **Member surface** — the base tool set below, registered for every caller on every configured deployment.
-- **Config-gated** — the Kroger set (`flyer`, `kroger_prices`, `place_order`, `kroger_login_url`, `display_order_review`, plus `ready_to_eat_available`) registers only when the deployment carries Kroger API credentials; `create_instacart_handoff` registers only when the Instacart configuration resolves. Both gates are **deployment-level** (the credentials are Worker secrets, not per-tenant) — a walk-only deployment advertises no Kroger tools at all.
+- **Config-gated** — the Kroger set (`flyer`, `kroger_prices`, `place_order`, `kroger_login_url`, `display_order_review`) registers only when the deployment carries Kroger API credentials; `create_instacart_handoff` registers only when the Instacart configuration resolves. Both gates are **deployment-level** (the credentials are Worker secrets, not per-tenant) — a walk-only deployment advertises no Kroger tools at all.
 - **Operator plane** — `list_proposals`, `confirm_proposal`, `reconcile_read_signals`, and `reconcile_enqueue_proposal` register only when the caller's tenant is the operator (`OWNER_TENANT_ID`). A member connector never sees them. The call-time `isOperator` check on the reconcile pair stays as defense in depth.
 - **App plane** — every widget/app-bridge-callable operation registers with the ext-apps `_meta.ui.visibility: ["app"]` marker, so a host excludes it from the model's tool context while the widget keeps calling it by name: the grocery snapshot family (`read_grocery_snapshot`, `grocery_add`, `grocery_remove`, `set_grocery_checked`, `set_grocery_buy_anyway`, `verify_grocery_pantry`, `set_grocery_substitution`, `relist_grocery_send_line`, `mark_grocery_send_placed`), the order-review family (`read_order_review`, `search_order_broader`, `search_order_catalog`, `save_order_brand_preference`, Kroger-gated), and `commit_shop`. `commit_shop` rides no other gate — it registers whenever the grocery widget does, purely app-plane. `display_*` widget tools (`display_recipe`, `display_meal_plan`, `display_grocery_list`, `display_order_review`) stay model-visible; a tool may legitimately serve both planes (`log_cooked`, `update_meal_plan`, `read_meal_plan`, `propose_meal_plan` are called by both the model and a widget).
 - **The one-window dispatch aliases** (`toggle_favorite`/`toggle_reject`, `add_to_grocery_list`/`remove_from_grocery_list`, `list_guidance`) are registered plain and model-visible during their deprecation window — not app-plane-restricted — so a stale plugin's persona can still see and call them (see the deprecation convention below). At window close, `toggle_favorite`/`toggle_reject` flip to app-plane-only registrations (the recipe-card widget calls them by name through the app bridge) rather than disappearing; the grocery-list and `list_guidance` aliases are removed outright.
@@ -47,6 +47,7 @@ warnings: [{ key, reason, superseded_by }]
 | `read_pantry` | a `category` filter of `pantry` \| `fridge` \| `freezer` \| `spices` | the corresponding `location` filter (`spices` → `spice_rack`) | `deprecated_shape` |
 | `update_preferences` | `default_cooking_nights: N` | merged as `cadence.dinner = N` (breakfast/lunch preserved; the frozen column is never written) | `aliased` |
 | `update_preferences` | `lunch_strategy` / `ready_to_eat_default_action` | **accepted and dropped** — nothing validated, nothing stored, never `validation_failed`, never the nest-under-`custom` hint | `retired` (superseded by meal vibes) |
+| `log_cooked` | `type: "ready_to_eat"` | `type: "ad_hoc"` — `name`/`date`/`meal`/inline `protein`/`cuisine` carried over unchanged; the dedupe identity and the plan-clear logic run on the converted form | `retired` (superseded by `ad_hoc`) |
 | `add_night_vibe` | the old tool name | **dispatch alias** of `add_meal_vibe` — one op layer, identical requests and identical responses, **no `warnings` injection** (an alias call is behavior-identical, not a converted write) | rename (D21) |
 | `propose_meal_plan` / `display_meal_plan` | `nights: N` | `meals.dinner = N` (window-scoped; **ignored without error** when `meals` is supplied); `diagnostics.nights` stays returned as the dinner alias | `aliased` |
 | `read_user_profile` | `preferences.default_cooking_nights` in the export | kept for the window as a **derived mirror** of the effective `cadence.dinner` (read-path skew protection) — prefer `preferences.cadence` | `aliased` |
@@ -60,6 +61,8 @@ warnings: [{ key, reason, superseded_by }]
 **Removal condition (the meal-dimension rows):** the `add_night_vibe` alias, the `nights`/`diagnostics.nights` alias, the `default_cooking_nights` write alias + read mirror, the retired-key accept-and-drop, and the `/api/vibes/suggest` 410 stub are all removed by the `remove-meal-dimension-shims` cleanup change once **both** hold: a subsequent plugin publish has occurred **and** ≥30 days have elapsed since the meal-dimension plugin publish. The same cleanup drops the frozen `profile.default_cooking_nights` / `lunch_strategy` / `ready_to_eat_default_action` columns (gated on the retired pair being NULL everywhere — the pref-retirement pass's convergence predicate). After the window, the retired keys and old names fall through to the generic unknown-key/unknown-tool rejection like anything else.
 
 **Removal condition (the `narrow-mcp-surface` fusion rows):** the `toggle_favorite`/`toggle_reject`, grocery-list, and `list_guidance` alias rows above are removed once **both** hold: a subsequent plugin publish has occurred **and** ≥30 days have elapsed since that publish (the `rewrite-agent-persona` republish starts the clock). At window close `toggle_favorite`/`toggle_reject` do not simply disappear: because the recipe-card widget calls them by name through the app bridge (`recipe-card-widget` D18), they **flip to app-plane registrations** (`visibility: ["app"]`) instead, exactly like `commit_shop`, so the widget contract never changes; the grocery-list and `list_guidance` aliases are removed outright. After the window, the old names and the old grocery-list single-patch shape fall through to the generic unknown-tool/`malformed_data` rejection like anything else.
+
+**Removal condition (the `remove-ready-to-eat` `log_cooked` shim):** the `log_cooked` `ready_to_eat`→`ad_hoc` conversion row above is removed by a small follow-up tasklet — not a new change — once **both** hold: a subsequent plugin publish has occurred **and** ≥30 days have elapsed since that publish (the same `rewrite-agent-persona` republish that drops the `add-ready-to-eat-feedback` skill and the RTE flow weaves starts the clock). After the window, `type: "ready_to_eat"` falls through to the generic `validation_failed` rejection like any other unknown type.
 
 ---
 
@@ -498,16 +501,9 @@ Get current prices for a specific list of ingredients (used for menu pre-pass). 
 
 **Notes:** `products` is every fulfillable match for the term, ordered by Kroger relevance; an ingredient with nothing fulfillable returns `{ ingredient, products: [] }`. `price` is `{ regular, promo }`; `on_sale` is true only on a real discount (`promo > 0` **and** `promo < regular`) — a `promo` equal to `regular` is not a sale; `available` is the full fulfillment object `{ curbside, delivery, inStore }` at the preferred location (there is no separate `fulfillment` key) — the curbside/delivery flags are order fulfillability; the public API exposes no live in-store stock level. `inStore` (boolean, also surfaced top-level on each product, duplicating `available.inStore`) is true when the item is carried in-store at the queried location. `aisleLocation` is present when the API returns aisle data for this product at the location — `{ number, description, side? }` — and null otherwise; use it for Kroger in-store aisle ordering (the `kroger-instore` branch of `shop-groceries`).
 
-### `ready_to_eat_available()`
-
-Cross-reference the **caller's own** personal ready-to-eat catalog against current Kroger availability. "Available" means fulfillable via **curbside or delivery** at the preferred location (`available.curbside || available.delivery`) — the public Products API exposes no live in-store stock level. Each available item carries the **full list of fulfillable matching products** (relevance-ranked) so the agent can pick the right/cheapest one. An empty or absent catalog returns empty lists. Rides the Kroger gate because it cross-references live Kroger availability; its removal is a separate change (`remove-ready-to-eat`).
-
-**Returns:**
-- `{ available: { breakfast: [...{ name, slug, meal, products: [{ sku, brand, description, size, price: { regular, promo }, on_sale, available: { curbside, delivery, inStore }, aisleLocation: { number, description, side? } | null, inStore: boolean }] }], lunch: [...], dinner: [...] }, unavailable: [...{ name, slug, meal, catalog_sku }] }` — each product row is the same shape `kroger_prices` returns (`available` is the full fulfillment object; there is no separate `fulfillment` key).
-
 ### `kroger_login_url()`
 
-Mint the one-time Kroger account-authorization link for the **current member** and return `{ url }`. Kroger ordering (`place_order`, `ready_to_eat_available`, any cart write) requires the member's own Kroger shopping account to be linked first; this returns a personal browser link the member opens to consent at Kroger (scope: add-to-cart only). Hand the returned URL to the member to click.
+Mint the one-time Kroger account-authorization link for the **current member** and return `{ url }`. Kroger ordering (`place_order`, any cart write) requires the member's own Kroger shopping account to be linked first; this returns a personal browser link the member opens to consent at Kroger (scope: add-to-cart only). Hand the returned URL to the member to click.
 
 Takes **no parameters** — the link is bound to the calling member from their authenticated session, so it can never mint a link for anyone else. The link carries a **single-use nonce that expires in ~10 minutes**, so mint it on demand rather than caching it.
 
@@ -531,27 +527,6 @@ Return the recipes the **background discovery sweep imported for the caller** si
 
 **Notes:** The watermark is the **later** of the caller's `last_planned_at` (the D1 `profile` planning watermark, stamped by `update_meal_plan` on an `add`) and a fixed **~21-day floor**, so a never-planned member sees at most a recent window of discoveries, not the whole backlog. An **empty list is normal** (nothing new since they last planned). Only taste **matches** appear: curated-tier landings write no match rows, and a bare visibility grant (a recipe entering the lens without being matched to this member) is never surfaced here — the row set is lens-visible by construction (the household's own sweep imports carry its grant). Fold these into the menu *before* the rest of retrieval. This is the discovery surface the meal-plan flow reads — the agent reads ready-made results; it does not fetch/score/import in-flow.
 
-### `add_draft_ready_to_eat(items)`
-
-Append ready-to-eat items to the **caller's own** personal ready-to-eat catalog. Each item is given a generated `slug` (unique within the catalog) and is **available (suggestible) immediately** — there is no draft/active state or activation step.
-
-**Params:**
-- `items` (array): `[{ meal, name, category?, source?, brand?, notes? }]` — `meal` is `breakfast | lunch | dinner`
-
-**Returns:**
-- `{ added: [{ meal, name, slug }] }` — D1-backed, no `commit_sha`
-
-### `update_ready_to_eat(slug, updates)`
-
-Disposition or otherwise update a ready-to-eat item in the caller's catalog, addressed by `slug`. Unknown slug returns a structured `not_found`.
-
-**Params:**
-- `slug` (string, required) — the item's stable key (from `add_draft_ready_to_eat`'s return or `ready_to_eat_available`)
-- `updates` (object): `{ favorite?, reject?, name?, category?, brand?, notes? }` — `favorite` and `reject` are the booleans of the disposition model, **mutually exclusive** (setting one clears the other); there is no `status` or `rating`. A rejected item is no longer suggested by `ready_to_eat_available`. Those six are the **only** updatable keys — any other key (`slug`, `meal`, the discovery source, timestamps) is identity/provenance and is **rejected** with a structured `validation_failed` listing the offending keys; nothing is written.
-
-**Returns:**
-- `{ slug, updated_fields }` — D1-backed, no `commit_sha`
-
 ---
 
 ## Preference / config tools
@@ -567,7 +542,7 @@ Read the caller's full per-tenant profile, assembled from the D1 profile tables 
 {
   initialized:     boolean,          // true once preferences field is non-empty
   missing:         string[],         // onboarding areas still absent: subset of
-                                     //   ["store","taste","diet","equipment","ready-to-eat","stockup","vibes"]
+                                     //   ["store","taste","diet","equipment","stockup","vibes"]
   preferences:     { ... } | null,   // the assembled preferences object; each brands entry
                                      //   is the canonical tier object { tiers: string[][],
                                      //   any_brand: boolean } with BOTH fields always present
@@ -591,7 +566,6 @@ Read the caller's full per-tenant profile, assembled from the D1 profile tables 
   diet_principles: string | null,    // diet-principles narrative (markdown)
   kitchen:         { owned: [...], notes: {...} },  // equipment inventory (empty when absent)
   staples:         [...],            // staples list — bare array (empty when absent)
-  ready_to_eat:    [...],            // ready-to-eat catalog items (empty array when absent)
   stockup:         { ... } | null,   // bulk-buy watchlist (parsed TOML)
   meal_vibes:      [...],            // the meal-vibe palette — each saved vibe with its `meal`,
                                      //   its `members` when set, and its derived last_satisfied +
@@ -651,7 +625,7 @@ One fused read over the shared, curated `guidance/` trees, organized by **domain
 - **`cooking_techniques`** — general cooking-technique memories keyed by **technique** (`browning-meat`, `searing`, `resting-meat`, …).
 - **`purchasing`** — buy-side selection advice keyed by **product/item** (`canned-tomatoes`, `olive-oil`, …): *what kind to get* plus the non-obvious *how to tell if it's good/ripe* judgments.
 
-All three domains are **operator-curated** via the admin Data › Guidance editor — the same posture as `ingredient_storage` always had. There is no `save_guidance` tool: a member who posts an article or a buying guide gets conversational use of it, not a corpus write; an operator who wants it distilled into the corpus does so through the admin editor (one file per slug — refining overwrites, never appends).
+All three domains are **operator-curated** — hand-edits to the guidance tree in the vault (the Obsidian vault synced to the R2 corpus); the admin panel's Data › Guidance area is a read-only viewer. There is no `save_guidance` tool: a member who posts an article or a buying guide gets conversational use of it, not a corpus write; an operator who wants it distilled into the corpus edits the vault (one file per slug — refining overwrites, never appends).
 
 The agent maps a just-bought item, a recipe step, or a thing on the grocery list to the right slug with its own world knowledge over the semantic slugs (no manifest); over-fetching is harmless. See `docs/SCHEMAS.md` for the trees and the AGENT_INSTRUCTIONS put-away/cook/shop/capture rules for when these fire.
 
@@ -692,12 +666,11 @@ Aggregate **real** cooking history from the D1 `cooking_log` table over a period
   recipes_cooked:   [{ recipe, count, dates }],   // distinct recipes, with per-cook dates
   protein_mix:      { <protein>: count },          // counts EVERY cook event; non-recipe entries via inline dims; missing → "unknown"
   cuisine_mix:      { <cuisine>: count },
-  cadence:          { cooks, weeks, cooks_per_week,     // counts recipe + ad_hoc only (ready_to_eat is not cooking)
+  cadence:          { cooks, weeks, cooks_per_week,     // counts recipe + ad_hoc only — a historical `ready_to_eat`
+                                                         //   row (the type is retired) stays excluded, as before
                       by_meal: { breakfast, lunch, dinner, project },  // cooks per meal, over rows whose meal is set
                       meal_unknown },                    // in-window cooks whose meal is NULL (pre-meal rows) — counted
                                                          //   in the overall figure, reported unknown, never fabricated
-  cook_vs_convenience: { cooked, convenience },         // cooked = recipe + ad_hoc; convenience = ready_to_eat
-  ready_to_eat_favorites: [{ name, count }],            // frequency-ranked; feeds menu-flow restock suggestions
   underused:        [{ slug, title, last_cooked, why, cook_count }],  // loved & quiet & in-season; ≤15, stalest first
   underused_count:  <number>,                           // total qualifying before the 15-item cap
   spend: {                                              // shared SpendAnalyzer; independent of period
@@ -791,7 +764,7 @@ Aggregate **real** cooking history from the D1 `cooking_log` table over a period
 
 All currency reduction rounds each stored decimal once to integer cents. Monetary coverage is empty with no events, unavailable with no priced events, partial with any unpriced or estimated event, and complete otherwise. Department and savings coverage apply the analogous captured-value rules; a pending department remains absent from breakdown items and never becomes a synthetic “Not mapped” group. Overall status is empty with no events, unavailable when money is unavailable, partial when money is partial or department coverage is incomplete, and complete otherwise. Numeric legacy totals are known subtotals and must be presented with their coverage.
 
-`average_per_week` divides known spend by all N buckets without partial-week proration. Cost per meal divides the known eligible numerator by every in-range `recipe` or `ad_hoc` cooking row (all meal values, including `project` and legacy null); it excludes `ready_to_eat`, never infers servings, and excludes only capture-stamped `household` and `beverages` from its numerator. Total spend still includes those departments. Trend compares the selected interval with its matched prior interval and is unavailable for incomplete inputs or a zero prior denominator. A positive weekly budget yields `over_budget:true` as soon as known spend exceeds it, `null` while missing value could change an otherwise-below result, and `false` only for complete known value; an absent/non-positive budget normalizes to null.
+`average_per_week` divides known spend by all N buckets without partial-week proration. Cost per meal divides the known eligible numerator by every in-range `recipe` or `ad_hoc` cooking row (all meal values, including `project` and legacy null); it excludes a historical `ready_to_eat` row (the retired type — `log_cooked` no longer writes it), never infers servings, and excludes only capture-stamped `household` and `beverages` from its numerator. Total spend still includes those departments. Trend compares the selected interval with its matched prior interval and is unavailable for incomplete inputs or a zero prior denominator. A positive weekly budget yields `over_budget:true` as soon as known spend exceeds it, `null` while missing value could change an otherwise-below result, and `false` only for complete known value; an absent/non-positive budget normalizes to null.
 
 Department, store, and provenance breakdowns use immutable captured keys only. Items sort by known amount descending then raw key ascending; department percentages use classified known spend, while store/provenance use total known spend. Top drivers group by captured `line_key`, include priced groups only, count event rows rather than quantity, select name and department together from the latest `(occurred_on, send_id)` row, sort by amount descending then event count descending then key ascending, and cap at six after reporting `total_count`. Insight selection is the fixed server template ladder; no LLM, random choice, or client reclassification participates. Reads filter voided events and perform no mutation, cache fill, queue action, schema migration, scheduled aggregation, or analyzer cron. No MCP tool writes spend events.
 
@@ -812,18 +785,18 @@ The MCP and profile retrospective results carry the same direct `WasteAnalyzer` 
 Append one cooking event to the caller's `cooking_log` (D1-backed; **no `commit_sha`**).
 
 **Params:**
-- `type` (string, required): `recipe | ready_to_eat | ad_hoc`.
+- `type` (string, required): `recipe | ad_hoc`. For **one deprecation window**, `type: "ready_to_eat"` is also accepted and **converted to `ad_hoc`** (see Notes and the deprecation convention above); after the window it is rejected as `validation_failed` like any other unknown type.
 - `date` (string, optional): ISO `YYYY-MM-DD`; defaults to today.
 - `meal` (string, optional): `breakfast | lunch | dinner | project` — which meal this event was. Valid on **all** types; **omitted stores NULL**, meaning "unknown / not a meal" (`type` and `meal` are orthogonal axes: a baked loaf logs `{ type: "ad_hoc" }` with no meal — there is no fourth "other" value). Cooking a **planned project** logs `{ type: "recipe", meal: "project" }`, which routes the clear at the project row.
 - `plan_row_id` (string, optional): the exact plan row to clear (a `read_meal_plan`/`update_meal_plan` row id) — clear-order step 1 below.
 - `recipe` (string): the recipe slug — **required** for `type=recipe`; it MUST resolve against the D1 `recipes` table.
-- `name` (string): the dish name — **required** for `ready_to_eat | ad_hoc`.
+- `name` (string): the dish name — **required** for `ad_hoc`.
 - `protein`, `cuisine` (string, optional): inline dimensions for a non-recipe entry (so it still counts in `retrospective` mixes). Recipe entries take their dims from the recipe, not here.
 
 **Returns:**
-- `{ logged: { date, type, recipe?, name?, protein?, cuisine?, meal? }, cleared_plan_row?, note? }` — no `commit_sha`. On a `recipe` entry `cleared_plan_row` is the one plan row the cook cleared (`{ id, recipe, meal, planned_for }`) or `null` when nothing cleared; `note` explains a stale `plan_row_id`.
+- `{ logged: { date, type, recipe?, name?, protein?, cuisine?, meal? }, cleared_plan_row?, note?, warnings? }` — no `commit_sha`. On a `recipe` entry `cleared_plan_row` is the one plan row the cook cleared (`{ id, recipe, meal, planned_for }`) or `null` when nothing cleared; `note` explains a stale `plan_row_id`; `warnings` is present only when a deprecated input shape was accepted and converted (the `ready_to_eat` shim below).
 
-**Notes:** Validated at write time — a bad date/type/meal or a missing required field is `validation_failed`; an unknown recipe slug is `not_found`, written nowhere. **Deterministic clear (at most ONE row, in the same D1 transaction as the log insert):** a `type=recipe` entry resolves which plan row it clears by this order — (1) a supplied **`plan_row_id`**: the row exists and slug-matches → clear exactly it; the row exists but holds a **different recipe** → a structured `conflict` and **no log written** (never clear a different dish's slot); the row is **absent** → **no clear, the log is still written**, and the result carries `cleared_plan_row: null` plus a note — deliberately **no fall-through** to the slug stages (on a replay the row was already cleared and the intent satisfied; falling through would consume an unrelated explicit duplicate); (2) else the exact **`(recipe, meal, date)`** triple, when the entry carries a meal (ties among explicit duplicates break by the earliest-due selector — `planned_for ASC NULLS LAST, id ASC`); (3) else the **earliest-due row for the slug**, **excluding `meal='project'` rows unless the entry's meal IS `'project'`** — cooking a dinner never silently consumes a same-slug project row; (4) no match → no clear (an off-plan cook). An explicitly-duplicated recipe therefore **survives its first cook** — one cook clears one row, which is the point of duplication. Route-level replay dedupe (the member API) keys on **`(date, meal, type, recipe|name)`**, a NULL meal matching NULL only — this is cooking_log **dedupe identity only, never plan-row identity**. `last_cooked` is **derived** — no tool sets it directly; logging a recipe here updates its effective `last_cooked` automatically (it's derived by query). Ready-to-eat consumption is a `{ type: "ready_to_eat", name }` entry; use `update_pantry` to remove any pantry stock when the user used the last of it.
+**Notes:** Validated at write time — a bad date/type/meal or a missing required field is `validation_failed`; an unknown recipe slug is `not_found`, written nowhere. **Deterministic clear (at most ONE row, in the same D1 transaction as the log insert):** a `type=recipe` entry resolves which plan row it clears by this order — (1) a supplied **`plan_row_id`**: the row exists and slug-matches → clear exactly it; the row exists but holds a **different recipe** → a structured `conflict` and **no log written** (never clear a different dish's slot); the row is **absent** → **no clear, the log is still written**, and the result carries `cleared_plan_row: null` plus a note — deliberately **no fall-through** to the slug stages (on a replay the row was already cleared and the intent satisfied; falling through would consume an unrelated explicit duplicate); (2) else the exact **`(recipe, meal, date)`** triple, when the entry carries a meal (ties among explicit duplicates break by the earliest-due selector — `planned_for ASC NULLS LAST, id ASC`); (3) else the **earliest-due row for the slug**, **excluding `meal='project'` rows unless the entry's meal IS `'project'`** — cooking a dinner never silently consumes a same-slug project row; (4) no match → no clear (an off-plan cook). An explicitly-duplicated recipe therefore **survives its first cook** — one cook clears one row, which is the point of duplication. Route-level replay dedupe (the member API) keys on **`(date, meal, type, recipe|name)`**, a NULL meal matching NULL only — this is cooking_log **dedupe identity only, never plan-row identity**. `last_cooked` is **derived** — no tool sets it directly; logging a recipe here updates its effective `last_cooked` automatically (it's derived by query). For one deprecation window, a stale plugin's `type: "ready_to_eat"` write is **accepted and converted** to `type: "ad_hoc"` — `name`/`date`/`meal`/inline `protein`/`cuisine` carry over unchanged, and the dedupe identity + plan-clear logic above run on the converted form (an `ad_hoc` row never clears a plan row, same as `ready_to_eat` never did) — the success return carries the `warnings` entry from the Active-shims table. The ready-to-eat concept itself is retired (`remove-ready-to-eat`): the retained D1 `ready_to_eat` table holds only historical rows no tool reads or writes, and every read (this log, `retrospective`, group insights) treats a stored `ready_to_eat` row exactly as before its retirement.
 
 **Meal-vibe cadence (automatic, meal-scoped):** a `type=recipe` cook also attributes **meal-vibe satisfaction** by a **cook-time cosine match** of the cooked recipe against the caller's palette — the recipe's cron-captured embedding vs. each vibe's, using the already-derived vectors (`recipe_derived` / `night_vibe_derived`), so it costs **no** AI call. The cosine candidates are **scoped to the entry's meal** when one is set (a lunch cook matches lunch vibes only); a NULL-meal entry matches against **all** vibes (fail-open — the pre-meal behavior). It writes a satisfaction record (`vibe_satisfaction` table) for **every** in-scope vibe the recipe genuinely matches, unioned with **the cleared row's** `from_vibe` (read from the row the clear order actually selected, never a slug-global pick) as a **guaranteed-reset prior** — the prior always resets regardless of meal, even at a borderline cosine. A single cook MAY reset **more than one** vibe, and an **off-plan** cook (no plan row) still resets any in-scope vibe its recipe matches. Over-reset is bounded: the single strongest match resets, weaker matches only when they clear a higher threshold, so one dish cannot suppress the whole palette. This is fully automatic — you never pass a vibe to `log_cooked`; each vibe's `last_satisfied` is derived as `MAX(date)` over these records (never stored on the vibe).
 
@@ -980,7 +953,7 @@ Behind the per-tenant gate; a pure D1 write — no GitHub. Driven by the agent's
 
 ## What this surface deliberately does NOT include
 
-- No raw corpus write access — recipe **editing** is not on the member surface at all (the member web app owns member edits; `import_recipe` is create-only; the operator merge screen owns fold/tombstone). Guidance writes are entirely operator-curated (the admin Data › Guidance editor) — there is no `save_guidance` tool for any domain.
+- No raw corpus write access — recipe **editing** is not on the member surface at all (the member web app owns member edits; `import_recipe` is create-only; the operator merge screen owns fold/tombstone). Guidance writes are entirely operator-curated (vault edits; the admin panel only views the tree) — there is no `save_guidance` tool for any domain.
 - No raw Kroger API access (the matching pipeline + cart write only); the matcher core (`matchIngredient`) and the unit-price core (`compareUnitPrice`) are pipeline-internal, reached only through `place_order`'s resolution and the order-review widget's app ops — neither is a model-advertised tool.
 - No "search arbitrary text across recipes" (use `search_recipes` over the index).
 - No "execute arbitrary code" or "run arbitrary script".
@@ -991,6 +964,7 @@ Behind the per-tenant gate; a pure D1 write — no GitHub. Driven by the agent's
 - No tool that itself schedules or triggers background work — the scheduled jobs (the flyer warm, the recipe-index projection, the recipe-derived reconcile, the discovery sweep) run in the Worker's `scheduled()` handler, not as tools; the tool surface only *reads* their output (`flyer`, `search_recipes`, `list_new_for_me`).
 - No weather tool — `propose_meal_plan`/`display_meal_plan` load the forecast silently, server-side; weather is engine context, not an agent verb.
 - No batch `commit_changes` tool — each write category has its own standalone tool (or ops-form tool), and a multi-write turn is one granular call per write.
+- No ready-to-eat surface — heat-and-eat items a member keeps on hand are ordinary pantry stock (`update_pantry`); the retained D1 `ready_to_eat` table (see SCHEMAS.md) is not read or written by any tool.
 
 ---
 

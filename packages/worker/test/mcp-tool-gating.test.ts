@@ -19,14 +19,16 @@ import type { Tenant } from "../src/tenant.js";
 const CALLER: Tenant = { id: "casey", member: "casey" };
 
 // The member-surface enumeration (mcp-tool-gating "The member surface is the enumerated
-// target set"): the 28 target tools, PLUS the in-flight registrations owned by other
-// changes (ready-to-eat tools until remove-ready-to-eat lands; add_night_vibe until
-// remove-meal-dimension-shims closes), PLUS the one-window dispatch aliases while their
-// window is open (toggle_favorite/toggle_reject, add_to_grocery_list/
-// remove_from_grocery_list, list_guidance) — mirroring the `*_night_vibe` D21 precedent,
-// these aliases dispatch onto their fused tool but are registered exactly like any other
-// model-visible tool (no app-plane visibility restriction), so a stale plugin's persona
-// can still see and call them. 36 names total; none of them carry app-only visibility.
+// target set"): the 28 target tools, PLUS the in-flight registration owned by another
+// change (add_night_vibe until remove-meal-dimension-shims closes), PLUS the one-window
+// dispatch aliases while their window is open (toggle_favorite/toggle_reject,
+// add_to_grocery_list/remove_from_grocery_list, list_guidance) — mirroring the
+// `*_night_vibe` D21 precedent, these aliases dispatch onto their fused tool but are
+// registered exactly like any other model-visible tool (no app-plane visibility
+// restriction), so a stale plugin's persona can still see and call them. 34 names total;
+// none of them carry app-only visibility. The ready-to-eat tools (add_draft_ready_to_eat,
+// update_ready_to_eat, ready_to_eat_available below) are gone (remove-ready-to-eat) — see
+// the "removed tools never come back" assertion.
 const MEMBER_BASE_SET = [
   // reads
   "read_user_profile",
@@ -64,9 +66,7 @@ const MEMBER_BASE_SET = [
   "read_guidance",
   // escape
   "report_bug",
-  // in-flight registrations owned by other changes
-  "add_draft_ready_to_eat",
-  "update_ready_to_eat",
+  // in-flight registration owned by another change
   "add_night_vibe",
   // one-window dispatch aliases (mcp-tool-gating D3), model-visible while open
   "toggle_favorite",
@@ -79,15 +79,13 @@ const MEMBER_BASE_SET = [
 // The Kroger tool set (mcp-tool-gating "Store-integration tools register only when
 // their integration is configured"): flyer (the kroger_flyer/store_flyer fusion),
 // kroger_prices, display_order_review (+ its app-plane review ops), place_order, and
-// kroger_login_url — plus ready_to_eat_available, which rides this same gate (its
-// removal belongs to the separate remove-ready-to-eat change). compare_unit_price and
-// match_ingredient_to_kroger_sku are cut entirely (ingredient-matching) — not
-// Kroger-gated, just gone.
+// kroger_login_url. compare_unit_price and match_ingredient_to_kroger_sku are cut
+// entirely (ingredient-matching) — not Kroger-gated, just gone; ready_to_eat_available
+// (formerly gated here too) is gone outright (remove-ready-to-eat).
 const KROGER_TOOLS = [
   "kroger_login_url",
   "kroger_prices",
   "flyer",
-  "ready_to_eat_available",
   "place_order",
   "display_order_review",
   "read_order_review",
@@ -157,8 +155,20 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
           for (const name of OPERATOR_TOOLS) {
             expect(names.has(name), `${name} gating mismatch in cell (operator:${operator}, kroger:${kroger}, instacart:${instacart})`).toBe(operator);
           }
-          // Removed tools never come back regardless of gating.
-          for (const name of ["kroger_flyer", "store_flyer", "compare_unit_price", "match_ingredient_to_kroger_sku", "update_recipe", "parse_recipe", "create_recipe"]) {
+          // Removed tools never come back regardless of gating — including the three
+          // ready-to-eat tools (remove-ready-to-eat): hard removal, no alias, no stub.
+          for (const name of [
+            "kroger_flyer",
+            "store_flyer",
+            "compare_unit_price",
+            "match_ingredient_to_kroger_sku",
+            "update_recipe",
+            "parse_recipe",
+            "create_recipe",
+            "ready_to_eat_available",
+            "add_draft_ready_to_eat",
+            "update_ready_to_eat",
+          ]) {
             expect(names.has(name), `${name} should never be registered`).toBe(false);
           }
         }
@@ -203,7 +213,18 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
   it("a stale call to a hard-removed tool gets the generic unknown-tool rejection (no shim)", async () => {
     const { env } = sqliteEnv(["casey"]);
     const server = buildServer(env, CALLER, "https://yamp.example.com", ctxOf(false, true, true));
-    for (const name of ["save_guidance", "update_kitchen", "mark_pantry_verified", "create_recipe", "parse_recipe", "kroger_flyer", "store_flyer"]) {
+    for (const name of [
+      "save_guidance",
+      "update_kitchen",
+      "mark_pantry_verified",
+      "create_recipe",
+      "parse_recipe",
+      "kroger_flyer",
+      "store_flyer",
+      "ready_to_eat_available",
+      "add_draft_ready_to_eat",
+      "update_ready_to_eat",
+    ]) {
       const out = await withServer(server, (c) => invokeTool(c, name, {}));
       expect(out.isError, `${name} should be rejected`).toBe(true);
       expect(out.result, `${name} should be not_found, not a shim`).toMatchObject({ error: "not_found" });

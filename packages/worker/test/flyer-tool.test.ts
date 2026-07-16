@@ -39,7 +39,7 @@ function seedStoresPref(h: ReturnType<typeof sqliteEnv>, stores: Record<string, 
 }
 
 describe("flyer — Kroger resolve", () => {
-  it("resolves the Kroger primary store (no-space location label bypasses the Locations API) and applies the default 5% deal floor", async () => {
+  it("resolves the Kroger primary store (no-space location label bypasses the Locations API) and returns its sale items", async () => {
     const h = sqliteEnv(["casey"]);
     seedStoresPref(h, { primary: "kroger", preferred_location: "01400943" });
     await writeStoreRollup(

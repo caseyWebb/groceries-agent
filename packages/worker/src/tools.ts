@@ -396,7 +396,6 @@ export async function assembleUserProfile(env: Env, tenant: string, member: stri
     ["taste", profile.taste],
     ["diet", profile.diet_principles],
     ["equipment", profile.kitchen.owned.length ? profile.kitchen : null],
-    ["ready-to-eat", profile.ready_to_eat],
     ["stockup", profile.stockup],
     // An empty palette is an onboarding gap `suggest_meal_vibes` fills (data-read-tools D5).
     // The area label deliberately stays "vibes" across the meal-vibe rename.
@@ -421,7 +420,6 @@ export async function assembleUserProfile(env: Env, tenant: string, member: stri
     diet_principles: profile.diet_principles,
     kitchen: profile.kitchen,
     staples: profile.staples,
-    ready_to_eat: profile.ready_to_eat,
     stockup: profile.stockup,
     meal_vibes: nightVibes,
     household,
@@ -475,9 +473,7 @@ const flyerFilterShape = {
   min_savings_pct: z.number().optional(),
 };
 
-const READY_TO_EAT_MEALS = ["breakfast", "lunch", "dinner"] as const;
-
-/** One product row for the list-returning Kroger lookups (kroger_prices, ready_to_eat). */
+/** One product row for the list-returning Kroger lookups (kroger_prices). */
 function productRow(c: KrogerCandidate): Record<string, unknown> {
   return {
     sku: c.productId,
@@ -817,7 +813,7 @@ export function buildServer(
       "kroger_login_url",
       {
         description:
-          "Mint the one-time Kroger account-authorization link for the CURRENT member and return { url }. Kroger ordering (place_order, ready_to_eat_available, and any cart write) needs the member's own Kroger shopping account linked first; this returns a personal link the member opens in a browser to consent at Kroger (scope: add-to-cart only). Give the returned URL to the member to click. Use it (1) the first time a member sets up ordering, and (2) whenever a Kroger cart write returns `code: \"reauth_required\"` — the stored token was rejected and the member must re-authorize. The link is bound to the calling member from their authenticated session: it takes NO arguments and cannot mint a link for anyone else. It is single-use and expires in ~10 minutes, so mint it on demand rather than caching it. (Operators bootstrapping a member who isn't connected yet use the admin panel's consent-link action instead.)",
+          "Mint the one-time Kroger account-authorization link for the CURRENT member and return { url }. Kroger ordering (place_order and any cart write) needs the member's own Kroger shopping account linked first; this returns a personal link the member opens in a browser to consent at Kroger (scope: add-to-cart only). Give the returned URL to the member to click. Use it (1) the first time a member sets up ordering, and (2) whenever a Kroger cart write returns `code: \"reauth_required\"` — the stored token was rejected and the member must re-authorize. The link is bound to the calling member from their authenticated session: it takes NO arguments and cannot mint a link for anyone else. It is single-use and expires in ~10 minutes, so mint it on demand rather than caching it. (Operators bootstrapping a member who isn't connected yet use the admin panel's consent-link action instead.)",
         inputSchema: {},
       },
       () =>
@@ -873,7 +869,7 @@ export function buildServer(
     "read_user_profile",
     {
       description:
-        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or a derivation from the legacy nights count when unset; `default_cooking_nights` remains exported for one deprecation window as a derived MIRROR of cadence.dinner — prefer cadence), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes), and attention (server-computed nudge inputs, deterministic — no AI, nothing narrated unless it's actionable: `retrospective_due` — true when there is cooking history and the retrospective hasn't been read in 42+ days (reading one via the retrospective tool resets it); `unverified_perishables` — a COUNT of pantry rows in produce/dairy/seafood/meat unverified for 7+ days, not a list; `stale_areas` — the same array as `missing`, under the attention lens). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
+        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or a derivation from the legacy nights count when unset; `default_cooking_nights` remains exported for one deprecation window as a derived MIRROR of cadence.dinner — prefer cadence), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes), and attention (server-computed nudge inputs, deterministic — no AI, nothing narrated unless it's actionable: `retrospective_due` — true when there is cooking history and the retrospective hasn't been read in 42+ days (reading one via the retrospective tool resets it); `unverified_perishables` — a COUNT of pantry rows in produce/dairy/seafood/meat unverified for 7+ days, not a list; `stale_areas` — the same array as `missing`, under the attention lens). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
       inputSchema: {},
     },
     () => runTool(() => assembleUserProfile(env, tenant.id, tenant.member)),
@@ -988,59 +984,6 @@ export function buildServer(
     );
   }
 
-  // Kroger-gated (mcp-tool-gating): needs a working Kroger client (ready-to-eat
-  // cross-reference). `compare_unit_price` and `match_ingredient_to_kroger_sku` are cut
-  // from the member surface (ingredient-matching, data-write-tools) — their cores
-  // (`compareUnitPrice`, `matchIngredient`) stay for the order/review paths via
-  // `resolveIngredient` (buildOrderWiring) and order-review-widget.ts.
-  if (ctx.kroger) {
-    server.registerTool(
-      "ready_to_eat_available",
-      {
-        description:
-          "Cross-reference the caller's personal ready-to-eat catalog against Kroger availability. Each available catalog item carries the FULL list of fulfillable matching products (relevance-ranked, with price + on-sale + curbside/delivery) so you can pick the right/cheapest one. 'Available' means fulfillable via curbside or delivery — the public API exposes no live in-store stock. An empty or absent catalog returns empty lists.",
-        inputSchema: {},
-      },
-      () =>
-        runTool(async () => {
-          const locationId = await getLocationId();
-          const available: Record<string, unknown[]> = { breakfast: [], lunch: [], dinner: [] };
-          const unavailable: unknown[] = [];
-
-          const items = (await readProfile(env, tenant.id)).ready_to_eat;
-          // One Kroger search per catalog item, run concurrently (bounded by the
-          // client cap); bucket from the ordered results so output stays stable.
-          const looked = await Promise.all(
-            items.map(async (item) => {
-              if (typeof item.name !== "string") return null;
-              if (item.reject) return null;
-              const meal =
-                typeof item.meal === "string" && (READY_TO_EAT_MEALS as readonly string[]).includes(item.meal)
-                  ? item.meal
-                  : "dinner";
-              const candidates = await kroger.search(item.name, { locationId, limit: 50 });
-              const products = candidates.filter(isFulfillable).map(productRow);
-              return { item, meal, products };
-            }),
-          );
-          for (const r of looked) {
-            if (!r) continue;
-            if (r.products.length > 0) {
-              available[r.meal].push({ name: r.item.name, slug: r.item.slug ?? null, meal: r.meal, products: r.products });
-            } else {
-              unavailable.push({
-                name: r.item.name,
-                slug: r.item.slug ?? null,
-                meal: r.meal,
-                catalog_sku: typeof r.item.sku === "string" ? r.item.sku : null,
-              });
-            }
-          }
-          return { available, unavailable };
-        }),
-    );
-  }
-
   // Repo-data write tools route by category internally (personal profile/overlay →
   // D1 profile tables; session state pantry+kitchen → D1 pantry/profile tables), so
   // they take D1 (env) + tenant id. `update_recipe` (the one R2-corpus write here)
@@ -1150,8 +1093,8 @@ export function buildServer(
   // get_weather_forecast is cut from the member surface (data-read-tools,
   // member-app-propose): weather is engine context, not an agent verb.
   // propose_meal_plan already loads the forecast server-side through
-  // resolveTenantForecast (this module), exposed to the member app via
-  // GET /api/propose/weather — no forecast tool appears on the MCP surface.
+  // resolveTenantForecast (this module), which the shared propose op also
+  // runs for POST /api/propose — no forecast tool appears on the MCP surface.
 
   // report_bug — record an attributed bug report into the D1 `bug_reports` table the
   // operator reviews via the admin panel (the GitHub App / issues path is gone for
