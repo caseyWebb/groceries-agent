@@ -2,15 +2,15 @@
 
 ## 1. Registration mechanism
 
-- [ ] 1.1 Add `RegistrationContext` (`profile`, `operator`, `kroger`, `instacart`) and resolve it in the MCP handler: `loadDeploymentProfile(env)` (one cached read), `isOperator` (export from `reconcile-tools.ts` or hoist to `tenant.ts`), non-empty `KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET`, `getInstacartConfig(env) !== null`. Thread it into `buildServer(env, tenant, origin, ctx)`.
-- [ ] 1.2 Gate the Kroger set on `ctx.kroger`: `flyer` (task 3.5), `kroger_prices`, `kroger_login_url`, `place_order` (`registerOrderTools`), `display_order_review` + its app ops (`registerOrderReviewWidget`). `ready_to_eat_available` rides this gate unchanged (its removal belongs to `remove-ready-to-eat`).
-- [ ] 1.3 Gate `create_instacart_handoff` on `ctx.instacart` (`registerInstacartTool`); the shared op keeps its `not_configured` branch for the member API.
-- [ ] 1.4 Gate the operator plane on `ctx.operator`: `list_proposals`, `confirm_proposal`, `reconcile_read_signals`, `reconcile_enqueue_proposal` (`registerReconcileTools`). Keep the call-time `isOperator` checks on the reconcile pair as defense in depth.
+- [x] 1.1 Add `RegistrationContext` (`profile`, `operator`, `kroger`, `instacart`) and resolve it in the MCP handler: `loadDeploymentProfile(env)` (one cached read), `isOperator` (export from `reconcile-tools.ts` or hoist to `tenant.ts`), non-empty `KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET`, `getInstacartConfig(env) !== null`. Thread it into `buildServer(env, tenant, origin, ctx)`.
+- [x] 1.2 Gate the Kroger set on `ctx.kroger`: `flyer` (task 3.5), `kroger_prices`, `kroger_login_url`, `place_order` (`registerOrderTools`), `display_order_review` + its app ops (`registerOrderReviewWidget`). `ready_to_eat_available` rides this gate unchanged (its removal belongs to `remove-ready-to-eat`). (The `flyer` fusion is task 3.5, not yet landed; `kroger_flyer` — plus `compare_unit_price`/`match_ingredient_to_kroger_sku`, whose removal is task 5.1 — ride the same gate under their current pre-fusion names in the interim.)
+- [x] 1.3 Gate `create_instacart_handoff` on `ctx.instacart` (`registerInstacartTool`); the shared op keeps its `not_configured` branch for the member API.
+- [x] 1.4 Gate the operator plane on `ctx.operator`: `list_proposals`, `confirm_proposal`, `reconcile_read_signals`, `reconcile_enqueue_proposal` (`registerReconcileTools`). Keep the call-time `isOperator` checks on the reconcile pair as defense in depth.
 
 ## 2. App-plane separation
 
-- [ ] 2.1 Re-register `commit_shop` via `registerAppTool` with `_meta.ui.visibility: ["app"]` (move from the plain `server.registerTool` in `tools.ts` next to its grocery-widget siblings); behavior/handler unchanged.
-- [ ] 2.2 Audit every widget-callable op for the visibility metadata (grocery snapshot family, order-review family, `commit_shop`) and add a test helper that enumerates registered tools with their `_meta` so the plane split is assertable.
+- [x] 2.1 Re-register `commit_shop` via `registerAppTool` with `_meta.ui.visibility: ["app"]` (move from the plain `server.registerTool` in `tools.ts` next to its grocery-widget siblings); behavior/handler unchanged.
+- [x] 2.2 Audit every widget-callable op for the visibility metadata (grocery snapshot family, order-review family, `commit_shop`) and add a test helper that enumerates registered tools with their `_meta` so the plane split is assertable.
 
 ## 3. Fusions and new tools
 
@@ -24,9 +24,9 @@
 
 ## 4. Attention block
 
-- [ ] 4.1 D1 migration `packages/worker/migrations/d1/NNNN_profile_attention.sql`: `ALTER TABLE profile ADD COLUMN last_retrospective_at TEXT;`
-- [ ] 4.2 Stamp `last_retrospective_at` (today) in the `retrospective` tool and the member retrospective endpoints (the `last_planned_at` precedent); analyzers untouched.
-- [ ] 4.3 Compute `attention` in `assembleUserProfile` (`tools.ts`): `retrospective_due` (cooking_log non-empty AND watermark NULL/&gt;42d), `unverified_perishables` (perishable-category pantry rows with `last_verified_at` NULL/&gt;7d — the member app's needs-verification rule), `stale_areas` (the existing `missing` derivation). Fold the two aggregate reads into the existing `Promise.all`; all writes stay out of the read path. Surface it on `read_user_profile` and the member `GET /api/profile` (same assembly).
+- [x] 4.1 D1 migration `packages/worker/migrations/d1/NNNN_profile_attention.sql`: `ALTER TABLE profile ADD COLUMN last_retrospective_at TEXT;` (landed as `0062_profile_attention.sql`.)
+- [x] 4.2 Stamp `last_retrospective_at` (today) in the `retrospective` tool and the member retrospective endpoints (the `last_planned_at` precedent); analyzers untouched. (Both ride the one shared `loadRetrospective` op, so the stamp lands once, there.)
+- [x] 4.3 Compute `attention` in `assembleUserProfile` (`tools.ts`): `retrospective_due` (cooking_log non-empty AND watermark NULL/&gt;42d), `unverified_perishables` (perishable-category pantry rows with `last_verified_at` NULL/&gt;7d — the member app's needs-verification rule), `stale_areas` (the existing `missing` derivation). Fold the two aggregate reads into the existing `Promise.all`; all writes stay out of the read path. Surface it on `read_user_profile` and the member `GET /api/profile` (same assembly).
 
 ## 5. Removals
 

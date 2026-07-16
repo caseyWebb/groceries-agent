@@ -22,7 +22,7 @@ import type { WasteAnalyzer, WasteRange } from "./waste-shapes.js";
 import { loadRecipeIndex } from "./recipe-index.js";
 import { memberViewer } from "./visibility.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
-import { readOverlay, readPreferences } from "./profile-db.js";
+import { readOverlay, readPreferences, stampLastRetrospective } from "./profile-db.js";
 import type { RecipeIndex } from "./recipes.js";
 import { readMealPlan, applyMealPlanRowOps } from "./session-db.js";
 import { stampLastPlanned } from "./discovery-db.js";
@@ -117,6 +117,11 @@ export async function loadRetrospective(
     readSpendAnalyzer(env, username, spendRange),
     readWasteAnalyzer(env, username, wasteRange, resolvedWasteMapping.version),
   ]);
+  // Stamp the retrospective watermark (attention block, data-read-tools D8) — the
+  // last_planned_at precedent (stamped by update_meal_plan): reading the retrospective
+  // resets read_user_profile's attention.retrospective_due nudge. Only a SUCCESSFUL read
+  // reaches here (a validation_failed/index_unavailable throw above never stamps).
+  await stampLastRetrospective(env, username, new Date().toISOString().slice(0, 10));
   return { ...retrospective(entries, effective, period, new Date(), retroConfig), spend, waste };
 }
 

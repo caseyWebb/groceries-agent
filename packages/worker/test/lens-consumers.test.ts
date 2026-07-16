@@ -11,7 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { sqliteEnv, type SqliteEnv } from "./sqlite-d1.js";
 import { fakeR2 } from "./fake-r2.js";
 import { withServer, invokeTool } from "./tool-harness.js";
-import { readRecipeDetail, buildServer } from "../src/tools.js";
+import { readRecipeDetail, buildServer, type RegistrationContext } from "../src/tools.js";
 import { registerNoteTools } from "../src/notes-tools.js";
 import { handleCookbook } from "../src/cookbook.js";
 import { loadRecipeIndex } from "../src/recipe-index.js";
@@ -265,9 +265,13 @@ describe("readNewForMe — per-MEMBER attribution within the household", () => {
   });
 });
 
+// recipe_site_url is on the ungated base member surface; this context is a deliberately
+// permissive stand-in (mcp-tool-gating gating is exercised elsewhere).
+const OPEN_CTX: RegistrationContext = { profile: "self-hosted", operator: true, kroger: true, instacart: true };
+
 describe("recipe_site_url — the lens-aware link matrix (through the real buildServer)", () => {
   async function invoke(h: SqliteEnv, args: Record<string, unknown>) {
-    const server = buildServer(h.env, CALLER, "https://yamp.example.com");
+    const server = buildServer(h.env, CALLER, "https://yamp.example.com", OPEN_CTX);
     return withServer(server, (c) => invokeTool(c, "recipe_site_url", args));
   }
 

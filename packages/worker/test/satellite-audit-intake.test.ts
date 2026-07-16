@@ -2,11 +2,15 @@ import { describe, it, expect } from "vitest";
 import { intakeObservations } from "../src/ingest.js";
 import { readSatelliteLiveness } from "../src/ingest-db.js";
 import { readRejections, readSourceStats, setQuarantine, clearQuarantine, appendRejection, bumpAcceptTally } from "../src/satellite-audit-db.js";
-import { buildServer } from "../src/tools.js";
+import { buildServer, type RegistrationContext } from "../src/tools.js";
 import { withServer, invokeTool } from "./tool-harness.js";
 import { sqliteEnv } from "./sqlite-d1.js";
 import type { Env } from "../src/env.js";
 import type { Tenant } from "../src/tenant.js";
+
+// read_satellite_rejections is on the ungated base member surface; this context is a
+// deliberately permissive stand-in (mcp-tool-gating gating is exercised elsewhere).
+const OPEN_CTX: RegistrationContext = { profile: "self-hosted", operator: true, kroger: true, instacart: true };
 
 // The intake wiring (satellite-source-audit) against a REAL SQLite (node:sqlite) with the actual
 // migration DDL: every Worker-side reject across the three arms appends ONE ledger row; an accept
@@ -185,7 +189,7 @@ describe("read_satellite_rejections tool", () => {
     await appendRejection(env, { tenant: null, keyId: "k", kind: "sale", source: "target", origin: "local", reason: "contract_invalid", provenance: "sample", count: 12 }, NOW + 1000);
     await setQuarantine(env, { tenant: null, kind: "sale", source: "target" }, "flooding", NOW);
 
-    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host"), (c) => invokeTool(c, "read_satellite_rejections", {}));
+    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host", OPEN_CTX), (c) => invokeTool(c, "read_satellite_rejections", {}));
     expect(out.isError).toBe(false);
     const result = out.result as { rejections: { reason: string; count: number }[]; quarantined: { kind: string; source: string }[] };
     expect(result.rejections.map((r) => r.reason)).toEqual(["contract_invalid", "old"]);
@@ -206,7 +210,7 @@ describe("read_satellite_rejections tool", () => {
     await setQuarantine(env, { tenant: null, kind: "sale", source: "target" }, "flooding", NOW);
     await setQuarantine(env, { tenant: "sam", kind: "order", source: "shop" }, "sam-only", NOW);
 
-    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host"), (c) => invokeTool(c, "read_satellite_rejections", {}));
+    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host", OPEN_CTX), (c) => invokeTool(c, "read_satellite_rejections", {}));
     const result = out.result as { rejections: { reason: string }[]; quarantined: { kind: string; source: string }[] };
     const reasons = result.rejections.map((r) => r.reason);
     // Casey sees the shared recipe/sale rejects + her OWN order reject, but NOT sam's private order reject.
@@ -223,7 +227,7 @@ describe("read_satellite_rejections tool", () => {
     await appendRejection(env, { tenant: null, keyId: "k", kind: "recipe", source: "NYT", origin: "worker", reason: "a", provenance: null }, NOW);
     await appendRejection(env, { tenant: null, keyId: "k", kind: "recipe", source: "SeriousEats", origin: "worker", reason: "b", provenance: null }, NOW + 1);
 
-    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host"), (c) => invokeTool(c, "read_satellite_rejections", { source: "SeriousEats" }));
+    const out = await withServer(buildServer(serverEnv(env), tenant, "https://host", OPEN_CTX), (c) => invokeTool(c, "read_satellite_rejections", { source: "SeriousEats" }));
     const result = out.result as { rejections: { source: string }[] };
     expect(result.rejections.map((r) => r.source)).toEqual(["SeriousEats"]);
   });

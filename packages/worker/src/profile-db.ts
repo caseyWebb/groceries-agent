@@ -271,6 +271,29 @@ export async function readFreezerEstimate(env: Env, tenant: string): Promise<str
   return row?.freezer_capacity_estimate ?? null;
 }
 
+/** The caller's retrospective watermark (profile.last_retrospective_at), or null when the
+ *  retrospective has never been read — the attention block's `retrospective_due` input
+ *  (data-read-tools D8), the `last_planned_at` precedent. */
+export async function readLastRetrospective(env: Env, tenant: string): Promise<string | null> {
+  const row = await db(env).first<{ last_retrospective_at: string | null }>(
+    "SELECT last_retrospective_at FROM profile WHERE tenant = ?1",
+    tenant,
+  );
+  return row?.last_retrospective_at ?? null;
+}
+
+/** Stamp the caller's retrospective watermark (called when the retrospective is read) —
+ *  the `last_planned_at` precedent (attention block, data-read-tools D8): resets
+ *  `read_user_profile`'s `attention.retrospective_due` nudge. */
+export async function stampLastRetrospective(env: Env, tenant: string, day: string): Promise<void> {
+  await db(env).run(
+    "INSERT INTO profile (tenant, last_retrospective_at) VALUES (?1, ?2) " +
+      "ON CONFLICT(tenant) DO UPDATE SET last_retrospective_at = excluded.last_retrospective_at",
+    tenant,
+    day,
+  );
+}
+
 /**
  * Assemble the full profile in one batched-ish set of reads (the per-table SELECTs
  * run concurrently). Returns the structured fields plus the markdown fields; the

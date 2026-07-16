@@ -23,7 +23,7 @@ import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
 import { registerNightVibeTools } from "./night-vibe-tools.js";
 import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
-import { registerReconcileTools } from "./reconcile-tools.js";
+import { registerReconcileTools, isOperator } from "./reconcile-tools.js";
 import { registerSuggestNightVibesTool } from "./night-vibe-suggest.js";
 import { registerOrderTools, type OrderWiring } from "./order-tools.js";
 import { computeToBuyView } from "./to-buy.js";
@@ -36,9 +36,8 @@ import { registerRecipeCardWidget } from "./recipe-card-widget.js";
 import { registerMealPlanWidget } from "./meal-plan-widget.js";
 import { registerGroceryWidget } from "./grocery-widget.js";
 import { registerOrderReviewWidget } from "./order-review-widget.js";
-import { ShopCommitRequestSchema } from "@yamp/contract";
-import { commitCheckedShop } from "./shop-commit.js";
 import { registerInstacartTool } from "./instacart-tool.js";
+import { getInstacartConfig } from "./instacart.js";
 import { filterRecipes, type RecipeIndex } from "./recipes.js";
 import { loadRecipeIndex, loadRecipeEmbeddings, recipeDescription } from "./recipe-index.js";
 import { isVisible, memberViewer, ANONYMOUS } from "./visibility.js";
@@ -57,17 +56,19 @@ import { listGuidance, readGuidance, saveGuidance } from "./guidance.js";
 import { loadOperatorConfig, DEFAULT_OPERATOR_CONFIG } from "./operator-config.js";
 import { fetchWeatherForecast, type WeatherForecast, type WeatherError } from "./weather.js";
 import { mergeOverlay, type Overlay } from "./overlay.js";
-import { readPantry } from "./session-db.js";
+import { readPantry, countUnverifiedPerishables } from "./session-db.js";
 import {
   readProfile,
   readPreferences,
   readOverlay,
   readOwnedEquipment,
   readBrandTiers,
+  readLastRetrospective,
   type AssembledProfile,
   type Preferences,
 } from "./profile-db.js";
 import { exportPreferences } from "./preferences.js";
+import { loadDeploymentProfile, type DeploymentProfile } from "./deployment.js";
 import { db } from "./db.js";
 import { listMembers } from "./members-db.js";
 import { listNicknamesByViewer } from "./social-db.js";
@@ -108,6 +109,20 @@ export async function readLastCookedMap(env: Env, tenant: string): Promise<Map<s
     if (recipe && last_cooked) map.set(recipe, last_cooked);
   }
   return map;
+}
+
+/**
+ * Whether the caller has ANY cooking-log rows — the attention block's `retrospective_due`
+ * gate (data-read-tools D8): a brand-new tenant with nothing cooked is never nagged to
+ * read a retrospective, regardless of the watermark. One bounded existence probe, not a
+ * count.
+ */
+export async function hasCookingHistory(env: Env, tenant: string): Promise<boolean> {
+  const row = await db(env).first<{ ok: number }>(
+    "SELECT 1 AS ok FROM cooking_log WHERE tenant = ?1 LIMIT 1",
+    tenant,
+  );
+  return row !== null;
 }
 
 /**
@@ -328,6 +343,18 @@ export interface UserProfilePayload extends AssembledProfile {
    *  people-page): the session-start read resolves "Mom and Grandma" style references
    *  from this; handles are the stable keys. */
   household: { members: HouseholdMemberExport[] };
+  /** Server-computed nudge inputs (data-read-tools D8), deterministic and cheap — no AI
+   *  call, no write beyond the retrospective surfaces' own watermark stamp. */
+  attention: {
+    /** True when the caller's cooking log is non-empty AND the retrospective watermark
+     *  is NULL or at/past the 42-day due threshold. */
+    retrospective_due: boolean;
+    /** Pantry rows in a perishable category (produce/dairy/seafood/meat) whose
+     *  last_verified_at is NULL or at/past the 7-day staleness threshold. */
+    unverified_perishables: number;
+    /** The onboarding-area `missing` derivation, surfaced again under the attention lens. */
+    stale_areas: string[];
+  };
 }
 
 /**
@@ -338,12 +365,18 @@ export interface UserProfilePayload extends AssembledProfile {
  * for legacy call shapes.
  */
 export async function assembleUserProfile(env: Env, tenant: string, member: string = tenant): Promise<UserProfilePayload> {
-  const [profile, nightVibes, householdRows, nicknameRows] = await Promise.all([
-    readProfile(env, tenant),
-    readNightVibePalette(env, tenant, new Date()),
-    listMembers(db(env), tenant),
-    listNicknamesByViewer(db(env), member),
-  ]);
+  const [profile, nightVibes, householdRows, nicknameRows, lastRetrospectiveAt, cookingHistory, unverifiedPerishables] =
+    await Promise.all([
+      readProfile(env, tenant),
+      readNightVibePalette(env, tenant, new Date()),
+      listMembers(db(env), tenant),
+      listNicknamesByViewer(db(env), member),
+      // The attention block's two extra bounded reads (data-read-tools D8), folded into
+      // this same batch: no AI, no write, no new read amplification beyond these.
+      readLastRetrospective(env, tenant),
+      hasCookingHistory(env, tenant),
+      countUnverifiedPerishables(env, tenant),
+    ]);
   const nicknameOf = new Map(nicknameRows.map((r) => [r.target_member, r.nickname]));
   const household = {
     members: householdRows.map((m) => ({
@@ -397,6 +430,11 @@ export async function assembleUserProfile(env: Env, tenant: string, member: stri
     stockup: profile.stockup,
     meal_vibes: nightVibes,
     household,
+    attention: {
+      retrospective_due: isRetrospectiveDue(cookingHistory, lastRetrospectiveAt),
+      unverified_perishables: unverifiedPerishables,
+      stale_areas: missing,
+    },
   };
 }
 
@@ -473,7 +511,79 @@ function productRow(c: KrogerCandidate): Record<string, unknown> {
   };
 }
 
-export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServer {
+/**
+ * The per-request registration context (mcp-tool-gating): which tool planes register for
+ * this caller, resolved once by the MCP handler before `buildServer` runs. `profile`
+ * carries the deployment profile so a future profile-gated registration has its seam
+ * without re-plumbing — nothing gates on it yet. `kroger`/`instacart` are deployment-level
+ * (the credentials are wrangler secrets, not per-tenant); `operator` is the caller's own
+ * tenant identity.
+ */
+export interface RegistrationContext {
+  profile: DeploymentProfile;
+  operator: boolean;
+  kroger: boolean;
+  instacart: boolean;
+}
+
+/**
+ * Resolve the registration context: `profile` is the one async input
+ * (`loadDeploymentProfile`'s cached D1 singleton read); operator identity and the
+ * Kroger/Instacart config gates are synchronous env checks. Called once by the MCP
+ * handler (src/index.ts) alongside tenant resolution, before `buildServer`.
+ */
+export async function resolveRegistrationContext(env: Env, tenant: Tenant): Promise<RegistrationContext> {
+  return {
+    profile: await loadDeploymentProfile(env),
+    operator: isOperator(env, tenant),
+    kroger: Boolean(env.KROGER_CLIENT_ID?.trim()) && Boolean(env.KROGER_CLIENT_SECRET?.trim()),
+    instacart: getInstacartConfig(env) !== null,
+  };
+}
+
+/** A fail-closed registration context: every gated plane off. The backstop `buildServer`
+ *  falls back to when no context is supplied — every real caller (the MCP handler, every
+ *  test) passes one explicitly; this only guards a caller that forgets to. */
+const CLOSED_REGISTRATION_CONTEXT: RegistrationContext = {
+  profile: "self-hosted",
+  operator: false,
+  kroger: false,
+  instacart: false,
+};
+
+/** `today` minus `days`, as an ISO day string (UTC) — the attention block's threshold
+ *  cutoffs (data-read-tools D8), compared lexicographically against stored ISO-day
+ *  watermarks (retrospective.ts's `isoDay`/cutoff idiom). */
+function isoDaysAgo(days: number, now: Date): string {
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The attention block's retrospective-due threshold (days) — a compiled constant. */
+const RETROSPECTIVE_DUE_DAYS = 42;
+
+/**
+ * Whether `read_user_profile`'s `attention.retrospective_due` should be true (data-read-
+ * tools D8): the caller has cooking history AND the watermark is NULL or at/past the
+ * 42-day due threshold. A caller with no cooking history is never nagged.
+ */
+export function isRetrospectiveDue(
+  hasCookingLog: boolean,
+  lastRetrospectiveAt: string | null,
+  now: Date = new Date(),
+): boolean {
+  if (!hasCookingLog) return false;
+  if (lastRetrospectiveAt === null) return true;
+  return lastRetrospectiveAt <= isoDaysAgo(RETROSPECTIVE_DUE_DAYS, now);
+}
+
+export function buildServer(
+  env: Env,
+  tenant: Tenant,
+  origin?: string,
+  ctx: RegistrationContext = CLOSED_REGISTRATION_CONTEXT,
+): McpServer {
   const server = new McpServer({ name: "yamp", version: "0.1.0" });
 
   // tool-usage-trends: wrap registerTool ONCE, before any tool is registered, so every tool —
@@ -750,31 +860,35 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
       }),
   );
 
-  server.registerTool(
-    "kroger_login_url",
-    {
-      description:
-        "Mint the one-time Kroger account-authorization link for the CURRENT member and return { url }. Kroger ordering (place_order, ready_to_eat_available, and any cart write) needs the member's own Kroger shopping account linked first; this returns a personal link the member opens in a browser to consent at Kroger (scope: add-to-cart only). Give the returned URL to the member to click. Use it (1) the first time a member sets up ordering, and (2) whenever a Kroger cart write returns `code: \"reauth_required\"` — the stored token was rejected and the member must re-authorize. The link is bound to the calling member from their authenticated session: it takes NO arguments and cannot mint a link for anyone else. It is single-use and expires in ~10 minutes, so mint it on demand rather than caching it. (Operators bootstrapping a member who isn't connected yet use the admin panel's consent-link action instead.)",
-      inputSchema: {},
-    },
-    () =>
-      runTool(async () => {
-        // The link is minted for the caller's OWN grant tenant (never an argument);
-        // `origin` is the member's connected host, threaded in from the MCP handler.
-        if (!origin) {
-          throw new ToolError(
-            "upstream_unavailable",
-            "cannot resolve the Worker origin for the Kroger authorization link",
+  // Kroger-gated (mcp-tool-gating): registers only when the deployment carries Kroger
+  // API credentials — a walk-only deployment advertises no Kroger tools.
+  if (ctx.kroger) {
+    server.registerTool(
+      "kroger_login_url",
+      {
+        description:
+          "Mint the one-time Kroger account-authorization link for the CURRENT member and return { url }. Kroger ordering (place_order, ready_to_eat_available, and any cart write) needs the member's own Kroger shopping account linked first; this returns a personal link the member opens in a browser to consent at Kroger (scope: add-to-cart only). Give the returned URL to the member to click. Use it (1) the first time a member sets up ordering, and (2) whenever a Kroger cart write returns `code: \"reauth_required\"` — the stored token was rejected and the member must re-authorize. The link is bound to the calling member from their authenticated session: it takes NO arguments and cannot mint a link for anyone else. It is single-use and expires in ~10 minutes, so mint it on demand rather than caching it. (Operators bootstrapping a member who isn't connected yet use the admin panel's consent-link action instead.)",
+        inputSchema: {},
+      },
+      () =>
+        runTool(async () => {
+          // The link is minted for the caller's OWN grant tenant (never an argument);
+          // `origin` is the member's connected host, threaded in from the MCP handler.
+          if (!origin) {
+            throw new ToolError(
+              "upstream_unavailable",
+              "cannot resolve the Worker origin for the Kroger authorization link",
+            );
+          }
+          const url = await buildKrogerConsentUrl(
+            env.KROGER_KV as unknown as KvStore,
+            origin,
+            tenant.id,
           );
-        }
-        const url = await buildKrogerConsentUrl(
-          env.KROGER_KV as unknown as KvStore,
-          origin,
-          tenant.id,
-        );
-        return { url };
-      }),
-  );
+          return { url };
+        }),
+    );
+  }
 
   server.registerTool(
     "read_reconcile_errors",
@@ -839,7 +953,7 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     "read_user_profile",
     {
       description:
-        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or a derivation from the legacy nights count when unset; `default_cooking_nights` remains exported for one deprecation window as a derived MIRROR of cadence.dinner — prefer cadence), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), and household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
+        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, ready-to-eat, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or a derivation from the legacy nights count when unset; `default_cooking_nights` remains exported for one deprecation window as a derived MIRROR of cadence.dinner — prefer cadence), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, ready-to-eat catalog items, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes), and attention (server-computed nudge inputs, deterministic — no AI, nothing narrated unless it's actionable: `retrospective_due` — true when there is cooking history and the retrospective hasn't been read in 42+ days (reading one via the retrospective tool resets it); `unverified_perishables` — a COUNT of pantry rows in produce/dairy/seafood/meat unverified for 7+ days, not a list; `stale_areas` — the same array as `missing`, under the attention lens). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
       inputSchema: {},
     },
     () => runTool(() => assembleUserProfile(env, tenant.id, tenant.member)),
@@ -881,55 +995,60 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
       runTool(() => saveGuidance(corpus, domain, slug, content, source)),
   );
 
-  server.registerTool(
-    "kroger_prices",
-    {
-      description:
-        "Current Kroger prices for each ingredient at the preferred location. Returns the FULL list of fulfillable products per ingredient (relevance-ranked) — each with { regular, promo } price, on-sale flag, curbside/delivery availability, top-level inStore flag, and aisleLocation — so you can compare across brands/sizes and pick, not just the top one. An ingredient with nothing fulfillable returns an empty products list.",
-      inputSchema: { ingredients: z.array(z.string()), location_id: z.string().optional() },
-    },
-    ({ ingredients, location_id }) =>
-      runTool(async () => {
-        const locationId = location_id ?? await getLocationId();
-        // Independent per-ingredient searches run concurrently (bounded by the
-        // Kroger client's concurrency cap); Promise.all preserves input order.
-        const prices = await Promise.all(
-          ingredients.map(async (ingredient) => {
-            const candidates = await kroger.search(ingredient, { locationId, limit: 50 });
-            // Every fulfillable product for the term — the LLM judges across them.
-            const products = candidates.filter(isFulfillable).map(productRow);
-            return { ingredient, products };
-          }),
-        );
-        return { prices };
-      }),
-  );
+  // Kroger-gated (mcp-tool-gating): kroger_prices and kroger_flyer both need a working
+  // Kroger client; store_flyer (below) stays ungated — it degrades to empty on any
+  // unconfigured/unresolvable store rather than requiring Kroger specifically.
+  if (ctx.kroger) {
+    server.registerTool(
+      "kroger_prices",
+      {
+        description:
+          "Current Kroger prices for each ingredient at the preferred location. Returns the FULL list of fulfillable products per ingredient (relevance-ranked) — each with { regular, promo } price, on-sale flag, curbside/delivery availability, top-level inStore flag, and aisleLocation — so you can compare across brands/sizes and pick, not just the top one. An ingredient with nothing fulfillable returns an empty products list.",
+        inputSchema: { ingredients: z.array(z.string()), location_id: z.string().optional() },
+      },
+      ({ ingredients, location_id }) =>
+        runTool(async () => {
+          const locationId = location_id ?? await getLocationId();
+          // Independent per-ingredient searches run concurrently (bounded by the
+          // Kroger client's concurrency cap); Promise.all preserves input order.
+          const prices = await Promise.all(
+            ingredients.map(async (ingredient) => {
+              const candidates = await kroger.search(ingredient, { locationId, limit: 50 });
+              // Every fulfillable product for the term — the LLM judges across them.
+              const products = candidates.filter(isFulfillable).map(productRow);
+              return { ingredient, products };
+            }),
+          );
+          return { prices };
+        }),
+    );
 
-  server.registerTool(
-    "kroger_flyer",
-    {
-      description:
-        "Synthesized sale scan for the caller's store, served from a cache warmed in the background (the public API has no flyer/circular endpoint, and a live per-call fan-out would exceed the Worker's per-request subrequest limit). Returns `{ items, as_of }`: `items` are fulfillable products genuinely on sale (deduped by productId, each carrying every broad term that surfaced it in `matched_terms`), kept only when marked down at least `min_savings_pct` of the regular price — default 5%, applied at read so you can widen with a lower value. `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when the store has not been swept yet — in which case `items` is empty, NOT an error. Explicitly non-exhaustive and may be a few hours stale; for a specific purchase the order path re-prices live. This tool takes no ad-hoc terms — checking whether a specific stockup item or substitute candidate is on sale is handled in the place-groceries flow, not here.",
-      inputSchema: { filter: z.object(flyerFilterShape).optional() },
-    },
-    ({ filter }) =>
-      runTool(async () => {
-        const locationId = await getLocationId();
-        // min_savings_pct is a percent (5 = 5%); convert to a fraction of regular price.
-        // Fall back to the operator-configured default, then the compiled constant.
-        const operatorFlyerConfig = await loadOperatorConfig(env).catch(() => null);
-        const defaultDiscount = operatorFlyerConfig?.minFlyerDiscount ?? MIN_FLYER_DISCOUNT;
-        const minDiscount =
-          typeof filter?.min_savings_pct === "number" ? filter.min_savings_pct / 100 : defaultDiscount;
-        // Pure cache read: the warm (flyer-warm.ts) stores noise-floor candidates per location at
-        // the Kroger-namespaced key `flyer:kroger:{locationId}` (readStoreFlyer falls back to the
-        // legacy `flyer:{locationId}` while the first namespaced sweep is pending). The 5% deal
-        // floor is applied HERE so it stays caller-tunable.
-        const rollup = await readStoreFlyer(env.KROGER_KV as unknown as KvStore, KROGER_STORE, locationId);
-        if (!rollup) return { items: [], as_of: null };
-        return { items: filterByMinSavings(rollup.items, minDiscount), as_of: new Date(rollup.as_of).toISOString() };
-      }),
-  );
+    server.registerTool(
+      "kroger_flyer",
+      {
+        description:
+          "Synthesized sale scan for the caller's store, served from a cache warmed in the background (the public API has no flyer/circular endpoint, and a live per-call fan-out would exceed the Worker's per-request subrequest limit). Returns `{ items, as_of }`: `items` are fulfillable products genuinely on sale (deduped by productId, each carrying every broad term that surfaced it in `matched_terms`), kept only when marked down at least `min_savings_pct` of the regular price — default 5%, applied at read so you can widen with a lower value. `as_of` is when this store's flyer was last refreshed (ISO 8601), or null when the store has not been swept yet — in which case `items` is empty, NOT an error. Explicitly non-exhaustive and may be a few hours stale; for a specific purchase the order path re-prices live. This tool takes no ad-hoc terms — checking whether a specific stockup item or substitute candidate is on sale is handled in the place-groceries flow, not here.",
+        inputSchema: { filter: z.object(flyerFilterShape).optional() },
+      },
+      ({ filter }) =>
+        runTool(async () => {
+          const locationId = await getLocationId();
+          // min_savings_pct is a percent (5 = 5%); convert to a fraction of regular price.
+          // Fall back to the operator-configured default, then the compiled constant.
+          const operatorFlyerConfig = await loadOperatorConfig(env).catch(() => null);
+          const defaultDiscount = operatorFlyerConfig?.minFlyerDiscount ?? MIN_FLYER_DISCOUNT;
+          const minDiscount =
+            typeof filter?.min_savings_pct === "number" ? filter.min_savings_pct / 100 : defaultDiscount;
+          // Pure cache read: the warm (flyer-warm.ts) stores noise-floor candidates per location at
+          // the Kroger-namespaced key `flyer:kroger:{locationId}` (readStoreFlyer falls back to the
+          // legacy `flyer:{locationId}` while the first namespaced sweep is pending). The 5% deal
+          // floor is applied HERE so it stays caller-tunable.
+          const rollup = await readStoreFlyer(env.KROGER_KV as unknown as KvStore, KROGER_STORE, locationId);
+          if (!rollup) return { items: [], as_of: null };
+          return { items: filterByMinSavings(rollup.items, minDiscount), as_of: new Date(rollup.as_of).toISOString() };
+        }),
+    );
+  }
 
   server.registerTool(
     "store_flyer",
@@ -967,76 +1086,80 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
       }),
   );
 
-  server.registerTool(
-    "ready_to_eat_available",
-    {
-      description:
-        "Cross-reference the caller's personal ready-to-eat catalog against Kroger availability. Each available catalog item carries the FULL list of fulfillable matching products (relevance-ranked, with price + on-sale + curbside/delivery) so you can pick the right/cheapest one. 'Available' means fulfillable via curbside or delivery — the public API exposes no live in-store stock. An empty or absent catalog returns empty lists.",
-      inputSchema: {},
-    },
-    () =>
-      runTool(async () => {
-        const locationId = await getLocationId();
-        const available: Record<string, unknown[]> = { breakfast: [], lunch: [], dinner: [] };
-        const unavailable: unknown[] = [];
-
-        const items = (await readProfile(env, tenant.id)).ready_to_eat;
-        // One Kroger search per catalog item, run concurrently (bounded by the
-        // client cap); bucket from the ordered results so output stays stable.
-        const looked = await Promise.all(
-          items.map(async (item) => {
-            if (typeof item.name !== "string") return null;
-            if (item.reject) return null;
-            const meal =
-              typeof item.meal === "string" && (READY_TO_EAT_MEALS as readonly string[]).includes(item.meal)
-                ? item.meal
-                : "dinner";
-            const candidates = await kroger.search(item.name, { locationId, limit: 50 });
-            const products = candidates.filter(isFulfillable).map(productRow);
-            return { item, meal, products };
-          }),
-        );
-        for (const r of looked) {
-          if (!r) continue;
-          if (r.products.length > 0) {
-            available[r.meal].push({ name: r.item.name, slug: r.item.slug ?? null, meal: r.meal, products: r.products });
-          } else {
-            unavailable.push({
-              name: r.item.name,
-              slug: r.item.slug ?? null,
-              meal: r.meal,
-              catalog_sku: typeof r.item.sku === "string" ? r.item.sku : null,
-            });
-          }
-        }
-        return { available, unavailable };
-      }),
-  );
-
-  server.registerTool(
-    "compare_unit_price",
-    {
-      description:
-        "Deterministic price-per-unit comparison from raw price + size strings. The LLM never does the arithmetic. Ranks only WITHIN a dimension (volume/weight/count); cross-dimension or unparseable items land in incomparable, where the LLM may add quantity_override/unit_override and re-call.",
-      inputSchema: { items: z.array(z.object(unitPriceItemShape)) },
-    },
-    ({ items }) => runTool(async () => compareUnitPrice(items)),
-  );
-
-  server.registerTool(
-    "match_ingredient_to_kroger_sku",
-    {
-      description:
-        "Run the resolve-only 7-step matching pipeline for one ingredient. Returns a confident match, OR the FULL set of ambiguous candidates (every fulfillable product for the term, relevance-ranked — not truncated, so you can list/compare them all without re-searching), OR unavailable. Never writes the cache (that rides place_order) and never substitutes — when a swap is wanted, enumerate candidate ingredients from world knowledge and resolve each. bypass_cache forces re-resolution.",
-      inputSchema: {
-        ingredient: z.string(),
-        context: z.object(matchContextShape).optional(),
-        bypass_cache: z.boolean().optional(),
+  // Kroger-gated (mcp-tool-gating): all three need a working Kroger client (ready-to-eat
+  // cross-reference, unit-price compare feeding the Kroger order flow, and the matcher).
+  if (ctx.kroger) {
+    server.registerTool(
+      "ready_to_eat_available",
+      {
+        description:
+          "Cross-reference the caller's personal ready-to-eat catalog against Kroger availability. Each available catalog item carries the FULL list of fulfillable matching products (relevance-ranked, with price + on-sale + curbside/delivery) so you can pick the right/cheapest one. 'Available' means fulfillable via curbside or delivery — the public API exposes no live in-store stock. An empty or absent catalog returns empty lists.",
+        inputSchema: {},
       },
-    },
-    ({ ingredient, context, bypass_cache }) =>
-      runTool(() => resolveIngredient(ingredient, context ?? {}, bypass_cache ?? false)),
-  );
+      () =>
+        runTool(async () => {
+          const locationId = await getLocationId();
+          const available: Record<string, unknown[]> = { breakfast: [], lunch: [], dinner: [] };
+          const unavailable: unknown[] = [];
+
+          const items = (await readProfile(env, tenant.id)).ready_to_eat;
+          // One Kroger search per catalog item, run concurrently (bounded by the
+          // client cap); bucket from the ordered results so output stays stable.
+          const looked = await Promise.all(
+            items.map(async (item) => {
+              if (typeof item.name !== "string") return null;
+              if (item.reject) return null;
+              const meal =
+                typeof item.meal === "string" && (READY_TO_EAT_MEALS as readonly string[]).includes(item.meal)
+                  ? item.meal
+                  : "dinner";
+              const candidates = await kroger.search(item.name, { locationId, limit: 50 });
+              const products = candidates.filter(isFulfillable).map(productRow);
+              return { item, meal, products };
+            }),
+          );
+          for (const r of looked) {
+            if (!r) continue;
+            if (r.products.length > 0) {
+              available[r.meal].push({ name: r.item.name, slug: r.item.slug ?? null, meal: r.meal, products: r.products });
+            } else {
+              unavailable.push({
+                name: r.item.name,
+                slug: r.item.slug ?? null,
+                meal: r.meal,
+                catalog_sku: typeof r.item.sku === "string" ? r.item.sku : null,
+              });
+            }
+          }
+          return { available, unavailable };
+        }),
+    );
+
+    server.registerTool(
+      "compare_unit_price",
+      {
+        description:
+          "Deterministic price-per-unit comparison from raw price + size strings. The LLM never does the arithmetic. Ranks only WITHIN a dimension (volume/weight/count); cross-dimension or unparseable items land in incomparable, where the LLM may add quantity_override/unit_override and re-call.",
+        inputSchema: { items: z.array(z.object(unitPriceItemShape)) },
+      },
+      ({ items }) => runTool(async () => compareUnitPrice(items)),
+    );
+
+    server.registerTool(
+      "match_ingredient_to_kroger_sku",
+      {
+        description:
+          "Run the resolve-only 7-step matching pipeline for one ingredient. Returns a confident match, OR the FULL set of ambiguous candidates (every fulfillable product for the term, relevance-ranked — not truncated, so you can list/compare them all without re-searching), OR unavailable. Never writes the cache (that rides place_order) and never substitutes — when a swap is wanted, enumerate candidate ingredients from world knowledge and resolve each. bypass_cache forces re-resolution.",
+        inputSchema: {
+          ingredient: z.string(),
+          context: z.object(matchContextShape).optional(),
+          bypass_cache: z.boolean().optional(),
+        },
+      },
+      ({ ingredient, context, bypass_cache }) =>
+        runTool(() => resolveIngredient(ingredient, context ?? {}, bypass_cache ?? false)),
+    );
+  }
 
   // Repo-data write tools route by category internally (objective recipe content →
   // R2 corpus store; personal profile/overlay → D1 profile tables; session state
@@ -1068,11 +1191,20 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
   // as propose_meal_plan (one contract); the widget HTML is read from the ASSETS binding.
   registerMealPlanWidget(server, env, tenant, proposeDeps);
   registerGroceryWidget(server, env, tenant.id);
-  registerOrderReviewWidget(server, env, tenant.id, buildOrderWiring(env, tenant.id, { capture: false }));
+  // Kroger-gated (mcp-tool-gating): display_order_review + its app-plane review ops.
+  if (ctx.kroger) {
+    registerOrderReviewWidget(server, env, tenant.id, buildOrderWiring(env, tenant.id, { capture: false }));
+  }
 
-  // Profile reconciliation: member confirm (list_/confirm_proposal) + operator-gated
-  // cross-tenant surface (reconcile_read_signals / reconcile_enqueue_proposal).
-  registerReconcileTools(server, env, tenant);
+  // Profile reconciliation: list_proposals/confirm_proposal (the operator's OWN queue,
+  // including corpus-curation merge_recipes review) and the operator-frontier producer
+  // (reconcile_read_signals/reconcile_enqueue_proposal) — the whole group registers only
+  // for the operator tenant (mcp-tool-gating); members confirm proposals in the web app's
+  // reconciliation queue instead. The call-time isOperator checks on the reconcile pair
+  // stay as defense in depth.
+  if (ctx.operator) {
+    registerReconcileTools(server, env, tenant);
+  }
 
   // Archetype derivation: suggest_night_vibes derives + enqueues add_vibe proposals from the
   // caller's favorites + cook history (with a taste-text cold start). Never writes the palette.
@@ -1117,17 +1249,10 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
     (input) => runTool(() => computeToBuyView(env, tenant.id, { enrich: input.enrich === true })),
   );
 
-  registerInstacartTool(server, env, tenant.id);
-
-  server.registerTool(
-    "commit_shop",
-    {
-      description:
-        "Complete an in-store or manual shop through the receipt-backed shared operation. Before calling, mark every confirmed pick with set_grocery_checked, sweep unmatched lines, then read the fresh checked snapshot. Supply one client-minted ULID for the trip, the exact sorted eligible checked keys, snapshot_version, and original occurred_at. A replay of the identical request returns the immutable receipt; changed payload or checked-set races return structured outcomes and never partially receive, restock, spend, or delete.",
-      inputSchema: ShopCommitRequestSchema.shape,
-    },
-    (input) => runTool(() => commitCheckedShop(env, tenant.id, input)),
-  );
+  // Instacart-gated (mcp-tool-gating): registers only when the Instacart config resolves.
+  if (ctx.instacart) {
+    registerInstacartTool(server, env, tenant.id);
+  }
 
   // suggest_substitutions — the alternatives-only substitution read (inline-
   // substitution-hints D4, refactored from member-app-differentiators): one shared op
@@ -1151,7 +1276,10 @@ export function buildServer(env: Env, tenant: Tenant, origin?: string): McpServe
 
   // place_order — the order-time flush: resolve the list, write the Kroger cart,
   // persist learned SKUs to the SHARED cache. The one tool that reaches the cart.
-  registerOrderTools(server, env, tenant.id, orderWiring);
+  // Kroger-gated (mcp-tool-gating): the only tool that writes a cart needs Kroger config.
+  if (ctx.kroger) {
+    registerOrderTools(server, env, tenant.id, orderWiring);
+  }
 
   // get_weather_forecast — read-only Open-Meteo fetch; location resolved from
   // the caller's preferences (location_zip → parse preferred_location). Used by
