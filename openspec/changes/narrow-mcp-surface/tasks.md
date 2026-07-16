@@ -40,21 +40,21 @@
 
 ## 7. Tests
 
-- [ ] 7.1 Registration-matrix unit tests: build the server for member/operator × Kroger on/off × Instacart on/off and assert the exact advertised (model-plane) tool-name sets — the member base set, the gated additions, the operator plane — and that app-plane ops (`commit_shop` included) carry `visibility: ["app"]` and never appear model-visible.
-- [ ] 7.2 Fusion tests: `set_recipe_disposition` (three dispositions, exclusivity, row cleanup, alias dispatch parity), ops-form `update_grocery_list` (add/update/remove, status guard, spend guarantees, old-form conversion, alias dispatch), `update_pantry` equip/unequip/set_kitchen_note (vocab conflict, idempotence), fused `read_guidance` (list mode per-domain/all-domains, alias), unified `flyer` (Kroger resolve, satellite staleness, cold cache).
-- [ ] 7.3 `import_recipe` tests: url/text exclusivity, JSON-LD path structured errors, pasted-text classify path (mock env.AI), dedup-to-grant `already_existed`, attribution row, facet seed invoked.
-- [ ] 7.4 Attention tests: watermark stamping (tool + endpoint), due/not-due boundaries (42d), perishable count rule (7d, categories), `stale_areas` = `missing`, empty-profile degradation.
-- [ ] 7.5 `update_taste` mode tests (replace default, append separator, append onto null).
-- [ ] 7.6 `aubr typecheck` + `aubr test` green; `aubr test:app` / `aubr test:admin` for 5.2.
+- [x] 7.1 Registration-matrix unit tests: build the server for member/operator × Kroger on/off × Instacart on/off and assert the exact advertised (model-plane) tool-name sets — the member base set, the gated additions, the operator plane — and that app-plane ops (`commit_shop` included) carry `visibility: ["app"]` and never appear model-visible. (Already comprehensive from phases A/B — `mcp-tool-gating.test.ts`.)
+- [x] 7.2 Fusion tests: `set_recipe_disposition` (three dispositions, exclusivity, row cleanup, alias dispatch parity), ops-form `update_grocery_list` (add/update/remove, status guard, spend guarantees, old-form conversion, alias dispatch), `update_pantry` equip/unequip/set_kitchen_note (vocab conflict, idempotence), fused `read_guidance` (list mode per-domain/all-domains, alias), unified `flyer` (Kroger resolve, satellite staleness, cold cache). (`set_recipe_disposition`/`update_pantry` equip-unequip already covered in `write-tools.test.ts`; added `grocery-tools.test.ts` for the ops-form tool + its aliases, extended `guidance.test.ts` with the tool-level `read_guidance`/`list_guidance` dispatch coverage, and added `flyer-tool.test.ts`.)
+- [x] 7.3 `import_recipe` tests: url/text exclusivity, JSON-LD path structured errors, pasted-text classify path (mock env.AI), dedup-to-grant `already_existed`, attribution row, facet seed invoked. (Already comprehensive from phase B — `import-recipe.test.ts`.)
+- [x] 7.4 Attention tests: watermark stamping (tool + endpoint), due/not-due boundaries (42d), perishable count rule (7d, categories), `stale_areas` = `missing`, empty-profile degradation. (Already comprehensive from phase B — `attention.test.ts`.)
+- [x] 7.5 `update_taste` mode tests (replace default, append separator, append onto null). (Already covered in `write-tools.test.ts`.)
+- [x] 7.6 `aubr typecheck` + `aubr test` green; `aubr test:app` / `aubr test:admin` for 5.2. (typecheck + full worker suite green; app/admin Playwright suites skipped per phase C's scope — phase B already ran them.)
 
 ## 8. Docs (lockstep, living voice)
 
-- [ ] 8.1 Rewrite `docs/TOOLS.md` to describe exactly the new surface: the member base set, the Kroger/Instacart-gated sets, the operator plane, the app plane (widget-callable ops enumerated as app-callable, not model tools), the fused tool contracts (`set_recipe_disposition`, `import_recipe`, ops `update_grocery_list`, absorbed `update_pantry`, fused `read_guidance`, `flyer`, `update_taste` mode), the `attention` block on `read_user_profile`, and the updated deprecation table. Remove every culled tool's section.
-- [ ] 8.2 `docs/SCHEMAS.md`: `profile.last_retrospective_at`, the `read_user_profile` `attention` shape, `import_recipe`'s pipeline note where the parse/create contracts were referenced.
-- [ ] 8.3 `docs/ARCHITECTURE.md`: the registration context and planes (member/operator/app, config gates), weather absorbed into the propose op, guidance writes as operator curation.
-- [ ] 8.4 Verify no new Worker-owned HTTP route was added (no `run_worker_first` change needed).
+- [x] 8.1 Rewrite `docs/TOOLS.md` to describe exactly the new surface: the member base set, the Kroger/Instacart-gated sets, the operator plane, the app plane (widget-callable ops enumerated as app-callable, not model tools), the fused tool contracts (`set_recipe_disposition`, `import_recipe`, ops `update_grocery_list`, absorbed `update_pantry`, fused `read_guidance`, `flyer`, `update_taste` mode), the `attention` block on `read_user_profile`, and the updated deprecation table. Remove every culled tool's section.
+- [x] 8.2 `docs/SCHEMAS.md`: `profile.last_retrospective_at`, the `read_user_profile` `attention` shape, `import_recipe`'s pipeline note where the parse/create contracts were referenced.
+- [x] 8.3 `docs/ARCHITECTURE.md`: the registration context and planes (member/operator/app, config gates), weather absorbed into the propose op, guidance writes as operator curation.
+- [x] 8.4 Verify no new Worker-owned HTTP route was added (no `run_worker_first` change needed). (Confirmed — no route files or `wrangler.jsonc` touched this phase.)
 
 ## 9. Verification
 
-- [ ] 9.1 Live MCP acceptance: a member connector's `tools/list` equals the target set for the deployment's configuration (`commit_shop` absent; `display_grocery_list` the only list-shaped member verb); an operator session additionally lists the operator plane.
-- [ ] 9.2 `openspec validate narrow-mcp-surface` passes; run the code-review skill before PR.
+- [ ] 9.1 Live MCP acceptance: a member connector's `tools/list` equals the target set for the deployment's configuration (`commit_shop` absent; `display_grocery_list` the only list-shaped member verb); an operator session additionally lists the operator plane. **Not run**: this sandboxed environment has no deployed Worker or member/operator OAuth session to connect a real MCP client to. The automated proxy is in place and green (`mcp-tool-gating.test.ts`'s exact-set assertions per registration cell); the literal live-session check needs a deployed instance and is a post-deploy acceptance step.
+- [x] 9.2 `openspec validate narrow-mcp-surface` passes; run the code-review skill before PR. (Validate passes in strict mode; code-review skill run — see report for findings.)
