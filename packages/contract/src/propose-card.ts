@@ -98,8 +98,6 @@ export type ProposeCardRequestSlot = {
  *  an adjusted copy against the stateless propose op on every dial change (no model turn). The
  *  palette-flow subset the member web app's `POST /api/propose` session serializes. */
 export type ProposeCardRequest = {
-  /** Deprecation-window alias of `meals.dinner` (the widget's dial replay still keys on it). */
-  nights: number;
   /** The per-meal slot counts the request resolved to. */
   meals?: { breakfast?: number; lunch?: number; dinner?: number };
   /** The attendance input, echoed when supplied (exactly one of away/only). */
@@ -125,8 +123,6 @@ export type ProposeCardData = {
   diagnostics: {
     seed: number;
     lambda: number;
-    /** The dinner alias of `meals.dinner.requested` (one deprecation window). */
-    nights: number;
     filled: number;
     empty: number;
     rolled_over?: string[];

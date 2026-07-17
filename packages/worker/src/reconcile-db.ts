@@ -24,8 +24,8 @@ export function proposalId(kind: string, target: string, payload?: Record<string
 
 /** Coerce an untrusted (operator) `add_vibe` payload into a well-typed NightVibe, dropping
  *  wrong-typed fields, or null when it lacks a usable id/vibe. The payload's `meal` (set by
- *  every producer — the derivation cron, the pref-retirement seed pass, the reconcile tiers)
- *  is written onto the created vibe; absent/invalid defaults `'dinner'`. */
+ *  every producer — the derivation cron, the reconcile tiers) is written onto the created
+ *  vibe; absent/invalid defaults `'dinner'`. */
 function sanitizeNightVibe(p: Record<string, unknown>): NightVibe | null {
   if (typeof p.id !== "string" || !p.id || typeof p.vibe !== "string" || !p.vibe) return null;
   const strArr = (v: unknown): string[] | undefined =>
@@ -118,9 +118,9 @@ export async function getProposal(env: Env, id: string, tenant: string): Promise
   return row ? decode(row) : null;
 }
 
-/** The idempotent enqueue as a PREPARED STATEMENT (stable id → INSERT OR IGNORE), for callers
- *  that must land the enqueue atomically WITH other writes in one `batch` — the pref-retirement
- *  seed pass batches its enqueues with the column-NULLing convergence write. */
+/** The idempotent enqueue as a PREPARED STATEMENT (stable id → INSERT OR IGNORE), for a caller
+ *  that must land the enqueue atomically WITH another write in the same `batch` (e.g. a
+ *  convergence pass NULLing its source columns alongside the enqueue). */
 export function enqueueProposalStmt(
   env: Env,
   tenant: string,

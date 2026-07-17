@@ -931,8 +931,8 @@ export function d1Statements(now) {
   // `cadence` is the per-meal weekly map the Planning card's steppers render + patch;
   // `weekly_budget` (dollars/week) backs the budget control's set/clear coverage.
   stmts.push(
-    "INSERT INTO profile (tenant, taste, diet_principles, default_cooking_nights, lunch_strategy, ready_to_eat_default_action, stores, dietary, rotation, cadence, weekly_budget) VALUES " +
-      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, 3, NULL, 'opt-in', ${q(JSON.stringify({ primary: "kroger", preferred_location: app.storeAdapters.kroger.locationId, preferred_location_name: app.storeAdapters.kroger.name, preferred_location_address: app.storeAdapters.kroger.address, location_zip: app.storeAdapters.kroger.zip }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))}, ${q(JSON.stringify({ breakfast: 2, lunch: 1, dinner: 4 }))}, ${app.spend.budget});`,
+    "INSERT INTO profile (tenant, taste, diet_principles, stores, dietary, rotation, cadence, weekly_budget) VALUES " +
+      `(${q(members.active)}, ${q(`**${app.tasteLead}** — weeknights lean Asian, weekends get a project.`)}, ${q("- Keep shellfish off the table\n- Go easy on red meat")}, ${q(JSON.stringify({ primary: "kroger", preferred_location: app.storeAdapters.kroger.locationId, preferred_location_name: app.storeAdapters.kroger.name, preferred_location_address: app.storeAdapters.kroger.address, location_zip: app.storeAdapters.kroger.zip }))}, ${q(JSON.stringify({ avoid: ["shellfish"], limit: ["red meat"] }))}, ${q(JSON.stringify({ resurface_after_days: 30, novelty_boost: 0.2 }))}, ${q(JSON.stringify({ breakfast: 2, lunch: 1, dinner: 4 }))}, ${app.spend.budget});`,
   );
   stmts.push(
     `INSERT INTO profile (tenant, weekly_budget) VALUES (${q(spendFixtureTenant)}, ${app.spend.budget});`,

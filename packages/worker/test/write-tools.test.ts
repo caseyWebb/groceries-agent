@@ -1028,29 +1028,24 @@ describe("update_preferences (merge-patch → D1)", () => {
     expect(d1.tables.profile).toHaveLength(0);
   });
 
-  it("accepts-and-drops a retired key with a warnings entry — never validation_failed, never the custom hint, nothing stored (D21)", async () => {
+  it("rejects the retired lunch_strategy key like any other unknown key, storing nothing", async () => {
     const d1 = fakeD1([]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);
     const res = await handlers.get("update_preferences")!({ patch: { lunch_strategy: "sometimes, off-enum even" } });
-    const out = JSON.parse(res.content[0].text) as { updated?: string; warnings?: unknown[]; error?: string };
-    expect(out.error).toBeUndefined();
-    expect(out.updated).toBe("preferences");
-    expect(out.warnings).toEqual([{ key: "lunch_strategy", reason: "retired", superseded_by: "meal vibes" }]);
-    // Dropped: no profile column written, and nothing routed into custom.
-    expect(d1.tables.profile.filter((r) => r.lunch_strategy != null)).toHaveLength(0);
-    expect(d1.tables.profile.filter((r) => r.custom != null)).toHaveLength(0);
+    const out = JSON.parse(res.content[0].text) as { error: string; message?: string };
+    expect(out.error).toBe("validation_failed");
+    expect(JSON.stringify(out)).toMatch(/custom/);
+    expect(d1.tables.profile).toHaveLength(0);
   });
 
-  it("aliases default_cooking_nights onto cadence.dinner with a warning, never writing the frozen column", async () => {
+  it("rejects the retired default_cooking_nights key like any other unknown key, storing nothing", async () => {
     const d1 = fakeD1([]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);
     const res = await handlers.get("update_preferences")!({ patch: { default_cooking_nights: 4 } });
-    const out = JSON.parse(res.content[0].text) as { updated?: string; warnings?: unknown[] };
-    expect(out.updated).toBe("preferences");
-    expect(out.warnings).toEqual([{ key: "default_cooking_nights", reason: "aliased", superseded_by: "cadence.dinner" }]);
-    const row = d1.tables.profile[0];
-    expect(JSON.parse(row.cadence as string)).toEqual({ dinner: 4 });
-    expect(row.default_cooking_nights ?? null).toBeNull();
+    const out = JSON.parse(res.content[0].text) as { error: string; message?: string };
+    expect(out.error).toBe("validation_failed");
+    expect(JSON.stringify(out)).toMatch(/custom/);
+    expect(d1.tables.profile).toHaveLength(0);
   });
 
   it("cadence merges PER KEY over the stored map", async () => {

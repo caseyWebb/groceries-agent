@@ -59,7 +59,7 @@ function str(v: unknown): string | null {
 }
 
 /** Map the caller's propose input onto the widget's replayable request (the palette-flow subset
- *  the member app's client session serializes: nights / seed / variety / proteins / freeform /
+ *  the member app's client session serializes: meals / seed / variety / proteins / freeform /
  *  exclude / slots). Iteration replays an adjusted copy of THIS against the stateless op. */
 function toRequest(input: ProposeInput, result: ProposeResult): ProposeCardData["request"] {
   const slots: ProposeCardRequestSlot[] = (input.slots ?? []).map((s) => {
@@ -72,10 +72,9 @@ function toRequest(input: ProposeInput, result: ProposeResult): ProposeCardData[
     return out;
   });
   return {
-    // The op resolves the effective nights/seed into diagnostics — seed the session from those so
-    // a re-roll (seed + 1) and the nights stepper start from the exact week the caller sees.
-    // `nights` stays the dinner alias for one window; `meals` carries the resolved per-meal counts.
-    nights: result.diagnostics.nights,
+    // The op resolves the effective per-meal counts/seed into diagnostics — seed the session from
+    // those so a re-roll (seed + 1) and the per-meal steppers start from the exact week the caller
+    // sees. `meals` carries the resolved per-meal counts.
     meals: {
       breakfast: result.diagnostics.meals.breakfast.requested,
       lunch: result.diagnostics.meals.lunch.requested,
@@ -192,7 +191,7 @@ export function registerMealPlanWidget(server: McpServer, env: Env, tenant: Tena
     {
       title: "Display meal plan proposal",
       description:
-        "THE answer when the member wants to SEE and TWEAK a proposed week (\"plan my week and show me\") — render this card rather than narrating a proposal. NOT the saved plan: this tool PROPOSES a new week; a question about the already-saved plan is answered from read_meal_plan in plain language. The widget twin of propose_meal_plan (same stateless planner, same request shape, including the per-meal `meals` counts map and `attendance`); use propose_meal_plan when you only need the data to reason over. Takes the same input as propose_meal_plan (meals — with `nights` as the deprecated dinner alias — attendance, seed, lock, exclude, boost_ingredients, nudges, slots, ephemeral_vibes with per-entry meal); discovery seasoning is engine-internal (see propose_meal_plan) and needs no input here. Returns a widget-bearing result: `_meta.ui.resourceUri` points at the ui://plan/propose view, `structuredContent` carries the proposed slots (each with its `meal`, flat and meal-ordered breakfast → lunch → dinner; mains/alternates/sides/why/flags), variety, uncovered-at-risk, per-meal + attendance diagnostics, plus the palette + facet context the card's dials need — its `request` echo carries `meals` and `attendance` — and `content` is a plain-text rendering of the proposed slots that hosts which cannot render the widget fall back to. The card's refinement controls (per-meal counts / swap from alternates / facet chips / per-slot vibe override / sides editing) re-run the stateless proposal client-side, so refinement costs no additional model turn. Its Commit control performs the write itself (D18): it re-reads the live plan with read_meal_plan, writes each chosen slot with update_meal_plan, and announces the commit — you do not need to call update_meal_plan yourself when the member commits from the card. An empty palette with no ephemeral set returns a `note` and an empty plan (not an error); genuine failures return a structured error, never thrown.",
+        "THE answer when the member wants to SEE and TWEAK a proposed week (\"plan my week and show me\") — render this card rather than narrating a proposal. NOT the saved plan: this tool PROPOSES a new week; a question about the already-saved plan is answered from read_meal_plan in plain language. The widget twin of propose_meal_plan (same stateless planner, same request shape, including the per-meal `meals` counts map and `attendance`); use propose_meal_plan when you only need the data to reason over. Takes the same input as propose_meal_plan (meals, attendance, seed, lock, exclude, boost_ingredients, nudges, slots, ephemeral_vibes with per-entry meal); discovery seasoning is engine-internal (see propose_meal_plan) and needs no input here. Returns a widget-bearing result: `_meta.ui.resourceUri` points at the ui://plan/propose view, `structuredContent` carries the proposed slots (each with its `meal`, flat and meal-ordered breakfast → lunch → dinner; mains/alternates/sides/why/flags), variety, uncovered-at-risk, per-meal + attendance diagnostics, plus the palette + facet context the card's dials need — its `request` echo carries `meals` and `attendance` — and `content` is a plain-text rendering of the proposed slots that hosts which cannot render the widget fall back to. The card's refinement controls (per-meal counts / swap from alternates / facet chips / per-slot vibe override / sides editing) re-run the stateless proposal client-side, so refinement costs no additional model turn. Its Commit control performs the write itself (D18): it re-reads the live plan with read_meal_plan, writes each chosen slot with update_meal_plan, and announces the commit — you do not need to call update_meal_plan yourself when the member commits from the card. An empty palette with no ephemeral set returns a `note` and an empty plan (not an error); genuine failures return a structured error, never thrown.",
       inputSchema: PROPOSE_INPUT_SHAPE,
       _meta: { ui: { resourceUri: PLAN_PROPOSE_URI } },
     },

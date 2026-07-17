@@ -9,6 +9,7 @@ import {
   setStaples,
 } from "../src/profile-db.js";
 import type { Env } from "../src/env.js";
+import { sqliteEnv } from "./sqlite-d1.js";
 
 // A tiny in-memory D1 keyed by table, routing by SQL. Enough to exercise the read
 // assembly + the row writers' SQL/bind contract (a live round-trip is a deploy probe).
@@ -100,8 +101,6 @@ describe("readPreferences", () => {
       profile: [
         {
           tenant: "everett",
-          default_cooking_nights: 3,
-          lunch_strategy: "leftovers",
           stores: JSON.stringify({ primary: "kroger" }),
           dietary: JSON.stringify({ avoid: [], limit: ["cilantro"] }),
           custom: null,
@@ -114,8 +113,6 @@ describe("readPreferences", () => {
     });
     const prefs = await readPreferences(env, "everett");
     expect(prefs).toEqual({
-      default_cooking_nights: 3,
-      lunch_strategy: "leftovers",
       stores: { primary: "kroger" },
       dietary: { avoid: [], limit: ["cilantro"] },
       // Canonical tier objects — BOTH fields always present, never a bare array.
@@ -128,7 +125,7 @@ describe("readPreferences", () => {
 
   it("tolerates a malformed stored tiers value as don't-care", async () => {
     const { env } = fakeD1({
-      profile: [{ tenant: "everett", default_cooking_nights: 3 }],
+      profile: [{ tenant: "everett" }],
       brand_prefs: [{ tenant: "everett", term: "butter", tiers: "not json", any_brand: 0 }],
     });
     const prefs = await readPreferences(env, "everett");
@@ -143,14 +140,17 @@ describe("readPreferences", () => {
   it("includes planning_cadence_days when set, and omits it when null", async () => {
     const { env } = fakeD1({
       profile: [
-        { tenant: "everett", default_cooking_nights: 3, planning_cadence_days: 14 },
+        { tenant: "everett", planning_cadence_days: 14, stores: JSON.stringify({ primary: "kroger" }) },
       ],
     });
     const prefs = await readPreferences(env, "everett");
     expect(prefs).toMatchObject({ planning_cadence_days: 14 });
 
+    // Another defined scalar (`stores`) keeps the row preference-bearing so the null
+    // planning_cadence_days omission is actually exercised (an all-null/absent row reads
+    // as "no preferences at all" — see the "returns null" test above).
     const { env: env2 } = fakeD1({
-      profile: [{ tenant: "everett", default_cooking_nights: 3, planning_cadence_days: null }],
+      profile: [{ tenant: "everett", planning_cadence_days: null, stores: JSON.stringify({ primary: "kroger" }) }],
     });
     const prefs2 = await readPreferences(env2, "everett");
     expect(prefs2).not.toHaveProperty("planning_cadence_days");
@@ -237,7 +237,6 @@ describe("readProfile assembly", () => {
           tenant: "everett",
           taste: "spicy",
           diet_principles: "fish weekly",
-          default_cooking_nights: 3,
           stores: JSON.stringify({ primary: "kroger" }),
           kitchen_notes: JSON.stringify({ ovens: 2 }),
           freezer_capacity_estimate: "moderate",
@@ -255,7 +254,7 @@ describe("readProfile assembly", () => {
     const profile = await readProfile(env, "everett");
     expect(profile.taste).toBe("spicy");
     expect(profile.diet_principles).toBe("fish weekly");
-    expect(profile.preferences).toMatchObject({ default_cooking_nights: 3, stores: { primary: "kroger" } });
+    expect(profile.preferences).toMatchObject({ stores: { primary: "kroger" } });
     expect(profile.kitchen).toEqual({ owned: ["blender"], notes: { ovens: 2 } });
     expect(profile.staples).toEqual([{ name: "Eggs", perishable: true }]);
     expect(profile.stockup).toMatchObject({ freezer_capacity_estimate: "moderate" });
@@ -272,5 +271,22 @@ describe("readProfile assembly", () => {
     expect(profile.staples).toEqual([]);
     expect(profile.stockup).toBeNull();
     expect(profile).not.toHaveProperty("ready_to_eat");
+  });
+});
+
+describe("profile schema — the meal-dimension column drop (migration 0063)", () => {
+  it("default_cooking_nights / lunch_strategy / ready_to_eat_default_action are absent after the full migration chain", () => {
+    // A real-SQLite env with every migrations/d1/*.sql applied in order (sqlite-d1.ts) — the
+    // schema-level acceptance fixture for the drop, distinct from readPreferences/readProfile's
+    // read-path assertions above (which prove the CODE no longer selects these columns).
+    const { raw } = sqliteEnv();
+    const cols = raw.prepare("SELECT name FROM pragma_table_info('profile')").all() as { name: string }[];
+    const names = cols.map((c) => c.name);
+    expect(names).not.toContain("default_cooking_nights");
+    expect(names).not.toContain("lunch_strategy");
+    expect(names).not.toContain("ready_to_eat_default_action");
+    // The columns this migration does NOT touch stay put.
+    expect(names).toContain("cadence");
+    expect(names).toContain("curated_hide");
   });
 });

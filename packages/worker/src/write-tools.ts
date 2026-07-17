@@ -22,7 +22,6 @@ import { ToolError, runTool } from "./errors.js";
 import { applyOverlayEdit, type OverlayRow } from "./overlay.js";
 import { applyKitchenOperations, type KitchenOperation } from "./kitchen.js";
 import {
-  applyRetiredKeyShim,
   convertLegacyBrandRanks,
   mergePatch,
   rejectUnknownPatchKeys,
@@ -105,23 +104,20 @@ export const PROFILE_MARKDOWN_FIELDS = {
  * profile-columns/brands batch. Called by the MCP tool and the member API's
  * `PATCH /api/profile/preferences`. Throws structured `validation_failed` /
  * `malformed_data`; stores nothing on failure. A success return may carry
- * `warnings` (the D21 deprecation convention): entries for patch values that were
- * accepted under a deprecated shape and converted.
+ * `warnings` (the D21 deprecation convention): entries for patch values still
+ * accepted under a deprecated shape and converted — today, only a legacy flat
+ * `brands` rank list. Every retired top-level key (`default_cooking_nights`,
+ * `lunch_strategy`, `ready_to_eat_default_action`) falls straight through to
+ * `rejectUnknownPatchKeys` like any other unknown key.
  */
 export async function applyPreferencesPatch(
   env: Env,
   tenant: string,
   patch: Record<string, unknown>,
 ): Promise<{ updated: "preferences"; warnings?: DeprecationWarning[] }> {
-  // Stage 0 (D21, one deprecation window, BEFORE rejectUnknownPatchKeys): retired keys
-  // (lunch_strategy / ready_to_eat_default_action) are accepted-and-dropped — never
-  // validation_failed, never the nest-under-custom hint, nothing written — and
-  // `default_cooking_nights: N` is aliased onto cadence.dinner (the frozen column is
-  // never written). Each conversion lands in `warnings`.
-  const shim = applyRetiredKeyShim(patch);
-  patch = shim.patch;
-
-  // Stage 1: reject unknown top-level patch keys (authorship-time signal).
+  // Stage 1: reject unknown top-level patch keys (authorship-time signal) — the retired
+  // default_cooking_nights / lunch_strategy / ready_to_eat_default_action keys fall
+  // through to this same generic rejection, like any other unknown key.
   rejectUnknownPatchKeys(patch);
 
   // Stage 1b: normalize the brands patch BEFORE the merge, so patch keys land on the
@@ -136,7 +132,7 @@ export async function applyPreferencesPatch(
   //   with a `warnings` entry steering the stale caller to `{ tiers, any_brand }`.
   //   When the window closes, drop this conversion — validatePreferences then rejects
   //   an array value as `malformed_data` like any other type error.
-  const warnings: DeprecationWarning[] = [...shim.warnings];
+  const warnings: DeprecationWarning[] = [];
   let brandsPatch: Record<string, unknown> | undefined;
   let novelIds: string[] = [];
   if (patch.brands !== null && patch.brands !== undefined && typeof patch.brands === "object" && !Array.isArray(patch.brands)) {
@@ -179,11 +175,9 @@ export async function applyPreferencesPatch(
   // result. Brands rows: the terms come from the PATCH (a `null` vanishes from the
   // merged object, so the patch is the only place the delete intent survives), but an
   // UPSERT writes the MERGED family value — a partial family patch (`{ any_brand: true }`)
-  // must not clobber the stored sibling field.
-  // The frozen columns (`default_cooking_nights`, `lunch_strategy`,
-  // `ready_to_eat_default_action`) are DELIBERATELY absent: no writer post-0052 — the
-  // scalar stays readable for the cadence fallback, the retired pair converges to NULL
-  // via the pref-retirement cron, and all three drop at window close.
+  // must not clobber the stored sibling field. `default_cooking_nights` / `lunch_strategy`
+  // / `ready_to_eat_default_action` are DELIBERATELY absent — the columns themselves are
+  // dropped (remove-meal-dimension-shims), so there is nothing left to write.
   const stmts: D1PreparedStatement[] = [];
   const profileFields: Record<string, unknown> = {
     cadence: "cadence" in merged ? JSON.stringify(merged.cadence) : null,

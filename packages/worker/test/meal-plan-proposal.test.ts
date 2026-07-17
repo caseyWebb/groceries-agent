@@ -155,13 +155,12 @@ describe("assembleProposal", () => {
     expect(r.plan[1].main!.slug).toBe("other-dish"); // deduped away from the locked pick
   });
 
-  it("surfaces an unresolved lock as an explicit empty locked slot and reports requestedNights", () => {
+  it("surfaces an unresolved lock as an explicit empty locked slot alongside a filled sampled slot", () => {
     const a = cand("a", "chicken", "american", [1, 0, 0]);
     const ctx = baseCtx({
       slots: [slot("x")],
       poolByVibe: new Map([["x", [a]]]),
       lockedUnresolved: ["Ghost-Recipe"],
-      requestedNights: 2,
       embeddingBySlug: embMap(a),
     });
     const r = assembleProposal(ctx);
@@ -169,7 +168,6 @@ describe("assembleProposal", () => {
     const locked = r.plan.find((s) => s.reason === "locked")!;
     expect(locked.main).toBeNull();
     expect(locked.empty_reason).toMatch(/Ghost-Recipe/);
-    expect(r.diagnostics.nights).toBe(2); // honors the caller's requested count
   });
 
   it("is deterministic for a fixed seed", () => {

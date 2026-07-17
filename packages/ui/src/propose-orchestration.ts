@@ -17,15 +17,12 @@ export interface ProposeAttendance {
 
 /** The persisted client session schema version (member-app localStorage). Bumped when the shape
  *  changes so a stale localStorage blob is discarded rather than mis-read. */
-export const PROPOSE_SESSION_VERSION = 4;
+export const PROPOSE_SESSION_VERSION = 5;
 
 export interface ProposeSession {
   /** Schema version — a persisted session from an older shape is dropped on load. */
   v: number;
   seed: number;
-  /** Dinner-count alias, kept === `meals.dinner` for the localStorage guard + the deprecation
-   *  window; `meals` is authoritative for the request. */
-  nights: number;
   /** Per-meal slot counts (the retained per-meal steppers). */
   meals: ProposeMeals;
   /** Attendance — round-trip only (no member mutator); see `ProposeAttendance`. */
@@ -61,8 +58,8 @@ export interface ProposeRequestSlot {
 }
 
 export interface ProposeRequest {
-  /** The per-meal slot counts (supersedes the retired top-level `nights`, which the op still
-   *  accepts as the dinner alias but IGNORES when `meals` is present). */
+  /** The per-meal slot counts — `meals.dinner` is the sole way to set the dinner count (the
+   *  retired top-level `nights` alias is gone). */
   meals: ProposeMeals;
   /** Attendance, echoed only when supplied (exactly one of away/only). */
   attendance?: { away?: string[]; only?: string[] };
@@ -76,7 +73,6 @@ export interface ProposeRequest {
  *  serializes — the shape `proposeSessionFromRequest` hydrates back into a session. */
 export interface ProposeSessionRequest {
   seed: number;
-  nights: number;
   meals?: { breakfast?: number; lunch?: number; dinner?: number };
   attendance?: { away?: string[]; only?: string[] };
   variety: number;
@@ -108,12 +104,11 @@ export function dateSeed(from = new Date()): number {
   return Number(from.toISOString().slice(0, 10).replace(/-/g, ""));
 }
 
-export function defaultProposeSession(nights: number, seed = dateSeed()): ProposeSession {
-  const dinner = Math.min(6, Math.max(2, nights));
+export function defaultProposeSession(dinnerCount: number, seed = dateSeed()): ProposeSession {
+  const dinner = Math.min(6, Math.max(2, dinnerCount));
   return {
     v: PROPOSE_SESSION_VERSION,
     seed,
-    nights: dinner,
     meals: { breakfast: 0, lunch: 0, dinner },
     attendance: { away: [], only: [] },
     variety: 0.4,
@@ -131,11 +126,10 @@ export function defaultProposeSession(nights: number, seed = dateSeed()): Propos
 }
 
 export function proposeSessionFromRequest(req: ProposeSessionRequest): ProposeSession {
-  const dinner = req.meals?.dinner ?? req.nights;
+  const dinner = req.meals?.dinner ?? 0;
   const session: ProposeSession = {
     v: PROPOSE_SESSION_VERSION,
     seed: req.seed,
-    nights: dinner,
     meals: {
       breakfast: req.meals?.breakfast ?? 0,
       lunch: req.meals?.lunch ?? 0,

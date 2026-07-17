@@ -19,15 +19,16 @@ import type { Tenant } from "../src/tenant.js";
 const CALLER: Tenant = { id: "casey", member: "casey" };
 
 // The member-surface enumeration (mcp-tool-gating "The member surface is the enumerated
-// target set"): the 28 target tools, PLUS the in-flight registration owned by another
-// change (add_night_vibe until remove-meal-dimension-shims closes). The cull's five
-// dispatch aliases are closed (operator waiver, close-cull-windows): add_to_grocery_list,
-// remove_from_grocery_list, and list_guidance are unregistered outright (a stale call is
-// the generic unknown-tool rejection — see "removed tools never come back" below);
-// toggle_favorite/toggle_reject are registered app-plane-only (APP_ONLY_TOOLS below) and
-// so never appear here. 29 names total. The ready-to-eat tools (add_draft_ready_to_eat,
-// update_ready_to_eat, ready_to_eat_available below) are gone (remove-ready-to-eat) — see
-// the "removed tools never come back" assertion.
+// target set"): the 28 target tools. The cull's five dispatch aliases are closed (operator
+// waiver, close-cull-windows): add_to_grocery_list, remove_from_grocery_list, and
+// list_guidance are unregistered outright (a stale call is the generic unknown-tool
+// rejection — see "removed tools never come back" below); toggle_favorite/toggle_reject
+// are registered app-plane-only (APP_ONLY_TOOLS below) and so never appear here. 28 names
+// total. `add_night_vibe` (the last surviving `*_night_vibe` alias) has also closed
+// (remove-meal-dimension-shims, operator waiver) — a stale call gets the same generic
+// unknown-tool rejection; see "removed tools never come back" below. The ready-to-eat
+// tools (add_draft_ready_to_eat, update_ready_to_eat, ready_to_eat_available below) are
+// gone (remove-ready-to-eat) — see the same assertion.
 const MEMBER_BASE_SET = [
   // reads
   "read_user_profile",
@@ -65,8 +66,6 @@ const MEMBER_BASE_SET = [
   "read_guidance",
   // escape
   "report_bug",
-  // in-flight registration owned by another change
-  "add_night_vibe",
 ];
 
 // The Kroger tool set (mcp-tool-gating "Store-integration tools register only when
@@ -153,8 +152,9 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
             expect(names.has(name), `${name} gating mismatch in cell (operator:${operator}, kroger:${kroger}, instacart:${instacart})`).toBe(operator);
           }
           // Removed tools never come back regardless of gating — including the three
-          // ready-to-eat tools (remove-ready-to-eat) and the three closed cull aliases
-          // (close-cull-windows, operator waiver): hard removal, no alias, no stub.
+          // ready-to-eat tools (remove-ready-to-eat), the three closed cull aliases
+          // (close-cull-windows, operator waiver), and the closed meal-vibe alias
+          // (remove-meal-dimension-shims, operator waiver): hard removal, no alias, no stub.
           for (const name of [
             "kroger_flyer",
             "store_flyer",
@@ -169,6 +169,7 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
             "add_to_grocery_list",
             "remove_from_grocery_list",
             "list_guidance",
+            "add_night_vibe",
           ]) {
             expect(names.has(name), `${name} should never be registered`).toBe(false);
           }
@@ -228,6 +229,7 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
       "add_to_grocery_list",
       "remove_from_grocery_list",
       "list_guidance",
+      "add_night_vibe",
     ]) {
       const out = await withServer(server, (c) => invokeTool(c, name, {}));
       expect(out.isError, `${name} should be rejected`).toBe(true);
