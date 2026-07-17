@@ -25,22 +25,17 @@ The system SHALL expose a granular write tool per category and SHALL NOT provide
 
 ### Requirement: log_cooked appends a cooking event to D1
 
-The system SHALL provide a `log_cooked` tool that appends one cooking event to the caller's `cooking_log` table in D1 and returns without a `commit_sha`. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` ∈ {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the `recipes` table; an `ad_hoc` entry requires `name`). For **one deprecation window**, a stale plugin's `type: "ready_to_eat"` SHALL be **accepted and converted** to `type: "ad_hoc"` — the `name`, `date`, `meal`, and inline dimensions carry over, the stored row is `ad_hoc`, and the success return carries `warnings: [{ key: "type", reason: "retired", superseded_by: "ad_hoc" }]`; after the window, `type: "ready_to_eat"` SHALL be rejected as `validation_failed` like any unknown type. An unresolved slug SHALL be a structured `not_found` error written nowhere; a missing required field SHALL be `validation_failed`. For a recipe entry it SHALL also remove that recipe from the caller's `meal_plan` in the **same D1 transaction** (the side effect previously performed by `commit_changes`). It SHALL NOT write a recipe's `last_cooked` (derived by query).
+The system SHALL provide a `log_cooked` tool that appends one cooking event to the caller's `cooking_log` table in D1 and returns without a `commit_sha`. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` ∈ {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the `recipes` table; an `ad_hoc` entry requires `name`). `type: "ready_to_eat"` is rejected with `validation_failed` (the conversion window was closed by operator waiver); historical stored rows keep their type and aggregate exactly as before.
 
 #### Scenario: Cooking event is appended without a commit
 
 - **WHEN** `log_cooked` is called with a valid entry
 - **THEN** a `cooking_log` row is inserted in D1, the tool returns `{ logged }` with no `commit_sha`, and (for a recipe entry) the recipe is removed from the meal plan in the same transaction
 
-#### Scenario: A stale ready_to_eat write converts and steers during the window
+#### Scenario: The retired type is rejected
 
-- **WHEN** a stale plugin calls `log_cooked({ type: "ready_to_eat", name: "frozen lasagna" })` during the deprecation window
-- **THEN** a `cooking_log` row is inserted with `type = 'ad_hoc'` and `name = 'frozen lasagna'`, the write succeeds, and the return carries a `warnings` entry with `reason: "retired"` and `superseded_by: "ad_hoc"`
-
-#### Scenario: After the window the retired type is rejected
-
-- **WHEN** `log_cooked({ type: "ready_to_eat", name: "frozen lasagna" })` is called after the deprecation window has closed
-- **THEN** a structured `validation_failed` error is returned and nothing is written
+- **WHEN** `log_cooked` is called with `type: "ready_to_eat"`
+- **THEN** the call is rejected with `validation_failed` and nothing is written
 
 #### Scenario: Unknown slug is rejected
 

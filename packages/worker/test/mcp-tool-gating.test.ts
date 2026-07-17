@@ -20,13 +20,12 @@ const CALLER: Tenant = { id: "casey", member: "casey" };
 
 // The member-surface enumeration (mcp-tool-gating "The member surface is the enumerated
 // target set"): the 28 target tools, PLUS the in-flight registration owned by another
-// change (add_night_vibe until remove-meal-dimension-shims closes), PLUS the one-window
-// dispatch aliases while their window is open (toggle_favorite/toggle_reject,
-// add_to_grocery_list/remove_from_grocery_list, list_guidance) — mirroring the
-// `*_night_vibe` D21 precedent, these aliases dispatch onto their fused tool but are
-// registered exactly like any other model-visible tool (no app-plane visibility
-// restriction), so a stale plugin's persona can still see and call them. 34 names total;
-// none of them carry app-only visibility. The ready-to-eat tools (add_draft_ready_to_eat,
+// change (add_night_vibe until remove-meal-dimension-shims closes). The cull's five
+// dispatch aliases are closed (operator waiver, close-cull-windows): add_to_grocery_list,
+// remove_from_grocery_list, and list_guidance are unregistered outright (a stale call is
+// the generic unknown-tool rejection — see "removed tools never come back" below);
+// toggle_favorite/toggle_reject are registered app-plane-only (APP_ONLY_TOOLS below) and
+// so never appear here. 29 names total. The ready-to-eat tools (add_draft_ready_to_eat,
 // update_ready_to_eat, ready_to_eat_available below) are gone (remove-ready-to-eat) — see
 // the "removed tools never come back" assertion.
 const MEMBER_BASE_SET = [
@@ -68,12 +67,6 @@ const MEMBER_BASE_SET = [
   "report_bug",
   // in-flight registration owned by another change
   "add_night_vibe",
-  // one-window dispatch aliases (mcp-tool-gating D3), model-visible while open
-  "toggle_favorite",
-  "toggle_reject",
-  "add_to_grocery_list",
-  "remove_from_grocery_list",
-  "list_guidance",
 ];
 
 // The Kroger tool set (mcp-tool-gating "Store-integration tools register only when
@@ -98,6 +91,8 @@ const OPERATOR_TOOLS = ["list_proposals", "confirm_proposal", "reconcile_read_si
 
 // Every app-plane op (never model-advertised, regardless of gating) — asserted absent
 // from the model-visible set in every cell, and present (registered) per its own gate.
+// toggle_favorite/toggle_reject (the closed cull's app-plane destination for the
+// recipe-card widget) ride no gate at all, same as commit_shop.
 const APP_ONLY_TOOLS = [
   "commit_shop",
   "read_grocery_snapshot",
@@ -109,6 +104,8 @@ const APP_ONLY_TOOLS = [
   "set_grocery_substitution",
   "relist_grocery_send_line",
   "mark_grocery_send_placed",
+  "toggle_favorite",
+  "toggle_reject",
 ];
 const KROGER_APP_ONLY_TOOLS = ["read_order_review", "search_order_broader", "search_order_catalog", "save_order_brand_preference"];
 
@@ -156,7 +153,8 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
             expect(names.has(name), `${name} gating mismatch in cell (operator:${operator}, kroger:${kroger}, instacart:${instacart})`).toBe(operator);
           }
           // Removed tools never come back regardless of gating — including the three
-          // ready-to-eat tools (remove-ready-to-eat): hard removal, no alias, no stub.
+          // ready-to-eat tools (remove-ready-to-eat) and the three closed cull aliases
+          // (close-cull-windows, operator waiver): hard removal, no alias, no stub.
           for (const name of [
             "kroger_flyer",
             "store_flyer",
@@ -168,6 +166,9 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
             "ready_to_eat_available",
             "add_draft_ready_to_eat",
             "update_ready_to_eat",
+            "add_to_grocery_list",
+            "remove_from_grocery_list",
+            "list_guidance",
           ]) {
             expect(names.has(name), `${name} should never be registered`).toBe(false);
           }
@@ -224,6 +225,9 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
       "ready_to_eat_available",
       "add_draft_ready_to_eat",
       "update_ready_to_eat",
+      "add_to_grocery_list",
+      "remove_from_grocery_list",
+      "list_guidance",
     ]) {
       const out = await withServer(server, (c) => invokeTool(c, name, {}));
       expect(out.isError, `${name} should be rejected`).toBe(true);
@@ -234,13 +238,12 @@ describe("registration matrix — member vs operator × Kroger on/off × Instaca
 
 describe("app-plane visibility — widget-callable ops never model-advertised", () => {
   const MODEL_VISIBLE_WIDGETS = ["display_grocery_list", "display_order_review", "display_recipe", "display_meal_plan"];
-  // The three alias families (mcp-tool-gating D3): registered as plain, fully
-  // model-visible dispatch tools during the window — NOT app-plane-restricted — the
-  // same mechanism as the `*_night_vibe` precedent, so a stale plugin's persona (which
-  // still only knows the old names) can actually see and call them. Only at window
-  // close do toggle_favorite/toggle_reject flip to app-plane-only (design D2); that is
-  // NOT this change's job.
-  const ALIASES_MODEL_VISIBLE = ["toggle_favorite", "toggle_reject", "add_to_grocery_list", "remove_from_grocery_list", "list_guidance"];
+  // The cull's five dispatch aliases are closed (operator waiver, close-cull-windows):
+  // add_to_grocery_list/remove_from_grocery_list/list_guidance are unregistered outright
+  // (asserted in the registration-matrix describe above); toggle_favorite/toggle_reject
+  // flip to app-plane-only instead of unregistering, since the recipe-card widget still
+  // calls them by name through the app bridge — asserted via APP_ONLY_TOOLS above.
+  const CLOSED_ALIASES = ["add_to_grocery_list", "remove_from_grocery_list", "list_guidance"];
 
   it("every app-plane op carries _meta.ui.visibility: [\"app\"]; commit_shop no longer leaks", async () => {
     const { env } = sqliteEnv(["casey"]);
@@ -265,16 +268,13 @@ describe("app-plane visibility — widget-callable ops never model-advertised", 
     }
   });
 
-  it("the one-window dispatch aliases are hidden from NO plane — registered plain and model-visible, not app-restricted", async () => {
+  it("the closed dispatch aliases are absent from every plane — never registered, model or app", async () => {
     const { env } = sqliteEnv(["casey"]);
     const server = buildServer(env, CALLER, "https://yamp.example.com", ctxOf(false, true, true));
     const tools = await listRegisteredTools(server);
     const names = new Set(tools.map((t) => t.name));
-    const byName = new Map(tools.map((t) => [t.name, t.meta]));
-    for (const name of ALIASES_MODEL_VISIBLE) {
-      expect(names.has(name), `${name} should be registered`).toBe(true);
-      const meta = byName.get(name) as { ui?: { visibility?: string[] } } | undefined;
-      expect(meta?.ui?.visibility, `${name} should not be visibility-restricted (it must stay callable by a stale model)`).toBeUndefined();
+    for (const name of CLOSED_ALIASES) {
+      expect(names.has(name), `${name} should not be registered on any plane`).toBe(false);
     }
   });
 
@@ -284,6 +284,15 @@ describe("app-plane visibility — widget-callable ops never model-advertised", 
     const { env } = sqliteEnv(["casey"]);
     const names = await namesFor(env, ctxOf(false, false, false));
     expect(names.has("commit_shop")).toBe(true);
+  });
+
+  it("toggle_favorite/toggle_reject ride no gate either — always registered, app-plane-only", async () => {
+    // Same posture as commit_shop: the recipe-card widget calls them regardless of any
+    // Kroger/Instacart/operator gate, so they must register even on a walk-only deployment.
+    const { env } = sqliteEnv(["casey"]);
+    const names = await namesFor(env, ctxOf(false, false, false));
+    expect(names.has("toggle_favorite")).toBe(true);
+    expect(names.has("toggle_reject")).toBe(true);
   });
 });
 

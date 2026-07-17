@@ -21,7 +21,7 @@ import { ToolError, runTool } from "./errors.js";
 import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
-import { registerNightVibeTools, aliasDescription } from "./night-vibe-tools.js";
+import { registerNightVibeTools } from "./night-vibe-tools.js";
 import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
 import { registerReconcileTools, isOperator } from "./reconcile-tools.js";
 import { registerOrderTools, type OrderWiring } from "./order-tools.js";
@@ -883,15 +883,12 @@ export function buildServer(
     () => runTool(() => assembleUserProfile(env, tenant.id, tenant.member)),
   );
 
-  // Fused guidance read (cooking-techniques): absent `slugs` returns list_guidance's old
-  // listing (per-domain, or all domains grouped when `domain` is also absent); present
-  // `slugs` returns today's content read. `list_guidance` stays registered for one
-  // deprecation window as a dispatch alias onto the listing mode (identical responses,
-  // no `warnings` injection — the `*_night_vibe` D21 precedent). `save_guidance` is a
-  // hard removal (no member guidance-write surface); `saveGuidance` itself stays for the
-  // admin guidance editor.
-  const guidanceListingHandler = (domain?: string) => runTool(() => listGuidance(corpus, domain));
-
+  // Fused guidance read (cooking-techniques): absent `slugs` returns the listing (per-
+  // domain, or all domains grouped when `domain` is also absent); present `slugs`
+  // returns today's content read. `save_guidance` is a hard removal (no member
+  // guidance-write surface); `saveGuidance` itself stays for the admin guidance editor.
+  // The former `list_guidance` dispatch alias onto the listing mode is closed (operator
+  // waiver, close-cull-windows): a stale call gets the generic unknown-tool rejection.
   server.registerTool(
     "read_guidance",
     {
@@ -907,15 +904,6 @@ export function buildServer(
         }
         return readGuidance(corpus, domain, slugs);
       }),
-  );
-
-  server.registerTool(
-    "list_guidance",
-    {
-      description: aliasDescription("read_guidance"),
-      inputSchema: { domain: z.string().optional() },
-    },
-    ({ domain }) => guidanceListingHandler(domain),
   );
 
   // Kroger-gated (mcp-tool-gating): kroger_prices needs a working Kroger client.

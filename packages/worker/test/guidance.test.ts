@@ -231,11 +231,11 @@ describe("saveGuidance", () => {
   });
 });
 
-// The fused MCP `read_guidance` tool (cooking-techniques capability, narrow-mcp-surface): a
-// thin dispatch over the SAME listGuidance/readGuidance functions already unit-tested above —
-// slugs absent -> list mode (one domain or all domains grouped), slugs present -> content read
-// (domain required). Covers what the op-level tests above cannot: the tool's own branching, and
-// the list_guidance one-window dispatch alias's parity with read_guidance's list mode.
+// The fused MCP `read_guidance` tool (cooking-techniques capability): a thin dispatch over the
+// SAME listGuidance/readGuidance functions already unit-tested above — slugs absent -> list
+// mode (one domain or all domains grouped), slugs present -> content read (domain required).
+// Covers what the op-level tests above cannot: the tool's own branching, and (close-cull-
+// windows, operator waiver) the closed `list_guidance` dispatch alias's unknown-tool rejection.
 describe("read_guidance tool — fused list/read dispatch", () => {
   const CALLER: Tenant = { id: "casey", member: "casey" };
   const FILES = {
@@ -303,23 +303,10 @@ describe("read_guidance tool — fused list/read dispatch", () => {
     expect(out.result).toMatchObject({ error: "not_found" });
   });
 
-  it("list_guidance(domain?) is a dispatch alias returning the identical listing read_guidance's list mode does", async () => {
-    // Two separate server instances — an McpServer connects to one transport for its
-    // lifetime (withServer closes it on teardown), so a shared instance can't serve two
-    // concurrent connections.
-    const [viaReadGuidance, viaAlias] = await Promise.all([
-      withServer(guidanceServer(), (c) => invokeTool(c, "read_guidance", { domain: "ingredient_storage" })),
-      withServer(guidanceServer(), (c) => invokeTool(c, "list_guidance", { domain: "ingredient_storage" })),
-    ]);
-    expect(viaAlias.isError).toBe(false);
-    expect(viaAlias.result).toEqual(viaReadGuidance.result);
-  });
-
-  it("list_guidance with no domain also lists every domain grouped, identically to read_guidance()", async () => {
-    const [viaReadGuidance, viaAlias] = await Promise.all([
-      withServer(guidanceServer(), (c) => invokeTool(c, "read_guidance", {})),
-      withServer(guidanceServer(), (c) => invokeTool(c, "list_guidance", {})),
-    ]);
-    expect(viaAlias.result).toEqual(viaReadGuidance.result);
+  it("list_guidance is unregistered — a stale call is the generic unknown-tool rejection", async () => {
+    const server = guidanceServer();
+    const out = await withServer(server, (c) => invokeTool(c, "list_guidance", { domain: "ingredient_storage" }));
+    expect(out.isError).toBe(true);
+    expect(out.result).toMatchObject({ error: "not_found" });
   });
 });

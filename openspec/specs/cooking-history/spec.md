@@ -53,7 +53,7 @@ The system SHALL treat a recipe's `last_cooked` as a value **derived by query**,
 
 ### Requirement: Cook-capture appends to D1 via log_cooked
 
-The system SHALL provide a cook-capture path via the `log_cooked` tool, which appends one cooking event to the caller's `cooking_log` table and returns without a `commit_sha`. It SHALL accept an optional **`meal`** (`breakfast | lunch | dinner | project`; omitted stores NULL, valid on all `type`s — cooking a planned project logs `{ type: 'recipe', meal: 'project' }`) and an optional **`plan_row_id`** addressing the exact plan row to clear. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` in {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the D1 `recipes` table; an `ad_hoc` entry requires `name`) — an unresolved slug is a structured `not_found` error written nowhere, and a missing required field is a `validation_failed` error. For **one deprecation window**, a stale plugin's `type: "ready_to_eat"` SHALL be accepted and converted to `type: "ad_hoc"` — `name`, `date`, `meal`, and inline dimensions carried over, the stored row `ad_hoc`, the success return carrying `warnings: [{ key: "type", reason: "retired", superseded_by: "ad_hoc" }]`; the dedupe identity and plan-clear logic operate on the converted form. After the window, `type: "ready_to_eat"` SHALL be rejected as `validation_failed` like any unknown type. For a `recipe` entry it SHALL clear **at most one** matching `meal_plan` row per the deterministic clear order (the dedicated requirement below), in the **same D1 transaction** as the cooking-log insert, returning `cleared_plan_row?: { id, recipe, meal, planned_for }` additively. Route-level idempotent dedupe identity SHALL be **per-`(date, meal, type, recipe|name)`**, where a NULL `meal` matches NULL only — this is cooking_log **dedupe identity only, never plan-row identity**. Any pantry decrements the user confirms are applied via `update_pantry`. The build SHALL NOT validate the cooking log (it is no longer in GitHub). The agent SHALL NOT claim a meal was logged that the user did not assert.
+The system SHALL provide a cook-capture path via the `log_cooked` tool, which appends one cooking event to the caller's `cooking_log` table and returns without a `commit_sha`. It SHALL accept an optional **`meal`** (`breakfast | lunch | dinner | project`; omitted stores NULL, valid on all `type`s — cooking a planned project logs `{ type: 'recipe', meal: 'project' }`) and an optional **`plan_row_id`** addressing the exact plan row to clear. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` in {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the D1 `recipes` table; an `ad_hoc` entry requires `name`) — an unresolved slug is a structured `not_found` error written nowhere, and a missing required field is a `validation_failed` error. The retired `type: "ready_to_eat"` rejects with `validation_failed`; historical rows keep their stored type with unchanged read semantics.
 
 #### Scenario: Recipe entry with a real slug is logged and clears one row atomically
 
@@ -65,10 +65,10 @@ The system SHALL provide a cook-capture path via the `log_cooked` tool, which ap
 - **WHEN** `log_cooked({ type: "recipe", recipe: "not-a-recipe" })` is called and no such slug exists
 - **THEN** a structured `not_found` error is returned and nothing is written
 
-#### Scenario: A stale ready_to_eat write converts to ad_hoc during the window
+#### Scenario: The retired type is rejected
 
-- **WHEN** a stale plugin calls `log_cooked({ type: "ready_to_eat", name: "frozen lasagna", meal: "dinner" })` during the deprecation window
-- **THEN** the stored row is `{ type: 'ad_hoc', name: 'frozen lasagna', meal: 'dinner' }`, the write succeeds, the return carries the `warnings` conversion entry, and a replay of the same call dedupes against the converted `(date, meal, 'ad_hoc', name)` identity
+- **WHEN** a stale caller logs `type: "ready_to_eat"`
+- **THEN** the write is rejected with `validation_failed`; historical `ready_to_eat` rows still aggregate exactly as before (excluded from cadence, dims feed the mixes)
 
 #### Scenario: Unplanned cook still logs
 

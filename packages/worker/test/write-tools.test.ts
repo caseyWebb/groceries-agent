@@ -780,7 +780,7 @@ describe("toggle_favorite / toggle_reject (subjective overlay write → D1)", ()
   });
 });
 
-describe("set_recipe_disposition (data-write-tools) — the fused verb toggle_favorite/toggle_reject alias onto", () => {
+describe("set_recipe_disposition (data-write-tools) — the fused verb toggle_favorite/toggle_reject write onto", () => {
   it("favorite sets the flag and clears any prior hide", async () => {
     const d1 = fakeD1(["miso-salmon"]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);
@@ -823,10 +823,11 @@ describe("set_recipe_disposition (data-write-tools) — the fused verb toggle_fa
     expect(d1.tables.overlay).toHaveLength(0);
   });
 
-  it("toggle_favorite/toggle_reject (the alias pair) and set_recipe_disposition converge on the identical overlay row", async () => {
-    // Alias dispatch parity (mcp-tool-gating D3): a stale toggle_reject(true) call and
-    // an equivalent set_recipe_disposition(slug, \"hide\") call land the SAME overlay
-    // state for two different (but equivalent) recipes.
+  it("toggle_favorite/toggle_reject (the app-plane pair) and set_recipe_disposition converge on the identical overlay row", async () => {
+    // toggle_reject is the recipe-card widget's app-plane-only control (mcp-tool-gating) —
+    // never model-visible, but the SAME applyDisposition write set_recipe_disposition uses.
+    // A toggle_reject(true) call and an equivalent set_recipe_disposition(slug, \"hide\")
+    // call land the SAME overlay state for two different (but equivalent) recipes.
     const d1 = fakeD1(["recipe-a", "recipe-b"]);
     const handlers = collectTools(storeWith({}), "everett", d1.env);
     const viaAlias = await handlers.get("toggle_reject")!({ slug: "recipe-a", reject: true });

@@ -3,12 +3,13 @@
 // through the corpus store (validated first) for shared recipe markdown, or D1 rows for
 // per-tenant state. Objective recipe content is shared (R2 corpus); a recipe's subjective
 // disposition (favorite/hide/none) is per-tenant and routes to the caller's D1 overlay via
-// `set_recipe_disposition` (`toggle_favorite`/`toggle_reject` are one-window dispatch
-// aliases); the pantry is the D1 `pantry` table (src/session-db.ts), which also carries
-// the kitchen-equipment operations (kitchen-equipment). No tool here
-// writes a Kroger cart or calls an external service.
+// `set_recipe_disposition` (`toggle_favorite`/`toggle_reject` are its app-plane-only
+// counterparts for the recipe-card widget); the pantry is the D1 `pantry` table
+// (src/session-db.ts), which also carries the kitchen-equipment operations
+// (kitchen-equipment). No tool here writes a Kroger cart or calls an external service.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import { db } from "./db.js";
@@ -258,26 +259,33 @@ export function registerWriteTools(
       }),
   );
 
-  // toggle_favorite / toggle_reject: one-deprecation-window dispatch aliases onto
-  // set_recipe_disposition (mcp-tool-gating D3) — identical requests/responses, no
-  // warnings injection. At window close they flip to app-plane-only registrations for
-  // the recipe-card widget rather than being unregistered (design D2).
-  server.registerTool(
+  // toggle_favorite / toggle_reject: app-plane-only registrations (mcp-tool-gating) for
+  // the recipe-card widget, which calls them by name through the app bridge
+  // (recipe-card-widget.ts) — never model-visible. Same applyDisposition write
+  // set_recipe_disposition uses; behavior/handlers unchanged from their prior
+  // model-visible registration (the cull's deprecation window closed by operator waiver).
+  registerAppTool(
+    server,
     "toggle_favorite",
     {
+      title: "Toggle favorite",
       description:
-        "Deprecated alias of set_recipe_disposition (favorite: true -> \"favorite\", false -> \"none\") for one deprecation window — identical behavior; prefer the new name. Set the caller's PERSONAL favorite flag for a recipe — `favorite: true` marks it a favorite, `false` clears it. Favorites are THE positive taste signal: they anchor the semantic-search nearest-liked re-rank and the group 'favorited by N others' signal (read_recipe_notes). Writes only the caller's overlay — never the shared recipe, so one member's favorites never affect another's. Unknown slug → not_found. Returns { slug, overlay } (no commit_sha; the overlay is D1-backed).",
+        "App-callable recipe-card control: set the caller's PERSONAL favorite flag for a recipe — `favorite: true` marks it a favorite, `false` clears it. Favorites are THE positive taste signal: they anchor the semantic-search nearest-liked re-rank and the group 'favorited by N others' signal (read_recipe_notes). Writes only the caller's overlay — never the shared recipe, so one member's favorites never affect another's. Unknown slug → not_found. Returns { slug, overlay } (no commit_sha; the overlay is D1-backed).",
       inputSchema: { slug: z.string(), favorite: z.boolean() },
+      _meta: { ui: { visibility: ["app"] } },
     },
     ({ slug, favorite }) => runTool(() => applyDisposition(slug, { favorite })),
   );
 
-  server.registerTool(
+  registerAppTool(
+    server,
     "toggle_reject",
     {
+      title: "Toggle reject",
       description:
-        "Deprecated alias of set_recipe_disposition (reject: true -> \"hide\", false -> \"none\") for one deprecation window — identical behavior; prefer the new name. Hide a recipe from the CALLER — `reject: true` removes it from the caller's search_recipes results (a hard gate, both membership and ranked modes), `false` un-hides it back to the available default. Per-tenant: one member's reject never affects another's view, and it does NOT remove the shared recipe. Mutually exclusive with favorite (rejecting clears a favorite). Unknown slug → not_found. Returns { slug, overlay } (no commit_sha; the overlay is D1-backed).",
+        "App-callable recipe-card control: hide a recipe from the CALLER — `reject: true` removes it from the caller's search_recipes results (a hard gate, both membership and ranked modes), `false` un-hides it back to the available default. Per-tenant: one member's reject never affects another's view, and it does NOT remove the shared recipe. Mutually exclusive with favorite (rejecting clears a favorite). Unknown slug → not_found. Returns { slug, overlay } (no commit_sha; the overlay is D1-backed).",
       inputSchema: { slug: z.string(), reject: z.boolean() },
+      _meta: { ui: { visibility: ["app"] } },
     },
     ({ slug, reject }) => runTool(() => applyDisposition(slug, { reject })),
   );

@@ -129,12 +129,6 @@ export interface ProposeInput {
    *  `slots[].vibe` override and facet-gated — replacing the saved-palette cadence sampling for
    *  this request. Absent → `sampleWeek` schedules the palette as today. */
   ephemeral_vibes?: ProposeEphemeralVibe[];
-  /** Retired (single-slot-discovery): accepted and ignored for one deprecation window — no
-   *  error, no effect, no `warnings` entry (the `nights`-alias posture). Discovery seeding is
-   *  engine-internal now: the palette path derives at most one seed itself (`readNewForMe`, the
-   *  same op behind `list_new_for_me`), below the palette's own debt; the ephemeral path is never
-   *  seeded. Kept in the shape only so a stale caller's write still succeeds. */
-  new_for_me?: string[];
 }
 
 /** One meal's requested/filled/empty diagnostics. */
@@ -239,8 +233,6 @@ export const PROPOSE_INPUT_SHAPE = {
       }),
     )
     .optional(),
-  // Accepted new-for-me discovery seeds (converge D3) — recipe slugs, in priority order.
-  new_for_me: z.array(z.string()).optional(),
 };
 
 /**
@@ -249,8 +241,6 @@ export const PROPOSE_INPUT_SHAPE = {
  * the MCP wrapper converts via `runTool`, the route via the shared error middleware.
  */
 export async function runProposeMealPlan(env: Env, tenant: Tenant, input: ProposeInput, deps: ProposeDeps): Promise<ProposeResult> {
-  // `new_for_me` is accepted by the shape (deprecation window) but never read here — discovery
-  // seeding is engine-internal on the palette path now (see the `readNewForMe` derivation below).
   const { nights, meals, attendance, seed, lock, exclude, boost_ingredients, nudges, slots, ephemeral_vibes } = input;
   const now = new Date();
   const resolvedSeed = seed ?? Number(now.toISOString().slice(0, 10).replace(/-/g, ""));
@@ -491,8 +481,7 @@ export async function runProposeMealPlan(env: Env, tenant: Tenant, input: Propos
     // Discovery seeding is engine-internal on the palette path (single-slot-discovery): derive
     // at most one seed from the same op behind `list_new_for_me` — most-recent-first, keeping
     // only the first row that resolves under the existing candidate rules (visible/embedded, not
-    // rejected, not excluded, not already locked). The caller's `new_for_me` input is never
-    // consulted (accepted-and-ignored — see `ProposeInput.new_for_me`).
+    // rejected, not excluded, not already locked).
     const lockedSlugs = new Set(locked.map((c) => c.slug));
     const newForMeSeeds: NewForMeSeed[] = [];
     const newForMeCandBySlug = new Map<string, DiversifyCandidate>();

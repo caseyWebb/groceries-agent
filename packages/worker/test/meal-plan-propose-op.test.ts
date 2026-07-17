@@ -3,9 +3,11 @@
 // cache-gated embed batch (D5), weather-category legibility (D9), and the D10
 // determinism invariant ("same choices in, same week out") across every new param.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 import {
   runProposeMealPlan,
   FREEFORM_NUDGE_WEIGHT,
+  PROPOSE_INPUT_SHAPE,
   type ProposeDeps,
   type ProposeInput,
 } from "../src/meal-plan-proposal-tool.js";
@@ -802,27 +804,15 @@ describe("new-for-me discovery seeds — engine-internal derivation (single-slot
     expect(r.plan.some((s) => s.reason === "new_for_me")).toBe(false);
   });
 
-  it("new_for_me is accepted and entirely ignored — no error, and never substitutes for the derived set", async () => {
-    // D1 holds no new-for-me rows; the caller's new_for_me is a no-op, not an error.
-    const { env: emptyEnv } = proposeEnv([SEAFOOD, COMFORT]);
-    const withParam = await runProposeMealPlan(
-      emptyEnv,
-      TENANT,
-      { nights: 2, seed: 7, new_for_me: ["beef-ragu"] },
-      stubDeps(emptyEnv),
-    );
-    expect(withParam.plan.some((s) => s.reason === "new_for_me")).toBe(false);
-
-    // D1 names a DIFFERENT recipe than the caller's new_for_me — the D1-derived seed wins;
-    // the caller's named slug is never placed (the param has zero influence either way).
-    const { env } = proposeEnv([SEAFOOD, COMFORT], {
-      corpus: withDiscoveredAt({ "fish-tacos": daysAgo(1) }),
-      newForMe: ["fish-tacos"],
-    });
-    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
-    const disc = r.plan.find((s) => s.reason === "new_for_me");
-    expect(disc?.main?.slug).toBe("fish-tacos");
-    expect(r.plan.some((s) => s.main?.slug === "beef-ragu")).toBe(false);
+  it("new_for_me is retired from the input shape — a stale caller's key is silently dropped like any other unknown key", () => {
+    // The key is gone from ProposeInput/PROPOSE_INPUT_SHAPE entirely (its accept-and-ignore
+    // window closed by operator waiver, close-cull-windows) — runProposeMealPlan never read
+    // it even when the shape declared it, so there is nothing left to assert at the raw-op
+    // layer. A real MCP call is parsed through this SAME shape before the handler ever runs
+    // (the SDK's zod object() strips unrecognized keys by default), so proving the shape
+    // drops it here proves the tool-boundary behavior without standing up a full server.
+    const parsed = z.object(PROPOSE_INPUT_SHAPE).parse({ nights: 2, seed: 7, new_for_me: ["beef-ragu"] });
+    expect(parsed).not.toHaveProperty("new_for_me");
   });
 
   it("force-places the internally derived discovery into a free dinner slot even with NO dinner vibes (lunch-only palette)", async () => {

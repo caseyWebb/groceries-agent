@@ -61,31 +61,12 @@ Every widget/app-bridge-callable operation — the grocery snapshot family (`rea
 
 ### Requirement: The member surface is the enumerated target set
 
-A member connector's model-visible surface SHALL be exactly: reads `read_user_profile`, `read_pantry`, `read_to_buy`, `read_meal_plan`, `search_recipes`, `read_recipe`, `read_recipe_notes`; engine `propose_meal_plan`; widgets `display_recipe`, `display_meal_plan`, `display_grocery_list`; writes `update_meal_plan`, `update_pantry`, `update_grocery_list`, `log_cooked`, `set_recipe_disposition`, `add_recipe_note`, `add_meal_vibe`, `import_recipe`, `add_store`, `add_store_note`; config `update_preferences`, `update_taste`, `update_diet_principles`; signals `list_new_for_me`, `retrospective`; narration `read_guidance`; escape `report_bug` — plus the Kroger-gated and Instacart-gated sets when configured, plus any registrations owned by other in-flight changes (the ready-to-eat tools until `remove-ready-to-eat` lands; the `add_night_vibe`-family aliases until `remove-meal-dimension-shims` closes) and the one-window dispatch aliases below while their window is open. This enumeration is the acceptance fixture: a live member session's tool list SHALL match it.
+A member connector's model-visible surface SHALL be exactly: reads `read_user_profile`, `read_pantry`, `read_to_buy`, `read_meal_plan`, `search_recipes`, `read_recipe`, `read_recipe_notes`; engine `propose_meal_plan`; widgets `display_recipe`, `display_meal_plan`, `display_grocery_list`; writes `update_meal_plan`, `update_pantry`, `update_grocery_list`, `log_cooked`, `set_recipe_disposition`, `add_recipe_note`, `add_meal_vibe`, `import_recipe`, `add_store`, `add_store_note`; config `update_preferences`, `update_taste`, `update_diet_principles`; signals `list_new_for_me`, `retrospective`; narration `read_guidance`; escape `report_bug` — plus the Kroger-gated and Instacart-gated sets when configured, plus any registrations owned by other in-flight changes (the ready-to-eat tools until `remove-ready-to-eat` lands; the `add_night_vibe`-family aliases until `remove-meal-dimension-shims` closes). This enumeration is the acceptance fixture: a live member session's tool list SHALL match it.
 
 #### Scenario: The live tool list is the acceptance fixture
 
 - **WHEN** the deployed Worker serves a member MCP session on a Kroger-configured deployment
 - **THEN** the model-visible tool list equals the member base set plus the five Kroger-gated tools (and the Instacart tool when configured), with no extras beyond the documented in-flight and alias registrations
-
-### Requirement: One-window dispatch aliases cover only semantics-identical fusions
-
-The change SHALL register one-deprecation-window dispatch aliases (the `*_night_vibe` precedent: identical requests and responses, no `warnings` injection) for exactly three fusions: `toggle_favorite`/`toggle_reject` → `set_recipe_disposition`; `add_to_grocery_list`/`remove_from_grocery_list` (and the old single-patch `update_grocery_list` call form) → ops-form `update_grocery_list`; `list_guidance` → `read_guidance` list mode. Every other removed tool SHALL be a hard removal with no shim — a stale call receives the generic unknown-tool rejection. At window close (a subsequent plugin publish and ≥30 days elapsed), the alias registrations are removed; `toggle_favorite`/`toggle_reject` then flip to app-plane-only registrations (the recipe-card widget calls them by name) rather than disappearing.
-
-#### Scenario: A stale favorite toggle still lands
-
-- **WHEN** a stale plugin calls `toggle_favorite(slug, true)` during the window
-- **THEN** the call dispatches to `set_recipe_disposition(slug, "favorite")` and returns the identical overlay result with no warning injected
-
-#### Scenario: A hard-removed tool gets the generic rejection
-
-- **WHEN** a stale plugin calls `save_guidance` after this change deploys
-- **THEN** the call receives the generic unknown-tool rejection, with no accept-and-convert shim
-
-#### Scenario: The recipe card keeps its write after the window
-
-- **WHEN** the alias window closes
-- **THEN** `toggle_favorite`/`toggle_reject` remain registered with app-only visibility for the widget bridge and no longer appear in the model's tool list
 
 ### Requirement: Registration gating is covered by a configuration-matrix test
 
@@ -95,4 +76,18 @@ The Worker test suite SHALL assert the advertised (model-plane) tool-name set fo
 
 - **WHEN** a tool is registered without its gate (e.g. a Kroger tool on the unconfigured cell, or an app op without visibility metadata)
 - **THEN** the matrix test fails naming the unexpected tool
+
+### Requirement: The fusion windows are closed
+
+The cull's one-window dispatch aliases SHALL be closed (operator-waived — a three-member deployment with operator-assisted migration): `add_to_grocery_list`, `remove_from_grocery_list`, and `list_guidance` SHALL NOT be registered on any plane (a stale call receives the generic unknown-tool rejection), and `toggle_favorite`/`toggle_reject` SHALL register **app-plane-only** (`_meta.ui.visibility: ["app"]` — the recipe-card widget calls them by name; they never appear model-visible). Every other removed tool remains a hard removal with no shim. The deprecation convention itself is unchanged for future changes; this closure is a recorded operator waiver, not a repeal.
+
+#### Scenario: A closed alias is an unknown tool
+
+- **WHEN** a stale caller invokes `add_to_grocery_list`, `remove_from_grocery_list`, or `list_guidance`
+- **THEN** the call receives the generic unknown-tool rejection
+
+#### Scenario: The toggle pair serves the widget only
+
+- **WHEN** the recipe-card widget calls `toggle_favorite` through the app bridge and a member session lists tools
+- **THEN** the call succeeds and neither toggle name appears in the model-visible list
 
