@@ -565,8 +565,8 @@ describe("sampleWeek — weather-category slot annotation (member-app-propose D9
   });
 });
 
-describe("sampleWeek — new-for-me force-placement (converge D3)", () => {
-  it("force-places a discovery below pinned and above overdue, within its bucket quota, deterministically", () => {
+describe("sampleWeek — new-for-me force-placement (converge D3, reprioritized by single-slot-discovery)", () => {
+  it("force-places a discovery below pinned AND below overdue, within its bucket quota, deterministically", () => {
     const palette: NightVibeSpec[] = [
       { id: "pinned-vibe", pinned: true },
       { id: "overdue-vibe", cadence_days: 7 },
@@ -586,13 +586,34 @@ describe("sampleWeek — new-for-me force-placement (converge D3)", () => {
     const disc = wk.slots.find((s) => s.id === "grilled-fish");
     expect(disc?.reason).toBe("new_for_me");
     expect(disc?.category).toBe("grill"); // landed within its own weather bucket
-    // Precedence in the placed order: pinned first, then new-for-me, then overdue.
+    // Precedence in the placed order: pinned first, then OVERDUE, then new-for-me last — the
+    // palette's own debt claims its slots before a discovery seasons whatever remains.
     const order = wk.slots.map((s) => s.reason);
-    expect(order.indexOf("pinned")).toBeLessThan(order.indexOf("new_for_me"));
-    expect(order.indexOf("new_for_me")).toBeLessThan(order.indexOf("overdue"));
+    expect(order.indexOf("pinned")).toBeLessThan(order.indexOf("overdue"));
+    expect(order.indexOf("overdue")).toBeLessThan(order.indexOf("new_for_me"));
     // Seed-deterministic, including the discovery placement.
     const again = sampleWeek(palette, days, debts, 4, 3, DEFAULT_CADENCE_PARAMS, 7, newForMe);
     expect(again.slots).toEqual(wk.slots);
+  });
+
+  it("a debt-saturated week (pinned + overdue filling every slot) carries no discovery", () => {
+    const palette: NightVibeSpec[] = [
+      { id: "pinned-vibe", pinned: true },
+      { id: "overdue-a", cadence_days: 7 },
+      { id: "overdue-b", cadence_days: 7 },
+    ];
+    const debts = new Map<string, number>([
+      ["pinned-vibe", 0],
+      ["overdue-a", DEFAULT_CADENCE_PARAMS.forceRegardlessAt + 1], // past the escape hatch — force-places regardless
+      ["overdue-b", DEFAULT_CADENCE_PARAMS.forceRegardlessAt + 1],
+    ]);
+    // Bucketless (a universal filler) — would land as flex/mild if any room existed at all.
+    const newForMe: NewForMeSeed[] = [{ id: "grilled-fish" }];
+    const wk = sampleWeek(palette, [], debts, 3, 1, DEFAULT_CADENCE_PARAMS, undefined, newForMe);
+    expect(wk.slots.length).toBe(3);
+    expect(wk.slots.every((s) => s.reason === "pinned" || s.reason === "overdue")).toBe(true);
+    expect(wk.slots.some((s) => s.id === "grilled-fish")).toBe(false);
+    expect(wk.rolledOver).toContain("grilled-fish"); // the seed never displaces the palette's own debt
   });
 
   it("rolls a discovery over rather than force-placing it into a contradicting bucket", () => {

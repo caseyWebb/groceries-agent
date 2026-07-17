@@ -35,6 +35,9 @@ interface RecipeFixture {
   vec: number[];
   /** Effective course array; omitted → a NULL column (unclassified — the fail-open case). */
   course?: string[];
+  /** `recipes.discovered_at` (YYYY-MM-DD); omitted → NULL. Paired with a `discovery_matches`
+   *  row (via `proposeEnv`'s `newForMe` option) to seed the engine's internal new-for-me read. */
+  discovered_at?: string;
 }
 
 // A small corpus with distinct axes: the "seafood" direction is axis 0/3, "comfort" 1/2.
@@ -63,8 +66,21 @@ function recipeRows(corpus: RecipeFixture[]) {
     perishable_ingredients: null,
     requires_equipment: null,
     extra: null,
-    discovered_at: null,
+    discovered_at: r.discovered_at ?? null,
   }));
+}
+
+/** `YYYY-MM-DD` `n` days before now — relative so the new-for-me fixtures below stay inside
+ *  the engine's real `NEW_FOR_ME_WINDOW_DAYS` floor regardless of when the suite runs. */
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** CORPUS with `discovered_at` stamped on the named slugs — pair with `newForMe: [...]` in
+ *  `proposeEnv` (which mints the matching `discovery_matches` rows) to seed the engine's
+ *  internal new-for-me derivation (single-slot-discovery). */
+function withDiscoveredAt(stamps: Record<string, string>): RecipeFixture[] {
+  return CORPUS.map((r) => (stamps[r.slug] ? { ...r, discovered_at: stamps[r.slug] } : r));
 }
 function derivedRows(corpus: RecipeFixture[]) {
   return corpus.map((r) => ({ slug: r.slug, embedding: JSON.stringify(r.vec), description: null }));
@@ -100,7 +116,15 @@ interface Vibe {
  *  zero-AI-call assertions honest). */
 function proposeEnv(
   vibes: Vibe[],
-  opts: { phraseVecs?: Record<string, number[]>; profile?: Record<string, unknown>; corpus?: RecipeFixture[] } = {},
+  opts: {
+    phraseVecs?: Record<string, number[]>;
+    profile?: Record<string, unknown>;
+    corpus?: RecipeFixture[];
+    /** Slugs to attribute to TENANT via `discovery_matches` — the D1 fixture the engine's
+     *  internal new-for-me derivation (single-slot-discovery) joins against. Pair with a
+     *  `discovered_at` on the matching `corpus` fixture (see `daysAgo`). */
+    newForMe?: string[];
+  } = {},
 ) {
   const corpus = opts.corpus ?? CORPUS;
   const d1 = fakeD1({
@@ -129,6 +153,13 @@ function proposeEnv(
       brand_prefs: [],
       pantry: [],
       cooking_log: [],
+      discovery_matches: (opts.newForMe ?? []).map((slug) => ({
+        recipe: slug,
+        tenant: TENANT.id,
+        member: TENANT.member,
+        score: 0.9,
+        matched_at: daysAgo(1),
+      })),
     },
   });
   const kv = memKv();
@@ -728,15 +759,20 @@ describe("the ephemeral vibe set (converge D2)", () => {
   });
 });
 
-describe("new-for-me discovery seeds thread through the op (converge D3)", () => {
-  it("force-places an accepted discovery as a filled vibe-less slot; the rest diversify away", async () => {
-    const { env, ai } = proposeEnv([SEAFOOD, COMFORT]);
-    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
-    const disc = r.plan.find((s) => s.reason === "new_for_me");
-    expect(disc).toBeDefined();
-    expect(disc!.main?.slug).toBe("beef-ragu");
-    expect(disc!.vibe_id).toBeNull(); // a discovery is not a palette vibe
-    expect(disc!.why).toContain("new to you");
+describe("new-for-me discovery seeds — engine-internal derivation (single-slot-discovery)", () => {
+  it("derives and force-places exactly ONE discovery internally (several resolvable rows available); the rest diversify away", async () => {
+    const { env, ai } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1), "veggie-curry": daysAgo(3), "fish-tacos": daysAgo(5) }),
+      newForMe: ["beef-ragu", "veggie-curry", "fish-tacos"],
+    });
+    // No `new_for_me` in the request at all — the engine reads its own new-for-me set.
+    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7 }, stubDeps(env));
+    const discoverySlots = r.plan.filter((s) => s.reason === "new_for_me");
+    expect(discoverySlots).toHaveLength(1); // capped at one even with three resolvable rows
+    const disc = discoverySlots[0];
+    expect(disc.main?.slug).toBe("beef-ragu"); // the most-recently-discovered of the three wins
+    expect(disc.vibe_id).toBeNull(); // a discovery is not a palette vibe
+    expect(disc.why).toContain("new to you");
     // It claims one of the two nights; exactly one palette vibe slot remains, and it isn't the discovery.
     const vibeSlots = r.plan.filter((s) => s.vibe_id !== null);
     expect(vibeSlots.length).toBe(1);
@@ -745,27 +781,60 @@ describe("new-for-me discovery seeds thread through the op (converge D3)", () =>
     expect(ai).not.toHaveBeenCalled(); // seeds need no embedding — every vector is cron-captured
   });
 
-  it("drops an unresolvable / excluded discovery seed (soft priority — it just doesn't claim a slot)", async () => {
-    const { env } = proposeEnv([SEAFOOD, COMFORT]);
-    const deps = stubDeps(env);
-    const base = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, exclude: ["salmon-rice"] }, deps);
-    const dropped = await runProposeMealPlan(
-      env,
-      TENANT,
-      { nights: 2, seed: 7, exclude: ["salmon-rice"], new_for_me: ["ghost-recipe", "salmon-rice"] },
-      deps,
-    );
-    // ghost-recipe is unresolvable, salmon-rice is excluded → both dropped, week identical to base.
-    expect(dropped.plan.some((s) => s.reason === "new_for_me")).toBe(false);
-    expect(dropped).toEqual(base);
+  it("skips an excluded most-recent row and takes the next resolvable one — still capped at one", async () => {
+    const { env } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "veggie-curry": daysAgo(1), "beef-ragu": daysAgo(3) }),
+      newForMe: ["veggie-curry", "beef-ragu"],
+    });
+    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, exclude: ["veggie-curry"] }, stubDeps(env));
+    const discoverySlots = r.plan.filter((s) => s.reason === "new_for_me");
+    expect(discoverySlots).toHaveLength(1);
+    expect(discoverySlots[0].main?.slug).toBe("beef-ragu"); // the more-recent, excluded row is skipped
   });
 
-  it("force-places a discovery into a free dinner slot even with NO dinner vibes (lunch-only palette)", async () => {
+  it("an ephemeral-driven week is never seeded, even with a resolvable discovery available", async () => {
+    const { env } = proposeEnv([], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+      phraseVecs: { "something cozy": axis([1, 1]) },
+    });
+    const r = await runProposeMealPlan(env, TENANT, { seed: 7, ephemeral_vibes: [{ vibe: "something cozy" }] }, stubDeps(env));
+    expect(r.plan.some((s) => s.reason === "new_for_me")).toBe(false);
+  });
+
+  it("new_for_me is accepted and entirely ignored — no error, and never substitutes for the derived set", async () => {
+    // D1 holds no new-for-me rows; the caller's new_for_me is a no-op, not an error.
+    const { env: emptyEnv } = proposeEnv([SEAFOOD, COMFORT]);
+    const withParam = await runProposeMealPlan(
+      emptyEnv,
+      TENANT,
+      { nights: 2, seed: 7, new_for_me: ["beef-ragu"] },
+      stubDeps(emptyEnv),
+    );
+    expect(withParam.plan.some((s) => s.reason === "new_for_me")).toBe(false);
+
+    // D1 names a DIFFERENT recipe than the caller's new_for_me — the D1-derived seed wins;
+    // the caller's named slug is never placed (the param has zero influence either way).
+    const { env } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "fish-tacos": daysAgo(1) }),
+      newForMe: ["fish-tacos"],
+    });
+    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
+    const disc = r.plan.find((s) => s.reason === "new_for_me");
+    expect(disc?.main?.slug).toBe("fish-tacos");
+    expect(r.plan.some((s) => s.main?.slug === "beef-ragu")).toBe(false);
+  });
+
+  it("force-places the internally derived discovery into a free dinner slot even with NO dinner vibes (lunch-only palette)", async () => {
     // The grill scenario: a non-empty palette that has only a LUNCH vibe. The dinner pass finds
     // no dinner vibes but free dinner slots exist — force-placement is vibe-INDEPENDENT, so the
-    // accepted discovery must still land as a dinner slot, never silently dropped with the pass.
-    const { env } = proposeEnv([LUNCH_VIBE]); // no dinner vibe in the palette
-    const r = await runProposeMealPlan(env, TENANT, { meals: { lunch: 1, dinner: 2 }, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
+    // derived discovery must still land as a dinner slot, never silently dropped with the pass.
+    const { env } = proposeEnv([LUNCH_VIBE], {
+      // no dinner vibe in the palette
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+    });
+    const r = await runProposeMealPlan(env, TENANT, { meals: { lunch: 1, dinner: 2 }, seed: 7 }, stubDeps(env));
     const disc = r.plan.find((s) => s.reason === "new_for_me");
     expect(disc).toBeDefined();
     expect(disc!.main?.slug).toBe("beef-ragu");
@@ -780,14 +849,17 @@ describe("new-for-me discovery seeds thread through the op (converge D3)", () =>
     expect(r.diagnostics.meals.dinner).toEqual({ requested: 2, filled: 1, empty: 1 });
   });
 
-  it("rolls an accepted discovery OVER when the dinner count is fully consumed by locks (no free slot)", async () => {
+  it("rolls the internally derived discovery OVER when the dinner count is fully consumed by locks (no free slot)", async () => {
     // dinnerToFill = counts.dinner - locks = 0, so the dinner pass is short-circuited. The
     // discovery has nowhere to land, but it must surface in diagnostics.rolled_over — never vanish.
-    const { env } = proposeEnv([SEAFOOD, COMFORT]);
+    const { env } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+    });
     const r = await runProposeMealPlan(
       env,
       TENANT,
-      { meals: { dinner: 2 }, seed: 7, lock: ["salmon-rice", "chicken-soup"], new_for_me: ["beef-ragu"] },
+      { meals: { dinner: 2 }, seed: 7, lock: ["salmon-rice", "chicken-soup"] },
       stubDeps(env),
     );
     expect(r.plan.some((s) => s.reason === "new_for_me")).toBe(false); // no free slot to claim
