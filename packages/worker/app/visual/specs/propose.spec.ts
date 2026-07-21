@@ -76,7 +76,7 @@ test.describe("with the self-provisioned palette", () => {
     await proposePage.awaitPropose(() => proposePage.start());
     await proposePage.mains();
     // Move the dinner count to a value that differs from the default (which varies with the
-    // member's `default_cooking_nights`), so the click always fires a real request change.
+    // member's `preferences.cadence.dinner`), so the click always fires a real request change.
     const before = Number(await proposePage.mealStepper("dinner").innerText());
     const target = before < 6 ? before + 1 : before - 1;
     await proposePage.awaitPropose(() => proposePage.setMeal("dinner", target));

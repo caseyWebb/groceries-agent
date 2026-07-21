@@ -24,7 +24,7 @@ The system SHALL store a per-tenant **meal-vibe palette**: each meal vibe is a p
 
 ### Requirement: Meal-vibe CRUD is served by the meal_vibe tool family
 
-The system SHALL expose palette **capture** on the member MCP surface as `add_meal_vibe` only; the palette is **read** through `read_user_profile().meal_vibes` (each vibe with its `meal`, `members`, and derived cadence status), and edit/remove are the member web app's vibes page over the same shared palette operations — there are no `list_meal_vibes`, `update_meal_vibe`, or `remove_meal_vibe` MCP tools (their `*_night_vibe` alias rows fall away with them; `add_night_vibe` remains `add_meal_vibe`'s deprecation-window alias under the `remove-meal-dimension-shims` gate). `add_meal_vibe` SHALL accept `meal` (default `'dinner'`) and `members`. The shared update operation SHALL keep **explicit-null field clearing**: a supplied `null` clears `cadence_days`, `base_weight`, `weather_affinity`, `weather_antipathy`, `season`, `facets`, or `members`; an absent field preserves. `meal` SHALL be settable (moving the vibe between meal palettes — no re-embed, since the embedding hash covers the phrase) but NOT nullable; `vibe` SHALL NOT be nullable. Write classes are unchanged (D15): vibe create/delete are class (b) keyed by the vibe id; vibe edit is class (a).
+The system SHALL expose palette **capture** on the member MCP surface as `add_meal_vibe` only; the palette is **read** through `read_user_profile().meal_vibes` (each vibe with its `meal`, `members`, and derived cadence status), and edit/remove are the member web app's vibes page over the same shared palette operations — there are no `list_meal_vibes`, `update_meal_vibe`, or `remove_meal_vibe` MCP tools, and no `*_night_vibe` alias name remains registered on any plane (the `add_night_vibe` dispatch alias, the last surviving one, closed with the `remove-meal-dimension-shims` cleanup). `add_meal_vibe` SHALL accept `meal` (default `'dinner'`) and `members`. The shared update operation SHALL keep **explicit-null field clearing**: a supplied `null` clears `cadence_days`, `base_weight`, `weather_affinity`, `weather_antipathy`, `season`, `facets`, or `members`; an absent field preserves. `meal` SHALL be settable (moving the vibe between meal palettes — no re-embed, since the embedding hash covers the phrase) but NOT nullable; `vibe` SHALL NOT be nullable. Write classes are unchanged (D15): vibe create/delete are class (b) keyed by the vibe id; vibe edit is class (a).
 
 #### Scenario: Chat captures a vibe silently
 
@@ -45,15 +45,6 @@ The system SHALL expose palette **capture** on the member MCP surface as `add_me
 
 - **WHEN** the member MCP tool surface is enumerated
 - **THEN** `add_meal_vibe` is the only meal-vibe tool; list/update/remove flows live on the member app's vibes page
-
-### Requirement: Deprecated night-vibe tool names dispatch onto the meal-vibe ops
-
-For one deprecation window, the old tool names (`list_night_vibes`, `add_night_vibe`, `update_night_vibe`, `remove_night_vibe`, `suggest_night_vibes`) SHALL remain registered as **dispatch aliases onto the identical shared ops** — one op layer, no duplicated logic, identical requests and identical responses (no warnings injection; aliases are behavior-identical per D21's dispatch framing) — with each alias's description replaced by one line: "Deprecated alias of `<new name>` — identical behavior; use the new name." Aliases SHALL accept and return the new `meal`/`members` fields, so a lagging plugin loses nothing but the name. The aliases are recorded in docs/TOOLS.md's Deprecations section and are removed by the window-close cleanup change (`remove-meal-dimension-shims`) once a subsequent plugin publish has occurred AND ≥30 days have elapsed since this change's plugin publish.
-
-#### Scenario: An aliased call is identical to the canonical call
-
-- **WHEN** a lagging plugin calls `add_night_vibe` with a phrase and `meal: "lunch"`
-- **THEN** the creation and the response are identical to the same call via `add_meal_vibe` — same op, same fields, no warning injected
 
 ### Requirement: Vibes are member-assignable and contribute by attendance
 

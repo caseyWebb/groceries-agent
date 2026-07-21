@@ -25,22 +25,17 @@ The system SHALL expose a granular write tool per category and SHALL NOT provide
 
 ### Requirement: log_cooked appends a cooking event to D1
 
-The system SHALL provide a `log_cooked` tool that appends one cooking event to the caller's `cooking_log` table in D1 and returns without a `commit_sha`. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` ∈ {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the `recipes` table; an `ad_hoc` entry requires `name`). For **one deprecation window**, a stale plugin's `type: "ready_to_eat"` SHALL be **accepted and converted** to `type: "ad_hoc"` — the `name`, `date`, `meal`, and inline dimensions carry over, the stored row is `ad_hoc`, and the success return carries `warnings: [{ key: "type", reason: "retired", superseded_by: "ad_hoc" }]`; after the window, `type: "ready_to_eat"` SHALL be rejected as `validation_failed` like any unknown type. An unresolved slug SHALL be a structured `not_found` error written nowhere; a missing required field SHALL be `validation_failed`. For a recipe entry it SHALL also remove that recipe from the caller's `meal_plan` in the **same D1 transaction** (the side effect previously performed by `commit_changes`). It SHALL NOT write a recipe's `last_cooked` (derived by query).
+The system SHALL provide a `log_cooked` tool that appends one cooking event to the caller's `cooking_log` table in D1 and returns without a `commit_sha`. It SHALL validate the entry at write time (an ISO `date` defaulting to today; a `type` ∈ {`recipe`, `ad_hoc`}; a `recipe` entry's slug resolved against the `recipes` table; an `ad_hoc` entry requires `name`). `type: "ready_to_eat"` is rejected with `validation_failed` (the conversion window was closed by operator waiver); historical stored rows keep their type and aggregate exactly as before.
 
 #### Scenario: Cooking event is appended without a commit
 
 - **WHEN** `log_cooked` is called with a valid entry
 - **THEN** a `cooking_log` row is inserted in D1, the tool returns `{ logged }` with no `commit_sha`, and (for a recipe entry) the recipe is removed from the meal plan in the same transaction
 
-#### Scenario: A stale ready_to_eat write converts and steers during the window
+#### Scenario: The retired type is rejected
 
-- **WHEN** a stale plugin calls `log_cooked({ type: "ready_to_eat", name: "frozen lasagna" })` during the deprecation window
-- **THEN** a `cooking_log` row is inserted with `type = 'ad_hoc'` and `name = 'frozen lasagna'`, the write succeeds, and the return carries a `warnings` entry with `reason: "retired"` and `superseded_by: "ad_hoc"`
-
-#### Scenario: After the window the retired type is rejected
-
-- **WHEN** `log_cooked({ type: "ready_to_eat", name: "frozen lasagna" })` is called after the deprecation window has closed
-- **THEN** a structured `validation_failed` error is returned and nothing is written
+- **WHEN** `log_cooked` is called with `type: "ready_to_eat"`
+- **THEN** the call is rejected with `validation_failed` and nothing is written
 
 #### Scenario: Unknown slug is rejected
 
@@ -77,7 +72,7 @@ The staples list is per-tenant: `update_staples` SHALL write the caller's `stapl
 
 ### Requirement: Preferences are edited by merge-patch over structured D1 storage
 
-`update_preferences` SHALL accept a `patch` object and apply it to the caller's preferences with JSON Merge Patch semantics (RFC 7396): present keys set, `null` deletes, nested objects merge to arbitrary depth, arrays replace wholesale. The defined top-level surface is `default_cooking_nights`, `planning_cadence_days`, `lunch_strategy`, `ready_to_eat_default_action`, `weekly_budget`, `stores`, `brands`, `dietary`, `rotation`, and `custom`; a patch top-level key outside that set SHALL be rejected with a structured error directing it under `custom`. `weekly_budget` is the household's weekly grocery budget in dollars, validated as a finite number ≥ 0 (`malformed_data` otherwise); unset or `0` means "no budget" (readers hide the budget line), and it is stored as a `profile` column and assembled into the `read_user_profile` preferences object like the other defined scalars. After merging, the result's types SHALL be validated (enums, `brands` map of term→string[], `stores`/`dietary`/`rotation` shapes, `custom` object) and a type-invalid result rejected with `malformed_data`, storing nothing. The application SHALL be atomic (one D1 transaction): scalar/JSON fields update the `profile` row; `brands` entries map to `brand_prefs` rows — a list value UPSERTs, `null` DELETEs (the tri-state: absent row = ambiguous, `[]` = don't-care, non-empty = ranked). It returns without a `commit_sha`.
+`update_preferences` SHALL accept a `patch` object and apply it to the caller's preferences with JSON Merge Patch semantics (RFC 7396): present keys set, `null` deletes, nested objects merge to arbitrary depth, arrays replace wholesale. The defined top-level surface is `cadence`, `planning_cadence_days`, `weekly_budget`, `stores`, `brands`, `dietary`, `rotation`, `curated_hide`, and `custom`; a patch top-level key outside that set SHALL be rejected with a structured error directing it under `custom` — including the retired `default_cooking_nights`, `lunch_strategy`, and `ready_to_eat_default_action`, which fall through to this same generic rejection now that their prior accept-and-convert / accept-and-drop shims are removed. `weekly_budget` is the household's weekly grocery budget in dollars, validated as a finite number ≥ 0 (`malformed_data` otherwise); unset or `0` means "no budget" (readers hide the budget line), and it is stored as a `profile` column and assembled into the `read_user_profile` preferences object like the other defined scalars. After merging, the result's types SHALL be validated (enums, `brands` map of term→string[], `stores`/`dietary`/`rotation` shapes, `custom` object) and a type-invalid result rejected with `malformed_data`, storing nothing. The application SHALL be atomic (one D1 transaction): scalar/JSON fields update the `profile` row; `brands` entries map to `brand_prefs` rows — a list value UPSERTs, `null` DELETEs (the tri-state: absent row = ambiguous, `[]` = don't-care, non-empty = ranked). It returns without a `commit_sha`.
 
 #### Scenario: Partial patch merges without clobbering siblings
 
@@ -96,13 +91,18 @@ The staples list is per-tenant: `update_staples` SHALL write the caller's `stapl
 
 #### Scenario: Type-invalid merged result is rejected
 
-- **WHEN** `update_preferences({ patch: { lunch_strategy: "sometimes" } })` is called and `sometimes` is not in the enum
+- **WHEN** `update_preferences({ patch: { cadence: { dinner: 9 } } })` is called and `9` is outside the 0–7 weekly range
 - **THEN** a `malformed_data` error is returned and the stored preferences are unchanged
 
 #### Scenario: Weekly budget round-trips as a defined scalar
 
 - **WHEN** `update_preferences({ patch: { weekly_budget: 95 } })` is called and later `{ patch: { weekly_budget: null } }`
 - **THEN** the first write stores `95` on the profile row (and `read_user_profile` returns it in `preferences`), the second deletes it back to unset, and a negative or non-numeric value is rejected with `malformed_data`, storing nothing
+
+#### Scenario: Retired preference keys are rejected, not converted
+
+- **WHEN** `update_preferences({ patch: { default_cooking_nights: 4 } })` or `update_preferences({ patch: { lunch_strategy: "mixed" } })` is called
+- **THEN** each is rejected with the same structured unknown-key error directing it under `custom`, and nothing is stored
 
 ### Requirement: User-curated narrative writes are content-faithful
 

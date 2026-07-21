@@ -21,7 +21,7 @@ import { ToolError, runTool } from "./errors.js";
 import { instrumentTools, type ToolRegistrar } from "./tool-instrumentation.js";
 import { registerWriteTools } from "./write-tools.js";
 import { registerGroceryListTools } from "./grocery-tools.js";
-import { registerNightVibeTools, aliasDescription } from "./night-vibe-tools.js";
+import { registerNightVibeTools } from "./night-vibe-tools.js";
 import { registerProposeMealPlanTool, type ProposeDeps } from "./meal-plan-proposal-tool.js";
 import { registerReconcileTools, isOperator } from "./reconcile-tools.js";
 import { registerOrderTools, type OrderWiring } from "./order-tools.js";
@@ -411,10 +411,9 @@ export async function assembleUserProfile(env: Env, tenant: string, member: stri
   return {
     initialized,
     missing,
-    // The EXPORT shaping (one deprecation window): `cadence` always present (stored map,
-    // else the read-time derivation), `default_cooking_nights` mirrored from the
-    // effective cadence.dinner, and the retired lunch_strategy/ready_to_eat_default_action
-    // dropped now (meal vibes supersede them).
+    // The EXPORT shaping: `cadence` is always present (the stored map, or the read-time
+    // derivation); the retired default_cooking_nights/lunch_strategy/ready_to_eat_default_action
+    // never appear (meal vibes supersede them).
     preferences: exportPreferences(profile.preferences),
     taste: profile.taste,
     diet_principles: profile.diet_principles,
@@ -877,21 +876,18 @@ export function buildServer(
     "read_user_profile",
     {
       description:
-        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or a derivation from the legacy nights count when unset; `default_cooking_nights` remains exported for one deprecation window as a derived MIRROR of cadence.dinner — prefer cadence), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes), and attention (server-computed nudge inputs, deterministic — no AI, nothing narrated unless it's actionable: `retrospective_due` — true when there is cooking history and the retrospective hasn't been read in 42+ days (reading one via the retrospective tool resets it); `unverified_perishables` — a COUNT of pantry rows in produce/dairy/seafood/meat unverified for 7+ days, not a list; `stale_areas` — the same array as `missing`, under the attention lens). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
+        "Return the caller's full grocery profile in one call, including initialization status. `initialized` is true once preferences are present; `missing` lists onboarding-area keys still absent (store, taste, diet, equipment, stockup, vibes) — empty when fully set up. Profile fields: preferences (parsed; `preferences.cadence` is the per-meal planning-frequency map { breakfast, lunch, dinner } — the stored map, or the fixed derivation { breakfast: 0, lunch: 0, dinner: 5 } when unset), taste narrative (markdown), diet principles (markdown), kitchen inventory (owned equipment slugs + notes), staples list, stockup watchlist, meal_vibes (the palette — each saved vibe plus its `meal`, its `members` when set, and its derived last_satisfied and cadence status: overdue|due|soon|ok, the revealed-preference rhythm), household (`household.members[]` — every household member as { handle, nickname, you, joined_at }, where nickname is the CALLER's own private alias only, null when unset; never an alias set by or for anyone else. Handles are the stable keys for attendance and member-assigned vibes), and attention (server-computed nudge inputs, deterministic — no AI, nothing narrated unless it's actionable: `retrospective_due` — true when there is cooking history and the retrospective hasn't been read in 42+ days (reading one via the retrospective tool resets it); `unverified_perishables` — a COUNT of pantry rows in produce/dairy/seafood/meat unverified for 7+ days, not a list; `stale_areas` — the same array as `missing`, under the attention lens). Absent fields return null or empty. Use this at the start of every session — on initialized:false, run configure-yamp-profile first.",
       inputSchema: {},
     },
     () => runTool(() => assembleUserProfile(env, tenant.id, tenant.member)),
   );
 
-  // Fused guidance read (cooking-techniques): absent `slugs` returns list_guidance's old
-  // listing (per-domain, or all domains grouped when `domain` is also absent); present
-  // `slugs` returns today's content read. `list_guidance` stays registered for one
-  // deprecation window as a dispatch alias onto the listing mode (identical responses,
-  // no `warnings` injection — the `*_night_vibe` D21 precedent). `save_guidance` is a
-  // hard removal (no member guidance-write surface); `saveGuidance` itself stays for the
-  // admin guidance editor.
-  const guidanceListingHandler = (domain?: string) => runTool(() => listGuidance(corpus, domain));
-
+  // Fused guidance read (cooking-techniques): absent `slugs` returns the listing (per-
+  // domain, or all domains grouped when `domain` is also absent); present `slugs`
+  // returns today's content read. `save_guidance` is a hard removal (no member
+  // guidance-write surface); `saveGuidance` itself stays for the admin guidance editor.
+  // The former `list_guidance` dispatch alias onto the listing mode is closed (operator
+  // waiver, close-cull-windows): a stale call gets the generic unknown-tool rejection.
   server.registerTool(
     "read_guidance",
     {
@@ -907,15 +903,6 @@ export function buildServer(
         }
         return readGuidance(corpus, domain, slugs);
       }),
-  );
-
-  server.registerTool(
-    "list_guidance",
-    {
-      description: aliasDescription("read_guidance"),
-      inputSchema: { domain: z.string().optional() },
-    },
-    ({ domain }) => guidanceListingHandler(domain),
   );
 
   // Kroger-gated (mcp-tool-gating): kroger_prices needs a working Kroger client.

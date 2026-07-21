@@ -73,18 +73,6 @@ export const DEFINED_PREFERENCE_KEYS = [
   "custom",
 ] as const;
 
-/**
- * Retired preference keys (D21/D8: meal vibes subsume them), checked BEFORE
- * `rejectUnknownPatchKeys` for one deprecation window: the key is ACCEPTED AND
- * DROPPED — not validated, not written, not routed to `custom`, never
- * `validation_failed`, never the nest-under-`custom` hint (a stale agent must not
- * shadow the migration) — with a `warnings` entry steering the caller. The stored
- * columns converge to NULL via the pref-retirement seed pass (src/pref-retirement.ts).
- * After the window closes this list empties and the keys fall through to the generic
- * unknown-key rejection like any other unknown key.
- */
-export const RETIRED_PREFERENCE_KEYS = ["lunch_strategy", "ready_to_eat_default_action"] as const;
-
 /** The per-meal cadence map's keys (weekly counts, 0–7 each). */
 export const CADENCE_MEALS = ["breakfast", "lunch", "dinner"] as const;
 
@@ -102,8 +90,7 @@ export interface CadenceMap {
 /**
  * One meal's EFFECTIVE cadence count — the read-side default chain shared by the
  * propose op and the profile export: the stored `cadence[meal]` when present, else
- * the read-time derivation (`dinner`: the frozen `default_cooking_nights ?? 5`;
- * `breakfast`/`lunch`: 0).
+ * the read-time derivation (`dinner`: a fixed `5`; `breakfast`/`lunch`: 0).
  */
 export function effectiveCadenceCount(
   prefs: Record<string, unknown> | null,
@@ -112,31 +99,24 @@ export function effectiveCadenceCount(
   const stored = isPlainObject(prefs?.cadence) ? (prefs.cadence as Record<string, unknown>) : null;
   const v = stored?.[meal];
   if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (meal !== "dinner") return 0;
-  const legacy = prefs?.default_cooking_nights;
-  return typeof legacy === "number" && Number.isFinite(legacy) ? legacy : 5;
+  return meal === "dinner" ? 5 : 0;
 }
 
 /**
  * Shape the stored preferences for the PROFILE EXPORT (`read_user_profile` /
- * `GET /api/profile`) — pure, read-side only (never a merge base):
- *   - `cadence` is the stored map, or (when absent) the read-time derivation
- *     `{ breakfast: 0, lunch: 0, dinner: default_cooking_nights ?? 5 }`;
- *   - `default_cooking_nights` stays exported for one deprecation window as a DERIVED
- *     MIRROR of the effective `cadence.dinner` (read-path skew protection);
- *   - the retired `lunch_strategy` / `ready_to_eat_default_action` are dropped NOW.
+ * `GET /api/profile`) — pure, read-side only (never a merge base): `cadence` is the
+ * stored map, or (when absent) the read-time derivation
+ * `{ breakfast: 0, lunch: 0, dinner: 5 }`.
  */
 export function exportPreferences(prefs: Record<string, unknown> | null): Record<string, unknown> | null {
   if (prefs === null) return null;
   const out: Record<string, unknown> = { ...prefs };
-  for (const key of RETIRED_PREFERENCE_KEYS) delete out[key];
   const stored = isPlainObject(prefs.cadence) ? (prefs.cadence as CadenceMap) : null;
   out.cadence = stored ?? {
     breakfast: 0,
     lunch: 0,
     dinner: effectiveCadenceCount(prefs, "dinner"),
   };
-  out.default_cooking_nights = effectiveCadenceCount(prefs, "dinner");
   return out;
 }
 
@@ -170,45 +150,6 @@ export function rejectUnknownPatchKeys(patch: Record<string, unknown>): void {
       );
     }
   }
-}
-
-/**
- * The one-window retired-key + legacy-alias shim (D21), applied to the PATCH before
- * `rejectUnknownPatchKeys`. Returns a cleaned patch plus the `warnings` entries:
- *   - a RETIRED key (`lunch_strategy` / `ready_to_eat_default_action`) is accepted and
- *     dropped — nothing validated, nothing written — with a `reason: "retired"` entry;
- *   - `default_cooking_nights: N` (validated int 0–7) is ALIASED onto `cadence.dinner`
- *     — merged per-key so a patch-supplied breakfast/lunch survives, and NEVER written
- *     to the frozen `default_cooking_nights` column — with a `reason: "aliased"` entry.
- * After the window: the shim empties and both fall through to unknown-key rejection.
- */
-export function applyRetiredKeyShim(patch: Record<string, unknown>): {
-  patch: Record<string, unknown>;
-  warnings: DeprecationWarning[];
-} {
-  const warnings: DeprecationWarning[] = [];
-  const out: Record<string, unknown> = { ...patch };
-  for (const key of RETIRED_PREFERENCE_KEYS) {
-    if (key in out) {
-      delete out[key];
-      warnings.push({ key, reason: "retired", superseded_by: "meal vibes" });
-    }
-  }
-  if ("default_cooking_nights" in out) {
-    const v = out.default_cooking_nights;
-    delete out.default_cooking_nights;
-    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 7) {
-      throw new ToolError(
-        "validation_failed",
-        `default_cooking_nights (deprecated alias of cadence.dinner) must be an integer 0-7 (got ${JSON.stringify(v)})`,
-      );
-    }
-    // Merge as cadence.dinner — an explicit patch-supplied cadence.dinner wins.
-    const cadencePatch = isPlainObject(out.cadence) ? (out.cadence as Record<string, unknown>) : {};
-    out.cadence = { dinner: v, ...cadencePatch };
-    warnings.push({ key: "default_cooking_nights", reason: "aliased", superseded_by: "cadence.dinner" });
-  }
-  return { patch: out, warnings };
 }
 
 /**

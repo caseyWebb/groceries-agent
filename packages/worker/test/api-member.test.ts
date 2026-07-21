@@ -229,7 +229,6 @@ const MEMBER_ENDPOINTS: [string, string][] = [
   ["DELETE", "/api/vibes/weeknight"],
   ["GET", "/api/vibes/proposals"],
   ["POST", "/api/vibes/proposals/p1/confirm"],
-  ["POST", "/api/vibes/suggest"],
   ["POST", "/api/propose"],
   // The People area (households-friends-and-people-page). `/api/join/:token` is
   // deliberately PUBLIC (the signup fork) and is not listed here.
@@ -858,7 +857,7 @@ describe("vibes area", () => {
     expect(d1.tables.night_vibes).toHaveLength(1);
   });
 
-  it("the retired suggest trigger answers the pinned 410 stub — no derivation, no model (D8/D20)", async () => {
+  it("the retired suggest trigger's route is gone outright — a plain unrecognized-API 404, no derivation, no model", async () => {
     const { env } = memberEnv({
       // Even a stale job-health record changes nothing: the trigger is retired outright.
       job_health: [{ name: "archetype-derive", ok: 1, last_run_at: Date.now() - 30 * 60 * 60 * 1000, summary: "{}" }],
@@ -866,20 +865,11 @@ describe("vibes area", () => {
     const cookie = await loggedIn(env);
     vi.mocked(runDerivation).mockClear();
     const res = await send(env, "POST", "/api/vibes/suggest", cookie, {});
-    expect(res.status).toBe(410);
-    // Pinned to the member-API route-level error convention ({ error: <literal>, message }),
-    // NOT a src/errors.ts ToolError code.
-    expect(await res.json()).toEqual({
-      error: "gone",
-      message: "Vibe suggestions now arrive automatically; this trigger was retired.",
-    });
+    // The pinned 410 stub is gone (remove-meal-dimension-shims) — the route no longer
+    // exists at all, so the request falls to the normal unmounted-route 404, exactly like
+    // any other unrecognized /api path (never a session check, since no route ever matched).
+    expect(res.status).toBe(404);
     expect(runDerivation).not.toHaveBeenCalled();
-  });
-
-  it("the 410 stub still requires a session (the gate outranks the stub)", async () => {
-    const { env } = memberEnv();
-    const res = await send(env, "POST", "/api/vibes/suggest", "", {});
-    expect(res.status).toBe(401);
   });
 });
 
@@ -946,7 +936,7 @@ describe("propose area (member-app-propose)", () => {
     stubWeatherDown();
     const { env } = memberEnv(proposeTables());
     const cookie = await loggedIn(env);
-    const res = await send(env, "POST", "/api/propose", cookie, { nights: 1, seed: 5 });
+    const res = await send(env, "POST", "/api/propose", cookie, { meals: { dinner: 1 }, seed: 5 });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { plan: { vibe_id: string | null; main: { slug: string } | null; alternates: unknown[] }[]; variety: unknown; diagnostics: { seed: number; filled: number } };
     expect(body.diagnostics.seed).toBe(5);
@@ -960,7 +950,7 @@ describe("propose area (member-app-propose)", () => {
     stubWeatherDown();
     const { env } = memberEnv(proposeTables());
     const cookie = await loggedIn(env);
-    const request = { nights: 1, seed: 42, slots: [{ vibe_id: "dinner", protein: "fish" }], nudges: { proteins: ["fish"] } };
+    const request = { meals: { dinner: 1 }, seed: 42, slots: [{ vibe_id: "dinner", protein: "fish" }], nudges: { proteins: ["fish"] } };
     const a = await send(env, "POST", "/api/propose", cookie, request);
     const b = await send(env, "POST", "/api/propose", cookie, request);
     expect(a.status).toBe(200);
@@ -971,9 +961,22 @@ describe("propose area (member-app-propose)", () => {
     stubWeatherDown();
     const { env } = memberEnv(proposeTables());
     const cookie = await loggedIn(env);
-    const res = await send(env, "POST", "/api/propose", cookie, { nights: "five" });
+    const res = await send(env, "POST", "/api/propose", cookie, { meals: { dinner: "five" } });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe("validation_failed");
+  });
+
+  it("a stale nights key is silently dropped like any other unknown key — never a rejection", async () => {
+    stubWeatherDown();
+    const { env } = memberEnv(proposeTables());
+    const cookie = await loggedIn(env);
+    const res = await send(env, "POST", "/api/propose", cookie, { nights: 1, seed: 5 });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { diagnostics: { seed: number; meals?: Record<string, { requested: number }> } };
+    expect(body.diagnostics.seed).toBe(5);
+    // `nights` was stripped before the op ever ran — no profile row here, so the dinner count
+    // falls all the way to the fixed read-time default (5), never `nights`'s value (1).
+    expect(body.diagnostics.meals?.dinner.requested).toBe(5);
   });
 
 });

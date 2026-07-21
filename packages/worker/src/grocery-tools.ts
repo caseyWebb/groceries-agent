@@ -22,18 +22,6 @@ function today(): string {
 const ADD_DESCRIPTION =
   "Add an item to the grocery list (ingredient/product level, no SKU). Supply `name` (the member's surface form) and/or `id` — at least one is required. Re-adding an existing name merges into it (union for_recipes, reconcile quantity) rather than duplicating; a merge keeps the surviving row's existing display. New items start status=active. A PLANNED recipe's ingredient needs NO add — the to-buy set derives them from the meal plan automatically (`read_to_buy`); adding one anyway MATERIALIZES/pins it as an explicit row (do this to carry a quantity annotation or note, e.g. a double-batch scaling) — it upserts under the same canonical id, so the row and the derived need merge into one line, never a duplicate. `id` is an ALREADY-CANONICAL ingredient id (e.g. accepting a graph-sibling swap): when supplied it is treated as a canonical key — validated as a LIVE survivor, NOT re-resolved through the funnel — the row keys and dedups on it directly, and stores a clean human DISPLAY as its `name` (the posted `name` when present, else the identity node's curated label — never the raw id); the key and the display are stored separately, so the row keys on the id while rendering a clean name. An invalid or non-survivor id falls back to resolving `name`. It is food-only (a canonical id implies food). `domain` (default 'grocery') is the kind of store it's bought at (grocery | home-improvement | garden | pharmacy | …) — set it for a non-grocery item (e.g. '2x4 lumber' → 'home-improvement'). `substitutes_for` (optional) is the recipe ingredient this added item STANDS IN FOR when the add is a taste swap you or the member chose (e.g. substitutes_for: 'sour cream') — it only records the swap for later suggestions (best-effort, food items only); it does NOT change the row, its quantity, or the order, and a same-ingredient product/price swap needs none.";
 
-const ADD_OP_SCHEMA = {
-  name: z.string().optional(),
-  id: z.string().optional(),
-  quantity: z.string().optional(),
-  kind: z.enum(["grocery", "household", "other"]).optional(),
-  domain: z.string().optional(),
-  source: z.enum(["ad_hoc", "menu", "pantry_low", "stockup"]).optional(),
-  for_recipes: z.array(z.string()).optional(),
-  note: z.string().nullable().optional(),
-  substitutes_for: z.string().optional(),
-};
-
 /** One `update_grocery_list` operation — the `update_pantry` ops idiom. `add`/`update`
  *  share most fields (unused ones ignored per op); `remove` needs only `name`. */
 const GROCERY_OP_SCHEMA = z.object({
@@ -94,47 +82,26 @@ export function registerGroceryListTools(
   env: Env,
   username: string,
 ): void {
-  // add_to_grocery_list / remove_from_grocery_list: one-deprecation-window dispatch
-  // aliases onto ops-form update_grocery_list's add/remove operations (mcp-tool-gating
-  // D3) — identical requests/responses, no warnings injection. There is no
-  // read_grocery_list successor tool (grocery-list): read_to_buy is the reasoning read,
-  // display_grocery_list the member-facing verb, read_grocery_snapshot the app-plane
-  // boot read — one list surface per plane.
-  server.registerTool(
-    "add_to_grocery_list",
-    { description: ADD_DESCRIPTION, inputSchema: ADD_OP_SCHEMA },
-    (input) =>
-      runTool(async () => {
-        const result = await addGroceryRow(env, username, input as GroceryAddInput, today());
-        return { item: result.item, merged: result.merged };
-      }),
-  );
-
-  server.registerTool(
-    "remove_from_grocery_list",
-    {
-      description:
-        "Remove an item from the grocery list by name. A removal NEVER records spend — it is not a purchase assertion (it is also how a changed mind leaves the list). To record a purchase for an item still `in_cart`, advance it to `ordered` via update_grocery_list BEFORE removing it.",
-      inputSchema: { name: z.string() },
-    },
-    ({ name }) =>
-      runTool(async () => {
-        const { found } = await removeGroceryRow(env, username, name);
-        return { removed: found };
-      }),
-  );
-
+  // There is no read_grocery_list successor tool (grocery-list): read_to_buy is the
+  // reasoning read, display_grocery_list the member-facing verb, read_grocery_snapshot
+  // the app-plane boot read — one list surface per plane. The former add_to_grocery_list/
+  // remove_from_grocery_list dispatch aliases are closed (operator waiver,
+  // close-cull-windows): capture goes through ops-form update_grocery_list only; a stale
+  // call to either retired name gets the generic unknown-tool rejection.
   server.registerTool(
     "update_grocery_list",
     {
       description:
-        "Apply grocery-list operations — `{ op: \"add\"|\"update\"|\"remove\", … }` (the update_pantry ops idiom), one call per turn's worth of writes, with per-op applied/conflicts reporting so one bad op never sinks the rest. `add` carries the FULL add_to_grocery_list contract: " +
+        "Apply grocery-list operations — `{ op: \"add\"|\"update\"|\"remove\", … }` (the update_pantry ops idiom), one call per turn's worth of writes, with per-op applied/conflicts reporting so one bad op never sinks the rest. `add` carries the FULL former add_to_grocery_list contract: " +
         ADD_DESCRIPTION +
-        " `update` patches an existing item by `name` — every mutation advances row_version/updated_at and preserves checked_at unless the narrow checked tool changes it; status is orthogonal to checked; `status: \"ordered\"` is accepted only as the compatible per-row in_cart purchase assertion (when a send id is available prefer mark_grocery_send_placed for an exact atomic whole-send assertion); an illegal transition is reported as a conflict, not a thrown error. `remove` deletes by `name` and never records spend. For one deprecation window the OLD single-patch call form — `{ name, ...patch }` with no `operations` — is still accepted and converted to a single update operation, returning the bare `{ item }` shape identically to before.",
+        " `update` patches an existing item by `name` — every mutation advances row_version/updated_at and preserves checked_at unless the narrow checked tool changes it; status is orthogonal to checked; `status: \"ordered\"` is accepted only as the compatible per-row in_cart purchase assertion (when a send id is available prefer mark_grocery_send_placed for an exact atomic whole-send assertion); an illegal transition is reported as a conflict, not a thrown error. `remove` deletes by `name` and never records spend. The retired single-patch call form — `{ name, ...patch }` with no `operations` — is rejected as `malformed_data` naming this ops form; nothing is written.",
       inputSchema: {
         operations: z.array(GROCERY_OP_SCHEMA).optional(),
-        // The deprecated single-patch form (one window; shape-detected when `operations`
-        // is absent) — the former standalone update_grocery_list(name, ...patch) contract.
+        // The retired single-patch fields (closed by operator waiver; recognized when
+        // `operations` is absent). Kept typed here — rather than dropped from the shape —
+        // so a badly-typed old-form call (e.g. quantity as a number) still fails zod's
+        // normal input validation instead of being silently stripped into indistinguishable
+        // garbage; the handler below rejects any non-ops-form call as `malformed_data`.
         name: z.string().optional(),
         quantity: z.string().optional(),
         kind: z.enum(["grocery", "household", "other"]).optional(),
@@ -163,18 +130,12 @@ export function registerGroceryListTools(
           }
           return { applied, conflicts };
         }
-        // Old single-patch form (deprecation window; mcp-tool-gating D3): identical
-        // result shape to the retired standalone tool — a failure throws (never a
-        // conflicts entry), matching the old contract exactly.
-        if (typeof input.name !== "string") {
-          throw new ToolError(
-            "validation_failed",
-            "update_grocery_list requires either `operations` or the deprecated single-item `name` form",
-          );
-        }
-        const { name, operations: _ops, ...patch } = input;
-        const item = await updateGroceryRow(env, username, name, patch as GroceryUpdateInput, today());
-        return { item };
+        // The retired single-patch form — `{ name, ...patch }` with no `operations` — is
+        // closed (operator waiver): reject naming the ops form; nothing is written.
+        throw new ToolError(
+          "malformed_data",
+          "update_grocery_list requires the ops form: { operations: [{ op: \"add\"|\"update\"|\"remove\", … }] } — the single-item { name, ...patch } form is retired",
+        );
       }),
   );
 }

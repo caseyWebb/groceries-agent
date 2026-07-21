@@ -3,9 +3,11 @@
 // cache-gated embed batch (D5), weather-category legibility (D9), and the D10
 // determinism invariant ("same choices in, same week out") across every new param.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 import {
   runProposeMealPlan,
   FREEFORM_NUDGE_WEIGHT,
+  PROPOSE_INPUT_SHAPE,
   type ProposeDeps,
   type ProposeInput,
 } from "../src/meal-plan-proposal-tool.js";
@@ -35,6 +37,9 @@ interface RecipeFixture {
   vec: number[];
   /** Effective course array; omitted → a NULL column (unclassified — the fail-open case). */
   course?: string[];
+  /** `recipes.discovered_at` (YYYY-MM-DD); omitted → NULL. Paired with a `discovery_matches`
+   *  row (via `proposeEnv`'s `newForMe` option) to seed the engine's internal new-for-me read. */
+  discovered_at?: string;
 }
 
 // A small corpus with distinct axes: the "seafood" direction is axis 0/3, "comfort" 1/2.
@@ -63,8 +68,21 @@ function recipeRows(corpus: RecipeFixture[]) {
     perishable_ingredients: null,
     requires_equipment: null,
     extra: null,
-    discovered_at: null,
+    discovered_at: r.discovered_at ?? null,
   }));
+}
+
+/** `YYYY-MM-DD` `n` days before now — relative so the new-for-me fixtures below stay inside
+ *  the engine's real `NEW_FOR_ME_WINDOW_DAYS` floor regardless of when the suite runs. */
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** CORPUS with `discovered_at` stamped on the named slugs — pair with `newForMe: [...]` in
+ *  `proposeEnv` (which mints the matching `discovery_matches` rows) to seed the engine's
+ *  internal new-for-me derivation (single-slot-discovery). */
+function withDiscoveredAt(stamps: Record<string, string>): RecipeFixture[] {
+  return CORPUS.map((r) => (stamps[r.slug] ? { ...r, discovered_at: stamps[r.slug] } : r));
 }
 function derivedRows(corpus: RecipeFixture[]) {
   return corpus.map((r) => ({ slug: r.slug, embedding: JSON.stringify(r.vec), description: null }));
@@ -100,7 +118,15 @@ interface Vibe {
  *  zero-AI-call assertions honest). */
 function proposeEnv(
   vibes: Vibe[],
-  opts: { phraseVecs?: Record<string, number[]>; profile?: Record<string, unknown>; corpus?: RecipeFixture[] } = {},
+  opts: {
+    phraseVecs?: Record<string, number[]>;
+    profile?: Record<string, unknown>;
+    corpus?: RecipeFixture[];
+    /** Slugs to attribute to TENANT via `discovery_matches` — the D1 fixture the engine's
+     *  internal new-for-me derivation (single-slot-discovery) joins against. Pair with a
+     *  `discovered_at` on the matching `corpus` fixture (see `daysAgo`). */
+    newForMe?: string[];
+  } = {},
 ) {
   const corpus = opts.corpus ?? CORPUS;
   const d1 = fakeD1({
@@ -129,6 +155,13 @@ function proposeEnv(
       brand_prefs: [],
       pantry: [],
       cooking_log: [],
+      discovery_matches: (opts.newForMe ?? []).map((slug) => ({
+        recipe: slug,
+        tenant: TENANT.id,
+        member: TENANT.member,
+        score: 0.9,
+        matched_at: daysAgo(1),
+      })),
     },
   });
   const kv = memKv();
@@ -159,7 +192,7 @@ function stubDeps(env: Env, over: { overlay?: Overlay } = {}): ProposeDeps {
 const SEAFOOD: Vibe = { id: "seafood-night", vibe: "something from the sea", vec: axis([0, 1], [3, 0.6]) };
 const COMFORT: Vibe = { id: "comfort-night", vibe: "cozy comfort food", vec: axis([1, 1], [2, 0.6]) };
 
-const BASE: ProposeInput = { nights: 2, seed: 7 };
+const BASE: ProposeInput = { meals: { dinner: 2 }, seed: 7 };
 
 /** The default forecast stub: upstream down → no weather signal (all-flex week). */
 beforeEach(() => {
@@ -419,7 +452,7 @@ describe("vibe overrides + nudges (D4/D5)", () => {
     // Pre-warm the cache with the phrase's vector (pointing hard at the salmon axis).
     kv.store.set(await embedCacheKey(phrase), JSON.stringify(axis([0, 1])));
     const deps = stubDeps(env);
-    const r = await runProposeMealPlan(env, TENANT, { nights: 1, seed: 7, nudges: { freeform: phrase } }, deps);
+    const r = await runProposeMealPlan(env, TENANT, { meals: { dinner: 1 }, seed: 7, nudges: { freeform: phrase } }, deps);
     expect(ai).not.toHaveBeenCalled(); // cache hit — the embed path ran without Workers AI
     const matched = r.plan.find((s) => s.main?.slug === "salmon-rice");
     expect(matched).toBeDefined();
@@ -601,7 +634,7 @@ describe("determinism across every new param (D10)", () => {
     });
     const deps = stubDeps(env);
     const input: ProposeInput = {
-      nights: 4, // one night locked + three sampled slots, so all three vibes are in play
+      meals: { dinner: 4 }, // one night locked + three sampled slots, so all three vibes are in play
       seed: 11,
       lock: ["Veggie-Curry"],
       exclude: ["chicken-soup"],
@@ -636,7 +669,7 @@ describe("determinism across every new param (D10)", () => {
     const deps = stubDeps(env);
     const weeks = new Set<string>();
     for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-      const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed }, deps);
+      const r = await runProposeMealPlan(env, TENANT, { meals: { dinner: 2 }, seed }, deps);
       weeks.add(r.plan.map((s) => `${s.vibe_id}:${s.main?.slug}`).join("|"));
       expect(r.plan.filter((s) => s.main).length).toBeGreaterThan(0);
     }
@@ -655,7 +688,7 @@ describe("the ephemeral vibe set (converge D2)", () => {
     const r = await runProposeMealPlan(
       env,
       TENANT,
-      { nights: 2, seed: 7, ephemeral_vibes: [{ vibe: soupPhrase }, { vibe: seaPhrase }] },
+      { meals: { dinner: 2 }, seed: 7, ephemeral_vibes: [{ vibe: soupPhrase }, { vibe: seaPhrase }] },
       stubDeps(env),
     );
     // The slots ARE the authored entries (synthetic ids) — the palette vibes shaped nothing.
@@ -687,7 +720,7 @@ describe("the ephemeral vibe set (converge D2)", () => {
       phraseVecs: { [p1]: axis([2, 1]), [p2]: axis([4, 1]), [freeform]: axis([0, 1]) },
     });
     const deps = stubDeps(env);
-    const req: ProposeInput = { nights: 2, seed: 7, nudges: { freeform }, ephemeral_vibes: [{ vibe: p1 }, { vibe: p2 }] };
+    const req: ProposeInput = { meals: { dinner: 2 }, seed: 7, nudges: { freeform }, ephemeral_vibes: [{ vibe: p1 }, { vibe: p2 }] };
     const r1 = await runProposeMealPlan(env, TENANT, req, deps); // cold cache — warms it
     // ONE batched call covered the freeform phrase AND both ephemeral phrases, in order.
     expect(ai).toHaveBeenCalledTimes(1);
@@ -704,7 +737,7 @@ describe("the ephemeral vibe set (converge D2)", () => {
     const r = await runProposeMealPlan(
       env,
       TENANT,
-      { nights: 1, seed: 7, ephemeral_vibes: [{ vibe: braise }] },
+      { meals: { dinner: 1 }, seed: 7, ephemeral_vibes: [{ vibe: braise }] },
       stubDeps(env, { overlay: { "beef-ragu": { reject: true } } }),
     );
     for (const slot of r.plan) {
@@ -720,7 +753,7 @@ describe("the ephemeral vibe set (converge D2)", () => {
     const r = await runProposeMealPlan(
       env,
       TENANT,
-      { nights: 1, seed: 7, ephemeral_vibes: [{ vibe: fishy, facets: { protein: "fish" } }] },
+      { meals: { dinner: 1 }, seed: 7, ephemeral_vibes: [{ vibe: fishy, facets: { protein: "fish" } }] },
       stubDeps(env),
     );
     expect(r.plan[0].main?.protein).toBe("fish"); // the facet gate held despite the beef-pointing phrase
@@ -728,15 +761,20 @@ describe("the ephemeral vibe set (converge D2)", () => {
   });
 });
 
-describe("new-for-me discovery seeds thread through the op (converge D3)", () => {
-  it("force-places an accepted discovery as a filled vibe-less slot; the rest diversify away", async () => {
-    const { env, ai } = proposeEnv([SEAFOOD, COMFORT]);
-    const r = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
-    const disc = r.plan.find((s) => s.reason === "new_for_me");
-    expect(disc).toBeDefined();
-    expect(disc!.main?.slug).toBe("beef-ragu");
-    expect(disc!.vibe_id).toBeNull(); // a discovery is not a palette vibe
-    expect(disc!.why).toContain("new to you");
+describe("new-for-me discovery seeds — engine-internal derivation (single-slot-discovery)", () => {
+  it("derives and force-places exactly ONE discovery internally (several resolvable rows available); the rest diversify away", async () => {
+    const { env, ai } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1), "veggie-curry": daysAgo(3), "fish-tacos": daysAgo(5) }),
+      newForMe: ["beef-ragu", "veggie-curry", "fish-tacos"],
+    });
+    // No `new_for_me` in the request at all — the engine reads its own new-for-me set.
+    const r = await runProposeMealPlan(env, TENANT, { meals: { dinner: 2 }, seed: 7 }, stubDeps(env));
+    const discoverySlots = r.plan.filter((s) => s.reason === "new_for_me");
+    expect(discoverySlots).toHaveLength(1); // capped at one even with three resolvable rows
+    const disc = discoverySlots[0];
+    expect(disc.main?.slug).toBe("beef-ragu"); // the most-recently-discovered of the three wins
+    expect(disc.vibe_id).toBeNull(); // a discovery is not a palette vibe
+    expect(disc.why).toContain("new to you");
     // It claims one of the two nights; exactly one palette vibe slot remains, and it isn't the discovery.
     const vibeSlots = r.plan.filter((s) => s.vibe_id !== null);
     expect(vibeSlots.length).toBe(1);
@@ -745,27 +783,48 @@ describe("new-for-me discovery seeds thread through the op (converge D3)", () =>
     expect(ai).not.toHaveBeenCalled(); // seeds need no embedding — every vector is cron-captured
   });
 
-  it("drops an unresolvable / excluded discovery seed (soft priority — it just doesn't claim a slot)", async () => {
-    const { env } = proposeEnv([SEAFOOD, COMFORT]);
-    const deps = stubDeps(env);
-    const base = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7, exclude: ["salmon-rice"] }, deps);
-    const dropped = await runProposeMealPlan(
-      env,
-      TENANT,
-      { nights: 2, seed: 7, exclude: ["salmon-rice"], new_for_me: ["ghost-recipe", "salmon-rice"] },
-      deps,
-    );
-    // ghost-recipe is unresolvable, salmon-rice is excluded → both dropped, week identical to base.
-    expect(dropped.plan.some((s) => s.reason === "new_for_me")).toBe(false);
-    expect(dropped).toEqual(base);
+  it("skips an excluded most-recent row and takes the next resolvable one — still capped at one", async () => {
+    const { env } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "veggie-curry": daysAgo(1), "beef-ragu": daysAgo(3) }),
+      newForMe: ["veggie-curry", "beef-ragu"],
+    });
+    const r = await runProposeMealPlan(env, TENANT, { meals: { dinner: 2 }, seed: 7, exclude: ["veggie-curry"] }, stubDeps(env));
+    const discoverySlots = r.plan.filter((s) => s.reason === "new_for_me");
+    expect(discoverySlots).toHaveLength(1);
+    expect(discoverySlots[0].main?.slug).toBe("beef-ragu"); // the more-recent, excluded row is skipped
   });
 
-  it("force-places a discovery into a free dinner slot even with NO dinner vibes (lunch-only palette)", async () => {
+  it("an ephemeral-driven week is never seeded, even with a resolvable discovery available", async () => {
+    const { env } = proposeEnv([], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+      phraseVecs: { "something cozy": axis([1, 1]) },
+    });
+    const r = await runProposeMealPlan(env, TENANT, { seed: 7, ephemeral_vibes: [{ vibe: "something cozy" }] }, stubDeps(env));
+    expect(r.plan.some((s) => s.reason === "new_for_me")).toBe(false);
+  });
+
+  it("new_for_me is retired from the input shape — a stale caller's key is silently dropped like any other unknown key", () => {
+    // The key is gone from ProposeInput/PROPOSE_INPUT_SHAPE entirely (its accept-and-ignore
+    // window closed by operator waiver, close-cull-windows) — runProposeMealPlan never read
+    // it even when the shape declared it, so there is nothing left to assert at the raw-op
+    // layer. A real MCP call is parsed through this SAME shape before the handler ever runs
+    // (the SDK's zod object() strips unrecognized keys by default), so proving the shape
+    // drops it here proves the tool-boundary behavior without standing up a full server.
+    const parsed = z.object(PROPOSE_INPUT_SHAPE).parse({ meals: { dinner: 2 }, seed: 7, new_for_me: ["beef-ragu"] });
+    expect(parsed).not.toHaveProperty("new_for_me");
+  });
+
+  it("force-places the internally derived discovery into a free dinner slot even with NO dinner vibes (lunch-only palette)", async () => {
     // The grill scenario: a non-empty palette that has only a LUNCH vibe. The dinner pass finds
     // no dinner vibes but free dinner slots exist — force-placement is vibe-INDEPENDENT, so the
-    // accepted discovery must still land as a dinner slot, never silently dropped with the pass.
-    const { env } = proposeEnv([LUNCH_VIBE]); // no dinner vibe in the palette
-    const r = await runProposeMealPlan(env, TENANT, { meals: { lunch: 1, dinner: 2 }, seed: 7, new_for_me: ["beef-ragu"] }, stubDeps(env));
+    // derived discovery must still land as a dinner slot, never silently dropped with the pass.
+    const { env } = proposeEnv([LUNCH_VIBE], {
+      // no dinner vibe in the palette
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+    });
+    const r = await runProposeMealPlan(env, TENANT, { meals: { lunch: 1, dinner: 2 }, seed: 7 }, stubDeps(env));
     const disc = r.plan.find((s) => s.reason === "new_for_me");
     expect(disc).toBeDefined();
     expect(disc!.main?.slug).toBe("beef-ragu");
@@ -780,14 +839,17 @@ describe("new-for-me discovery seeds thread through the op (converge D3)", () =>
     expect(r.diagnostics.meals.dinner).toEqual({ requested: 2, filled: 1, empty: 1 });
   });
 
-  it("rolls an accepted discovery OVER when the dinner count is fully consumed by locks (no free slot)", async () => {
+  it("rolls the internally derived discovery OVER when the dinner count is fully consumed by locks (no free slot)", async () => {
     // dinnerToFill = counts.dinner - locks = 0, so the dinner pass is short-circuited. The
     // discovery has nowhere to land, but it must surface in diagnostics.rolled_over — never vanish.
-    const { env } = proposeEnv([SEAFOOD, COMFORT]);
+    const { env } = proposeEnv([SEAFOOD, COMFORT], {
+      corpus: withDiscoveredAt({ "beef-ragu": daysAgo(1) }),
+      newForMe: ["beef-ragu"],
+    });
     const r = await runProposeMealPlan(
       env,
       TENANT,
-      { meals: { dinner: 2 }, seed: 7, lock: ["salmon-rice", "chicken-soup"], new_for_me: ["beef-ragu"] },
+      { meals: { dinner: 2 }, seed: 7, lock: ["salmon-rice", "chicken-soup"] },
       stubDeps(env),
     );
     expect(r.plan.some((s) => s.reason === "new_for_me")).toBe(false); // no free slot to claim
@@ -796,14 +858,14 @@ describe("new-for-me discovery seeds thread through the op (converge D3)", () =>
 });
 
 
-// ── The meal dimension (meal-dimension-foundations): per-meal shape, the nights alias,
-// vibe-meal binding, the breakfast course gate, the engine no-duplicates invariant, and
-// the D29-final attendance contract (band-1 singleton degeneracy + fail-opens). ─────────
+// ── The meal dimension (meal-dimension-foundations): per-meal shape, vibe-meal binding,
+// the breakfast course gate, the engine no-duplicates invariant, and the D29-final
+// attendance contract (band-1 singleton degeneracy + fail-opens). ─────────────────────
 
 const LUNCH_VIBE: Vibe = { id: "lunch-bowl", vibe: "a bright lunch bowl", vec: axis([4, 1]), meal: "lunch" };
 const BREAKFAST_VIBE: Vibe = { id: "morning-eggs", vibe: "a lazy morning egg dish", vec: axis([5, 1]), meal: "breakfast" };
 
-describe("runProposeMealPlan — per-meal shape (meals map + nights alias)", () => {
+describe("runProposeMealPlan — per-meal shape (meals map)", () => {
   it("shapes each meal's slots from that meal's palette, flat and meal-ordered, with per-meal diagnostics", async () => {
     const { env, ai } = proposeEnv([SEAFOOD, COMFORT, LUNCH_VIBE]);
     const r = await runProposeMealPlan(env, TENANT, { meals: { lunch: 1, dinner: 2 }, seed: 7 }, stubDeps(env));
@@ -816,19 +878,20 @@ describe("runProposeMealPlan — per-meal shape (meals map + nights alias)", () 
       lunch: { requested: 1, filled: 1, empty: 0 },
       dinner: { requested: 2, filled: 2, empty: 0 },
     });
-    expect(r.diagnostics.nights).toBe(2); // the dinner alias, one deprecation window
   });
 
-  it("nights is the window-scoped dinner alias — equivalent alone, IGNORED when meals is supplied", async () => {
-    const { env } = proposeEnv([SEAFOOD, COMFORT]);
-    const viaNights = await runProposeMealPlan(env, TENANT, { nights: 2, seed: 7 }, stubDeps(env));
-    const viaMeals = await runProposeMealPlan(env, TENANT, { meals: { dinner: 2 }, seed: 7 }, stubDeps(env));
-    expect(viaMeals.plan).toEqual(viaNights.plan);
-    const both = await runProposeMealPlan(env, TENANT, { nights: 9, meals: { dinner: 2 }, seed: 7 }, stubDeps(env));
-    expect(both.plan).toEqual(viaMeals.plan); // nights ignored, no error
+  it("nights is retired from the input shape — a stale caller's key is silently dropped like any other unknown key", () => {
+    // Mirrors the new_for_me retirement below: the key is gone from ProposeInput/PROPOSE_INPUT_SHAPE
+    // entirely (its alias window closed on verified production convergence of the frozen column it
+    // aliased) — meals.dinner is its sole successor, and runProposeMealPlan never reads a `nights`
+    // property even when passed one directly (the TS type no longer declares it). Proving the raw
+    // zod shape drops it proves the tool-boundary behavior without standing up a full server (the
+    // SDK's zod object() strips unrecognized keys by default).
+    const parsed = z.object(PROPOSE_INPUT_SHAPE).parse({ nights: 4, seed: 7 });
+    expect(parsed).not.toHaveProperty("nights");
   });
 
-  it("counts default from the stored cadence map (per-meal), then the frozen scalar for dinner", async () => {
+  it("counts default from the stored cadence map (per-meal), then the fixed default for dinner", async () => {
     const { env } = proposeEnv([SEAFOOD, COMFORT, LUNCH_VIBE], {
       profile: { cadence: JSON.stringify({ breakfast: 0, lunch: 1, dinner: 1 }) },
     });
@@ -836,10 +899,12 @@ describe("runProposeMealPlan — per-meal shape (meals map + nights alias)", () 
     expect(r.diagnostics.meals.lunch).toMatchObject({ requested: 1 });
     expect(r.diagnostics.meals.dinner).toMatchObject({ requested: 1 });
     expect(r.diagnostics.meals.breakfast).toMatchObject({ requested: 0 });
-    // Legacy fallback: no cadence map → dinner from default_cooking_nights.
-    const { env: legacy } = proposeEnv([SEAFOOD, COMFORT], { profile: { default_cooking_nights: 2 } });
-    const r2 = await runProposeMealPlan(legacy, TENANT, { seed: 7 }, stubDeps(legacy));
-    expect(r2.diagnostics.meals.dinner.requested).toBe(2);
+    // No cadence map at all, and no profile row → the fixed read-time default (dinner: 5,
+    // breakfast/lunch: 0) — no legacy per-tenant escape hatch (the frozen
+    // default_cooking_nights column is gone).
+    const { env: bare } = proposeEnv([SEAFOOD, COMFORT]);
+    const r2 = await runProposeMealPlan(bare, TENANT, { seed: 7 }, stubDeps(bare));
+    expect(r2.diagnostics.meals.dinner.requested).toBe(5);
     expect(r2.diagnostics.meals.lunch.requested).toBe(0);
   });
 

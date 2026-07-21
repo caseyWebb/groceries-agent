@@ -12,7 +12,6 @@ import {
 const baseSession: ProposeSession = {
   v: PROPOSE_SESSION_VERSION,
   seed: 20260711,
-  nights: 4,
   meals: { breakfast: 1, lunch: 0, dinner: 4 },
   attendance: { away: ["kiddo"], only: [] },
   variety: 0.7,
@@ -55,7 +54,6 @@ describe("propose orchestration", () => {
     expect(
       proposeSessionFromRequest({
         seed: 9,
-        nights: 3,
         meals: { breakfast: 2, lunch: 1, dinner: 3 },
         attendance: { away: ["grandma"] },
         variety: 0.2,
@@ -68,7 +66,6 @@ describe("propose orchestration", () => {
       }),
     ).toMatchObject({
       seed: 9,
-      nights: 3,
       meals: { breakfast: 2, lunch: 1, dinner: 3 },
       attendance: { away: ["grandma"], only: [] },
       variety: 0.2,
@@ -81,6 +78,18 @@ describe("propose orchestration", () => {
       slotVibe: { vibe_a: "tacos" },
       overrides: { vibe_a: "bean-tacos" },
     });
+  });
+
+  it("an absent meals map falls to 0 (the retired nights alias is gone, no legacy fallback)", () => {
+    const session = proposeSessionFromRequest({
+      seed: 1,
+      variety: 0.4,
+      proteins: [],
+      freeform: "",
+      exclude: [],
+      slots: [],
+    });
+    expect(session.meals).toEqual({ breakfast: 0, lunch: 0, dinner: 0 });
   });
 
   it("projects slots into shared UI views with labels, pins, flags, and sides", () => {

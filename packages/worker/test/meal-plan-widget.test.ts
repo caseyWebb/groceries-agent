@@ -142,7 +142,7 @@ describe("meal-plan-widget (MCP Apps wiring)", () => {
 
   it("display_meal_plan returns the widget result: _meta.ui, structuredContent, and a text fallback listing the nights", async () => {
     await withServer(freshServer(widgetEnv()), async (client) => {
-      const res = await client.callTool({ name: "display_meal_plan", arguments: { nights: 2, seed: 7 } });
+      const res = await client.callTool({ name: "display_meal_plan", arguments: { meals: { dinner: 2 }, seed: 7 } });
 
       const meta = res._meta as { ui?: { resourceUri?: string } } | undefined;
       expect(meta?.ui?.resourceUri).toBe(PLAN_PROPOSE_URI);
@@ -150,8 +150,8 @@ describe("meal-plan-widget (MCP Apps wiring)", () => {
       const sc = res.structuredContent as {
         plan: { vibe_id: string | null; main: { slug: string; title: string } | null }[];
         variety: { distinct_cuisines: number };
-        diagnostics: { seed: number; nights: number; filled: number };
-        request: { nights: number; seed: number; variety: number };
+        diagnostics: { seed: number; filled: number };
+        request: { meals?: { dinner?: number }; seed: number; variety: number };
         vibeLabels: Record<string, string>;
         proteins: string[];
         cuisines: string[];
@@ -159,7 +159,7 @@ describe("meal-plan-widget (MCP Apps wiring)", () => {
       expect(sc.diagnostics.filled).toBe(2);
       expect(sc.diagnostics.seed).toBe(7);
       // The replayable request seeds the widget's client session from the resolved week.
-      expect(sc.request.nights).toBe(2);
+      expect(sc.request.meals?.dinner).toBe(2);
       expect(sc.request.seed).toBe(7);
       // The render context the dials need: vibe labels + facet universes.
       expect(sc.vibeLabels[SEAFOOD.id]).toBe(SEAFOOD.vibe);
@@ -187,12 +187,23 @@ describe("meal-plan-widget (MCP Apps wiring)", () => {
       getOverlay: async () => { throw new ToolError("storage_error", "overlay read failed"); },
     };
     await withServer(freshServer(env, deps), async (client) => {
-      const res = await client.callTool({ name: "display_meal_plan", arguments: { nights: 2, seed: 7 } });
+      const res = await client.callTool({ name: "display_meal_plan", arguments: { meals: { dinner: 2 }, seed: 7 } });
       expect(res.isError).toBe(true);
       expect(res.structuredContent).toBeUndefined();
       const content = res.content as Array<{ type: string; text?: string }>;
       const parsed = JSON.parse(content[0]?.text ?? "{}") as { error?: string };
       expect(parsed.error).toBe("storage_error");
+    });
+  });
+
+  it("a stale nights key is silently dropped like any other unknown key — meals still drives the count", async () => {
+    await withServer(freshServer(widgetEnv()), async (client) => {
+      const res = await client.callTool({ name: "display_meal_plan", arguments: { nights: 2, seed: 7 } });
+      expect(res.isError).toBeFalsy();
+      const sc = res.structuredContent as { diagnostics: { seed: number; meals?: Record<string, { requested: number }> } };
+      expect(sc.diagnostics.seed).toBe(7);
+      // No profile row in this fixture → the fixed read-time default (5), never nights' value (2).
+      expect(sc.diagnostics.meals?.dinner.requested).toBe(5);
     });
   });
 

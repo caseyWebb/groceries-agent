@@ -107,7 +107,7 @@ export interface ProposalResult {
    *  going bad" signal, so the caller can re-roll, lock, or shop around them. Empty when the plan
    *  covers everything (or there was no at-risk demand). */
   uncovered_at_risk: string[];
-  diagnostics: { seed: number; lambda: number; nights: number; filled: number; empty: number };
+  diagnostics: { seed: number; lambda: number; filled: number; empty: number };
 }
 
 /** The fully-loaded, pure inputs the compose needs (assembled by the tool). */
@@ -128,8 +128,6 @@ export interface ProposalCtx {
   /** Raw lock slugs that couldn't be resolved (unknown / unembedded / rejected) — surfaced as
    *  explicit empty `locked` slots so a lock is never silently dropped. */
   lockedUnresolved?: string[];
-  /** The nights the caller requested (for honest diagnostics when locks/palette under-fill). */
-  requestedNights?: number;
   /** slug → recipe frontmatter (for sides / waste / meal-prep). */
   frontmatterBySlug: Map<string, Record<string, unknown>>;
   /** slug → embedding (for the variety diagnostics). */
@@ -367,7 +365,6 @@ export function assembleProposal(ctx: ProposalCtx): ProposalResult {
     diagnostics: {
       seed: ctx.seed,
       lambda: p.lambda,
-      nights: ctx.requestedNights ?? ctx.slots.length + locked.length + (ctx.lockedUnresolved?.length ?? 0) + (ctx.newForMe?.length ?? 0),
       filled,
       empty: plan.length - filled,
     },

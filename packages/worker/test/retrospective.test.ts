@@ -86,8 +86,8 @@ describe("retrospective aggregates", () => {
   });
 
   it("historical ready_to_eat rows aggregate without error: excluded from cadence, counted in the mixes", () => {
-    // No new type='ready_to_eat' row can be written anymore (log_cooked's shim converts
-    // it to ad_hoc) — this fixture represents rows already stored before the retirement.
+    // No new type='ready_to_eat' row can be written anymore (log_cooked rejects it as
+    // validation_failed) — this fixture represents rows already stored before the retirement.
     const log: CookingLogEntry[] = [
       { date: "2026-06-10", type: "recipe", recipe: "tacos", protein: "beef", cuisine: "mexican" },
       { date: "2026-06-12", type: "ad_hoc", name: "fried rice", protein: "mixed" },

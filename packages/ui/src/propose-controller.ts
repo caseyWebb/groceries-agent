@@ -553,7 +553,7 @@ export function useProposeController(opts: UseProposeControllerOptions): Propose
       requestChange((() => {
         const s = base();
         const meals = { ...s.meals, [meal]: Math.max(0, n) };
-        return { ...s, meals, nights: meals.dinner };
+        return { ...s, meals };
       })());
     },
     swapTo(vibeId, slug) {

@@ -12,11 +12,10 @@
 // D21 rename + meal-vibe-palette cull: `add_meal_vibe` is the only member-chat tool —
 // list/edit/remove moved to the member app's vibes page (src/api/vibes.ts) over the
 // SAME shared operations (`patchNightVibe`/`deleteNightVibe` stay exported for it). The
-// old `*_night_vibe` name stays registered for ONE deprecation window as a DISPATCH
-// ALIAS onto the identical shared op — identical requests, identical responses, no
-// warnings injection — owned by the `remove-meal-dimension-shims` gate. The D1 tables
-// keep their `night_vibes`/`night_vibe_derived` names deliberately (a tool-contract
-// decision, not a schema one).
+// old `add_night_vibe` dispatch-alias name is gone (remove-meal-dimension-shims,
+// operator waiver): a stale call gets the generic unknown-tool rejection, indistinguishable
+// from a tool that never existed. The D1 tables keep their `night_vibes`/`night_vibe_derived`
+// names deliberately (a tool-contract decision, not a schema one).
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -158,10 +157,6 @@ export async function patchNightVibe(
   return { id, updated_fields: Object.keys(patch) };
 }
 
-/** One line replaces a deprecated alias's whole description (D21's dispatch framing). */
-export const aliasDescription = (canonical: string): string =>
-  `Deprecated alias of \`${canonical}\` — identical behavior; use the new name.`;
-
 const MEAL_ENUM = z.enum(["breakfast", "lunch", "dinner"]);
 
 export function registerNightVibeTools(server: McpServer, env: Env, tenant: string): void {
@@ -170,9 +165,10 @@ export function registerNightVibeTools(server: McpServer, env: Env, tenant: stri
   // member web app's vibes page over the same shared operations (readNightVibes /
   // patchNightVibe / deleteNightVibe, unchanged — see src/api/vibes.ts) — there are no
   // list_meal_vibes / update_meal_vibe / remove_meal_vibe MCP tools, so their
-  // `*_night_vibe` alias rows fall away with them. `add_night_vibe` remains
-  // `add_meal_vibe`'s deprecation-window alias, owned by the `remove-meal-dimension-
-  // shims` gate (not this change).
+  // `*_night_vibe` alias rows fall away with them. `add_night_vibe` (the last surviving
+  // `*_night_vibe` alias) is gone too (remove-meal-dimension-shims, operator waiver): a
+  // stale call gets the generic unknown-tool rejection, indistinguishable from a tool
+  // that never existed.
   const addSchema = {
     vibe: z.string().min(1),
     id: z.string().optional(),
@@ -184,5 +180,4 @@ export function registerNightVibeTools(server: McpServer, env: Env, tenant: stri
   const ADD_DESC =
     "Add a meal vibe to the caller's palette. `vibe` is the craving/query phrase (e.g. 'a simple, comforting weeknight Italian pasta'). `meal` (breakfast | lunch | dinner, default dinner) picks which meal's palette it samples into — a lunch vibe only ever fills lunch slots. Optional: an `id` (else derived from the vibe), hard-gate `facets`, a `cadence_days` target period (7 ≈ weekly, 30 ≈ monthly — drives the debt scheduler), `pinned` (sticky weekly intent), `weather_affinity` weather-bucket membership (grill|cold-comfort|wet — a legacy soup|comfort|grill-friendly|light|no-grill tag is also accepted; weather shapes DINNER slots only, so it is stored but inert on a non-dinner vibe), a `season` lean, a `base_weight`, and `members` (opaque member handles this vibe applies to — omitted means everyone; an assigned vibe contributes slots only when one of its members is eating that week, and a members list naming nobody the household recognizes contributes as everyone rather than silently vanishing). Rejects a duplicate id with `conflict` (edit it from the member app's vibes page). Returns { id }.";
   server.registerTool("add_meal_vibe", { description: ADD_DESC, inputSchema: addSchema }, addHandler);
-  server.registerTool("add_night_vibe", { description: aliasDescription("add_meal_vibe"), inputSchema: addSchema }, addHandler);
 }

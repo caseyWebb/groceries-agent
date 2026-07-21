@@ -4,8 +4,9 @@
 // `ON CONFLICT … weight = weight + 1` increment and the audit reads' `kind != 'substitution'`
 // filter — neither of which the SQL-regex fake simulates.
 //
-// A taste-substitution edge is captured when a member ACCEPTS a swap: an `add_to_grocery_list`
-// annotated with `substitutes_for` (the recipe ingredient the added item stands in for). Detection
+// A taste-substitution edge is captured when a member ACCEPTS a swap: an `update_grocery_list`
+// `add` op annotated with `substitutes_for` (the recipe ingredient the added item stands in
+// for) — this file drives the shared `addGroceryRow` op directly. Detection
 // is PURE SET LOGIC against the identity graph (no classifier): mint X → Y only when Y ≠ X and Y is
 // not a factual neighbor of X. The edge is operator-global — born a weight-1 candidate, incremented
 // on repeat, promoted (and surfaced by the depth-1 walk) at weight ≥ 2. Because these edges live in
@@ -59,7 +60,7 @@ function subEdges(h: SqliteEnv): { from_id: string; to_id: string; kind: string;
     .map((e) => ({ from_id: e.from_id, to_id: e.to_id, kind: e.kind, weight: e.weight }));
 }
 
-describe("taste-substitution capture (agent-side, add_to_grocery_list substitutes_for)", () => {
+describe("taste-substitution capture (agent-side, update_grocery_list add substitutes_for)", () => {
   it("an accepted cross-canonical swap mints a weight-1 candidate, unsurfaced until promoted", async () => {
     const h = sqliteEnv([T]);
     seedNode(h, "sour cream");

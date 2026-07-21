@@ -270,6 +270,46 @@ export function fakeD1(
         return { rows: typeof slug === "string" && known.has(slug) ? [{ ok: 1 }] : [], changes: 0 };
       }
       if (!table || !tables[table]) return { rows: [], changes: 0 };
+      // The new-for-me read (readNewForMe, single-slot-discovery): a genuine multi-table JOIN
+      // (discovery_matches attribution, a recipe_derived description, an overlay exclusion, and a
+      // cooking_log NOT IN subquery) the generic tenant-scope/WHERE-equality machinery below can't
+      // express (`recipes` carries no `tenant` column of its own) — emulated directly. Binds are
+      // positional per readNewForMe's own SQL: ?1 tenant, ?2 floor/watermark, ?3 limit, ?4 member.
+      if (table === "recipes" && /JOIN discovery_matches/i.test(sql)) {
+        const tenant = binds[0];
+        const floorDay = String(binds[1]);
+        const limitBind = Number(binds[2]);
+        const member = binds[3];
+        const matchedSlugs = new Set(
+          (tables.discovery_matches ?? []).filter((m) => m.tenant === tenant && m.member === member).map((m) => m.recipe),
+        );
+        const derivedBySlug = new Map((tables.recipe_derived ?? []).map((d) => [d.slug, d]));
+        const overlaidSlugs = new Set((tables.overlay ?? []).filter((o) => o.tenant === tenant).map((o) => o.recipe));
+        const cookedSlugs = new Set(
+          (tables.cooking_log ?? []).filter((c) => c.tenant === tenant && c.recipe != null).map((c) => c.recipe),
+        );
+        const rows = tables.recipes
+          .filter(
+            (r) =>
+              matchedSlugs.has(r.slug) &&
+              typeof r.discovered_at === "string" &&
+              r.discovered_at > floorDay &&
+              !overlaidSlugs.has(r.slug) &&
+              !cookedSlugs.has(r.slug),
+          )
+          .map((r) => ({
+            slug: r.slug,
+            title: r.title,
+            description: derivedBySlug.get(r.slug)?.description ?? null,
+            protein: r.protein,
+            cuisine: r.cuisine,
+            time_total: r.time_total,
+            discovered_at: String(r.discovered_at),
+          }))
+          .sort((a, b) => (a.discovered_at < b.discovered_at ? 1 : a.discovered_at > b.discovered_at ? -1 : 0))
+          .slice(0, limitBind);
+        return { rows, changes: 0 };
+      }
       // Tenant-scope only when the query actually filters by `tenant = ?1`; otherwise
       // (global tables, and cross-tenant reads like overlay-by-recipe) read all rows and
       // let the WHERE-equality filters below narrow.

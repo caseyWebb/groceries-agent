@@ -1,13 +1,13 @@
 // The `vibes` area (member-app-core): the meal-vibe palette (production vocabulary,
 // D11 — reads merge the log-derived last_satisfied; the row itself stores none), vibe
 // CRUD through the shared add/patch ops (edit is class (a) under If-Match; create and
-// delete are class (b) keyed on the slugified id), the reconciliation queue
-// (pending proposals + the shared confirm op, D12), and the RETIRED suggest trigger:
-// for one deprecation window POST /vibes/suggest is a pinned 410 stub (D8/D20 — the
-// cron carries generation; the shipped SPA's button fails explicably, never the
-// SPA-shell/404 trap, and no derivation or model runs). Session-gated per route.
-// Static /vibes/proposals + /vibes/suggest are registered before /vibes/:id so the
-// param route never swallows them.
+// delete are class (b) keyed on the slugified id), and the reconciliation queue
+// (pending proposals + the shared confirm op, D12). The member-tappable suggest
+// trigger is retired (D8/D20 — the cron carries generation) and its route is gone
+// outright (remove-meal-dimension-shims): POST /vibes/suggest now falls to the normal
+// unrecognized-API 404, like any other unmounted route. Session-gated per route.
+// The static /vibes/proposals route is registered before /vibes/:id so the param
+// route never swallows it.
 
 import { Hono } from "hono";
 import { ToolError } from "../errors.js";
@@ -114,18 +114,6 @@ export const vibesArea = new Hono<ApiEnv>()
     }
     const result = await resolveProposal(c.env, tenant.id, c.req.param("id"), body.accept);
     return c.json(result);
-  })
-  // RETIRED (D8/D20 — the cron carries generation): the member-tappable suggest trigger
-  // is cut. For one deprecation window the route stays registered as a pinned 410 stub —
-  // the member-API route-level error convention (`c.json({ error: <literal>, message },
-  // status)`, the csrf_rejected/rate_limited family; NOT a src/errors.ts ToolError code) —
-  // so the deployed SPA's shipped button fails EXPLICABLY, never the SPA-shell/404 trap,
-  // and no derivation and no model runs. Band 2's profile/vibes UI removes the button;
-  // the window-close cleanup change removes this stub (the path then falls to the normal
-  // unknown-API 404).
-  .post("/vibes/suggest", requireSession, (c) => {
-    return c.json({ error: "gone" as const,
-      message: "Vibe suggestions now arrive automatically; this trigger was retired." }, 410);
   })
   // One raw vibe row — the class (a) representation the PATCH preconditions on
   // (derived fields excluded: a cook would spuriously fail an unrelated edit).

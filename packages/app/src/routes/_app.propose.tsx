@@ -50,8 +50,8 @@ function ProposePage() {
   const [initialSession] = React.useState(loadSession);
 
   const prefs = (profile.data?.preferences ?? {}) as Record<string, unknown>;
-  const defaultNights =
-    typeof prefs.default_cooking_nights === "number" ? prefs.default_cooking_nights : 3;
+  const cadence = (prefs.cadence ?? {}) as Record<string, unknown>;
+  const defaultNights = typeof cadence.dinner === "number" ? cadence.dinner : 3;
 
   const palette = vibes.data?.vibes ?? [];
   const paletteById = new Map(palette.map((v) => [v.id, v]));

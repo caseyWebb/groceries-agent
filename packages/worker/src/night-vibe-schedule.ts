@@ -415,16 +415,19 @@ export interface SampledWeek {
  * `seed`.
  *   1. Compute weights (debtCurve only — weather is structural below, not a weight term).
  *   2. Place PINNED vibes (debt-desc), up to n — sticky, exempt from the reserve.
- *   2.5. Place NEW-FOR-ME discovery seeds (converge D3), below pinned and above overdue: each
- *      accepted discovery claims a slot within its weather-bucket quota (a consumable ledger over
- *      the post-pinned slots), falling to a flex/`mild` slot when its bucket has none and rolling
- *      over rather than force-placing into a contradicting bucket. Seed-deterministic (input order).
  *   3. Place OVERDUE vibes (debt ≥ forceDueAt, debt-desc) up to `n − minSampledSlots` (so the
  *      weighted pool keeps at least `minSampledSlots`). A bucketed overdue vibe whose category's
  *      quota is ZERO this window (histogrammed over the slots that would remain after pinned
  *      placement) rolls over rather than force-placing into a mismatched slot — UNLESS its debt
  *      has crossed `forceRegardlessAt`, the escape hatch, in which case it force-places anyway.
  *      Excess (over-subscribed) overdue vibes also roll over.
+ *   3.5. Place NEW-FOR-ME discovery seeds (converge D3; reprioritized below overdue by
+ *      single-slot-discovery), below pinned AND below overdue: the palette's own debt claims its
+ *      slots first, and a discovery only seasons what's left — a debt-saturated week (pinned +
+ *      overdue consuming every slot) carries no discovery. Each accepted discovery claims a slot
+ *      within its weather-bucket quota (a consumable ledger over the post-overdue remaining
+ *      slots), falling to a flex/`mild` slot when its bucket has none and rolling over rather than
+ *      force-placing into a contradicting bucket. Seed-deterministic (input order).
  *   4. Fill the remaining slots by QUOTA: histogram the (capped) `dayCategories`, convert to
  *      integer quotas over the actually-remaining slots (largest-remainder rounding), then fill
  *      each non-`mild` category's quota from {members of that bucket} ∪ {bucketless vibes} via
@@ -478,13 +481,45 @@ export function sampleWeek(
     }
   }
 
-  // Step 2.5: NEW-FOR-ME force-placement (converge D3) — below pinned, above overdue. Each
-  // accepted discovery claims a slot WITHIN its weather-bucket quota, seed-deterministically (the
-  // caller's input order). A consumable per-category ledger (seeded from the quota over the
-  // post-pinned slots) bounds how many each bucket admits: a bucketed discovery whose bucket is
-  // zero/exhausted falls to a flex (`mild`) slot, a bucketless discovery is a universal filler,
-  // and one that fits nowhere within quota rolls over — never forced into a contradicting bucket,
-  // never an empty slot. A discovery already placed (e.g. also the id of a pinned vibe) is skipped.
+  // Step 3: overdue (non-pinned forced), ranked by debt, but leave `reserve` slots for the pool.
+  // A bucketed vibe whose category has a zero quota (checked against the quota computed over the
+  // slots remaining after PINNED placement — the same denominator the new-for-me and eventual
+  // fill passes will use once overdue placement is done) rolls over UNLESS it has crossed the
+  // escape hatch (`forceRegardlessAt`), in which case it force-places regardless of forecast
+  // match. Force-placement cardinality is unaffected by the window — a palette shouldn't declare
+  // the same vibe overdue twice, and this is a single force-place per vibe id.
+  const gatingQuotas = computeQuotas(hist, Math.max(0, n - slots.length));
+  const overdue = weights
+    .filter((w) => w.forced && !w.pinned)
+    .sort((a, b) => b.debt - a.debt || a.id.localeCompare(b.id));
+  const overdueCap = Math.max(0, n - reserve);
+  for (const w of overdue) {
+    const buckets = bucketsById.get(w.id) ?? new Set<WeatherCategory>();
+    const mismatched = [...buckets].length > 0 && [...buckets].every((cat) => gatingQuotas[cat] === 0);
+    const escapeHatch = w.debt >= p.forceRegardlessAt;
+    if (mismatched && !escapeHatch) {
+      rolledOver.push(w.id); // "grill in the garage" — no matching day this window, not yet urgent enough to force
+      continue;
+    }
+    if (slots.length < overdueCap) {
+      slots.push({ id: w.id, reason: "overdue", debt: round4(w.debt), weight: round4(w.weight) });
+      used.add(w.id);
+    } else {
+      rolledOver.push(w.id); // yields to the weather-sampled reserve, or over-subscribed
+    }
+  }
+
+  // Step 3.5: NEW-FOR-ME force-placement (converge D3; reprioritized below overdue by
+  // single-slot-discovery) — below pinned AND below overdue: the palette's own debt claims its
+  // slots first, and a discovery only seasons what's left (a debt-saturated week carries no
+  // discovery). Each accepted discovery claims a slot WITHIN its weather-bucket quota,
+  // seed-deterministically (the caller's input order — the engine caps this at a single seed
+  // before it ever reaches here, single-slot-discovery). A consumable per-category ledger (seeded
+  // from the quota over the post-OVERDUE remaining slots) bounds how many each bucket admits: a
+  // bucketed discovery whose bucket is zero/exhausted falls to a flex (`mild`) slot, a bucketless
+  // discovery is a universal filler, and one that fits nowhere within quota rolls over — never
+  // forced into a contradicting bucket, never an empty slot. A discovery already placed (e.g.
+  // also the id of a pinned or overdue vibe) is skipped.
   const nfmLedger = computeQuotas(hist, Math.max(0, n - slots.length));
   for (const nfm of newForMe) {
     if (used.has(nfm.id)) continue;
@@ -516,34 +551,6 @@ export function sampleWeek(
       category: placedCat === "mild" ? undefined : placedCat,
     });
     used.add(nfm.id);
-  }
-
-  // Step 3: overdue (non-pinned forced), ranked by debt, but leave `reserve` slots for the pool.
-  // A bucketed vibe whose category has a zero quota (checked against the quota computed over the
-  // slots remaining after pinned AND new-for-me placement — the same denominator the eventual
-  // fill will use once overdue placement is done) rolls over UNLESS it has crossed the escape
-  // hatch (`forceRegardlessAt`), in which case it force-places regardless of forecast match.
-  // Force-placement cardinality is unaffected by the window — a palette shouldn't declare the
-  // same vibe overdue twice, and this is a single force-place per vibe id.
-  const gatingQuotas = computeQuotas(hist, Math.max(0, n - slots.length));
-  const overdue = weights
-    .filter((w) => w.forced && !w.pinned)
-    .sort((a, b) => b.debt - a.debt || a.id.localeCompare(b.id));
-  const overdueCap = Math.max(0, n - reserve);
-  for (const w of overdue) {
-    const buckets = bucketsById.get(w.id) ?? new Set<WeatherCategory>();
-    const mismatched = [...buckets].length > 0 && [...buckets].every((cat) => gatingQuotas[cat] === 0);
-    const escapeHatch = w.debt >= p.forceRegardlessAt;
-    if (mismatched && !escapeHatch) {
-      rolledOver.push(w.id); // "grill in the garage" — no matching day this window, not yet urgent enough to force
-      continue;
-    }
-    if (slots.length < overdueCap) {
-      slots.push({ id: w.id, reason: "overdue", debt: round4(w.debt), weight: round4(w.weight) });
-      used.add(w.id);
-    } else {
-      rolledOver.push(w.id); // yields to the weather-sampled reserve, or over-subscribed
-    }
   }
 
   // Step 4: fill the rest by QUOTA — histogram → integer quotas over the ACTUALLY remaining
